@@ -10,7 +10,7 @@ import (
 // versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "output the fiber version number",
+	Short: "Output the fiber version number",
 	RunE: func(cmd *cobra.Command, args []string) error {
 
 		latestVersion, err := fibercli.ReleaseVersion()
