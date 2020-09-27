@@ -21,6 +21,10 @@ func Execute() {
 	}
 }
 
+func FiberCmd() *cobra.Command {
+	return rootCmd
+}
+
 func init() {
 	cobra.OnInitialize()
 }
