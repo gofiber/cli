@@ -11,6 +11,7 @@ import (
 	"runtime"
 )
 
+// Lookup current Fiber version, if available
 func CurrentVersion(path string) (string, error) {
 
 	if !file.Exist(fmt.Sprintf("%s/go.mod", path)) {
@@ -37,6 +38,7 @@ func CurrentVersion(path string) (string, error) {
 
 }
 
+// Lookup Fiber latest release version
 func ReleaseVersion() (string, error) {
 
 	res, err := http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")

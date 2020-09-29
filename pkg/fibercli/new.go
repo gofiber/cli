@@ -25,6 +25,7 @@ type New struct {
 	Type TemplateType
 }
 
+// Creates new project based on template
 func (n New) Create() error {
 	if n.Type == TemplateBasic {
 		return createBasic(n.Path, n.Name)
@@ -32,6 +33,7 @@ func (n New) Create() error {
 	return createComplex(n.Path, n.Name)
 }
 
+// Create basic project from go template
 func createBasic(dir, projectName string) error {
 	path := fmt.Sprintf("%s/%s", dir, projectName)
 	if err := os.Mkdir(path, os.ModePerm); err != nil {
@@ -72,6 +74,7 @@ func createBasic(dir, projectName string) error {
 	return nil
 }
 
+// create project from boilerplate repository
 func createComplex(dir, projectName string) error {
 	path := fmt.Sprintf("%s/%s", dir, projectName)
 	if err := os.Mkdir(path, os.ModePerm); err != nil {
