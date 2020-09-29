@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os/exec"
+	"runtime"
 )
 
 func CurrentVersion(path string) (string, error) {
@@ -18,7 +19,16 @@ func CurrentVersion(path string) (string, error) {
 
 	cmd := "go list -u -m all | grep github.com/gofiber/fiber | awk '{print $2}'"
 
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	var out []byte
+	var err error
+	switch runtime.GOOS {
+	case "windows":
+		out, err = exec.Command("cmd", "/C", cmd).Output()
+		break
+	default:
+		out, err = exec.Command("bash", "-c", cmd).Output()
+		break
+	}
 	if err != nil {
 		return "", err
 	}
