@@ -1,6 +1,7 @@
 package fibercli
 
 import (
+	"fiber-cli/pkg/file"
 	"fmt"
 	"os"
 	"os/exec"
@@ -85,11 +86,11 @@ func createComplex(dir, projectName string) error {
 		return err
 	}
 
-	if err := ReplaceFiles(path, "go.mod", "boilerplate", projectName); err != nil {
+	if err := file.Replace(path, "go.mod", "boilerplate", projectName); err != nil {
 		return err
 	}
 
-	if err := ReplaceFiles(path, "*.go", "boilerplate", projectName); err != nil {
+	if err := file.Replace(path, "*.go", "boilerplate", projectName); err != nil {
 		return err
 	}
 

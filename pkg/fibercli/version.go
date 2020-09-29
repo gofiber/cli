@@ -3,16 +3,16 @@ package fibercli
 import (
 	"encoding/json"
 	"errors"
+	"fiber-cli/pkg/file"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"os/exec"
 )
 
 func CurrentVersion(path string) (string, error) {
 
-	if _, err := os.Stat(fmt.Sprintf("%s/go.mod", path)); os.IsNotExist(err) {
+	if !file.Exist(fmt.Sprintf("%s/go.mod", path)) {
 		return "", errors.New("go mod not found")
 	}
 
