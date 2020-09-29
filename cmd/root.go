@@ -8,8 +8,8 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "fiber",
-	Short: "Fiber CLI",
+	Use:  "fiber",
+	Long: "An Express-inspired web framework written in Go. Learn more on https://gofiber.io/",
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
