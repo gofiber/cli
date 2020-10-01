@@ -7,6 +7,7 @@ import (
 
 const BoilerPlateRepo = "https://github.com/gofiber/boilerplate"
 
+// Git clone repository
 func Clone(path, repo string) error {
 	_, err := git.PlainClone(path, false, &git.CloneOptions{
 		URL: repo,

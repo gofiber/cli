@@ -1,4 +1,4 @@
-package fibercli
+package file
 
 import (
 	"io/ioutil"
@@ -7,7 +7,19 @@ import (
 	"strings"
 )
 
-func walkFn(path string, fi os.FileInfo, err error, pattern, old, new string) error {
+// Replaces matching file patterns in a path, including subdirectories
+func Replace(path, pattern, old, new string) error {
+	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+		return replaceWalkFn(path, info, err, pattern, old, new)
+	})
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func replaceWalkFn(path string, fi os.FileInfo, err error, pattern, old, new string) error {
 
 	if err != nil {
 		return err
@@ -37,16 +49,5 @@ func walkFn(path string, fi os.FileInfo, err error, pattern, old, new string) er
 		}
 	}
 
-	return nil
-}
-
-func ReplaceFiles(path, pattern, old, new string) error {
-	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		return walkFn(path, info, err, pattern, old, new)
-	})
-
-	if err != nil {
-		return err
-	}
 	return nil
 }

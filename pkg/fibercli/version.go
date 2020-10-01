@@ -3,22 +3,33 @@ package fibercli
 import (
 	"encoding/json"
 	"errors"
+	"fiber-cli/pkg/file"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"os/exec"
+	"runtime"
 )
 
+// Lookup current Fiber version, if available
 func CurrentVersion(path string) (string, error) {
 
-	if _, err := os.Stat(fmt.Sprintf("%s/go.mod", path)); os.IsNotExist(err) {
+	if !file.Exist(fmt.Sprintf("%s/go.mod", path)) {
 		return "", errors.New("go mod not found")
 	}
 
 	cmd := "go list -u -m all | grep github.com/gofiber/fiber | awk '{print $2}'"
 
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	var out []byte
+	var err error
+	switch runtime.GOOS {
+	case "windows":
+		out, err = exec.Command("cmd", "/C", cmd).Output()
+		break
+	default:
+		out, err = exec.Command("bash", "-c", cmd).Output()
+		break
+	}
 	if err != nil {
 		return "", err
 	}
@@ -27,6 +38,7 @@ func CurrentVersion(path string) (string, error) {
 
 }
 
+// Lookup Fiber latest release version
 func ReleaseVersion() (string, error) {
 
 	res, err := http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")

@@ -58,5 +58,5 @@ var newCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(newCmd)
 
-	newCmd.Flags().StringVarP(&templateType, "type", "t", "basic", "basic | complex")
+	newCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "basic|complex")
 }
