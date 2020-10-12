@@ -2,12 +2,13 @@ package main
 
 import (
 	"fiber-cli/cmd"
-	"github.com/spf13/cobra/doc"
 	"log"
+
+	"github.com/spf13/cobra/doc"
 )
 
 func main() {
-	err := doc.GenMarkdownTree(cmd.FiberCmd(), "./")
+	err := doc.GenMarkdownTree(cmd.FiberCmd(), "./docs")
 	if err != nil {
 		log.Fatal(err)
 	}
