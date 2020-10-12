@@ -48,7 +48,7 @@ func Test_Version_Current(t *testing.T) {
 	})
 
 	t.Run("match version", func(t *testing.T) {
-		content := `module github.com/gofiber/fiber-demo
+		content := `module fiber-demo
 go 1.14
 require (
 	github.com/gofiber/fiber/v2 v2.0.6
@@ -64,7 +64,7 @@ require (
 	})
 
 	t.Run("match master", func(t *testing.T) {
-		content := `module github.com/gofiber/fiber-demo
+		content := `module fiber-demo
 go 1.14
 require (
 	github.com/gofiber/fiber v0.0.0-20200926082917-55763e7e6ee3
@@ -80,7 +80,7 @@ require (
 	})
 
 	t.Run("package not found", func(t *testing.T) {
-		content := `module github.com/gofiber/fiber-demo
+		content := `module fiber-demo
 go 1.14
 require (
 	github.com/jarcoal/httpmock v1.0.6
