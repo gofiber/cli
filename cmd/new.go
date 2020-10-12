@@ -4,8 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"text/template"
 
-	"fiber-cli/pkg/fibercli"
 	"github.com/spf13/cobra"
 )
 
@@ -26,20 +27,20 @@ var newCmd = &cobra.Command{
 			return err
 		}
 
-		var tType fibercli.TemplateType
+		var tType TemplateType
 
 		switch templateType {
-		case fibercli.TemplateBasic.String():
-			tType = fibercli.TemplateBasic
+		case TemplateBasic.String():
+			tType = TemplateBasic
 			break
-		case fibercli.TemplateComplex.String():
-			tType = fibercli.TemplateComplex
+		case TemplateComplex.String():
+			tType = TemplateComplex
 			break
 		default:
 			return errors.New("invalid template type")
 		}
 
-		newProj := fibercli.New{
+		newProj := New{
 			Name: projectName,
 			Path: wd,
 			Type: tType,
@@ -59,4 +60,96 @@ func init() {
 	rootCmd.AddCommand(newCmd)
 
 	newCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "basic|complex")
+}
+
+type TemplateType int
+
+const (
+	TemplateBasic TemplateType = iota
+	TemplateComplex
+)
+
+func (t TemplateType) String() string {
+	return [...]string{"basic", "complex"}[t]
+}
+
+type New struct {
+	Name string
+	Path string
+	Type TemplateType
+}
+
+// Creates new project based on template
+func (n New) Create() error {
+	if n.Type == TemplateBasic {
+		return createBasic(n.Path, n.Name)
+	}
+	return createComplex(n.Path, n.Name)
+}
+
+// Create basic project from go template
+func createBasic(dir, projectName string) error {
+	path := fmt.Sprintf("%s/%s", dir, projectName)
+	if err := os.Mkdir(path, os.ModePerm); err != nil {
+		return err
+	}
+
+	if err := os.Chdir(path); err != nil {
+		return err
+	}
+
+	// create main.go
+	mainFile, err := os.Create(fmt.Sprintf("%s/main.go", path))
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err := mainFile.Close(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+
+	mainTemplate := template.Must(template.New("main").Parse(string(MainTemplate())))
+	if err := mainTemplate.Execute(mainFile, nil); err != nil {
+		return err
+	}
+
+	cmdInit := exec.Command("go", "mod", "init", projectName)
+	if err := cmdInit.Run(); err != nil {
+		return err
+	}
+
+	cmdTidy := exec.Command("go", "mod", "tidy")
+	if err := cmdTidy.Run(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// create project from boilerplate repository
+func createComplex(dir, projectName string) error {
+	path := fmt.Sprintf("%s/%s", dir, projectName)
+	if err := os.Mkdir(path, os.ModePerm); err != nil {
+		return err
+	}
+
+	if err := os.Chdir(path); err != nil {
+		return err
+	}
+
+	if err := Clone(path, BoilerPlateRepo); err != nil {
+		return err
+	}
+
+	if err := Replace(path, "go.mod", "boilerplate", projectName); err != nil {
+		return err
+	}
+
+	if err := Replace(path, "*.go", "boilerplate", projectName); err != nil {
+		return err
+	}
+
+	return nil
 }
