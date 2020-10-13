@@ -16,9 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/fsnotify/fsnotify"
+	"github.com/spf13/cobra"
 )
 
 var c config

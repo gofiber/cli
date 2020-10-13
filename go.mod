@@ -1,4 +1,4 @@
-module fiber-cli
+module github.com/gofiber/fiber-cli
 
 go 1.14
 
