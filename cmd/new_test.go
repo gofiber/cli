@@ -13,13 +13,13 @@ func Test_New_Run(t *testing.T) {
 	t.Run("new project", func(t *testing.T) {
 		defer func() {
 			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("testcase"))
+			_ = os.RemoveAll("normal")
 		}()
 
 		setupCmd()
 		defer teardownCmd()
 
-		out, err := runCobraCmd(newCmd, "testcase")
+		out, err := runCobraCmd(newCmd, "normal")
 
 		at.Nil(err)
 		at.Contains(out, "Done")
@@ -28,28 +28,28 @@ func Test_New_Run(t *testing.T) {
 	t.Run("custom mod name", func(t *testing.T) {
 		defer func() {
 			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("testcase"))
+			at.Nil(os.RemoveAll("custom_mod_name"))
 		}()
 
 		setupCmd()
 		defer teardownCmd()
 
-		out, err := runCobraCmd(newCmd, "testcase", "custom")
+		out, err := runCobraCmd(newCmd, "custom_mod_name", "name")
 
 		at.Nil(err)
-		at.Contains(out, "custom")
+		at.Contains(out, "name")
 	})
 
 	t.Run("create complex project", func(t *testing.T) {
 		defer func() {
 			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("testcase"))
+			at.Nil(os.RemoveAll("complex"))
 		}()
 
 		setupCmd()
 		defer teardownCmd()
 
-		out, err := runCobraCmd(newCmd, "testcase", "-t=complex")
+		out, err := runCobraCmd(newCmd, "complex", "-t=complex")
 		at.Nil(err)
 		at.Contains(out, "Done")
 	})
@@ -57,13 +57,13 @@ func Test_New_Run(t *testing.T) {
 	t.Run("failed to create complex project", func(t *testing.T) {
 		defer func() {
 			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("testcase"))
+			at.Nil(os.RemoveAll("complex_failed"))
 		}()
 
 		setupCmd(errFlag)
 		defer teardownCmd()
 
-		out, err := runCobraCmd(newCmd, "testcase", "-t=complex")
+		out, err := runCobraCmd(newCmd, "complex_failed", "-t=complex")
 
 		at.NotNil(err)
 		at.Contains(out, "failed to run")
