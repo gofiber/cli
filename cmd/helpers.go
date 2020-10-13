@@ -67,7 +67,7 @@ func replaceWalkFn(path string, info os.FileInfo, pattern string, old, new []byt
 
 	if matched {
 		var oldContent []byte
-		if oldContent, err = ioutil.ReadFile(path); err != nil {
+		if oldContent, err = ioutil.ReadFile(filepath.Clean(path)); err != nil {
 			return
 		}
 
