@@ -13,7 +13,7 @@ func Test_New_Run(t *testing.T) {
 	t.Run("new project", func(t *testing.T) {
 		defer func() {
 			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("normal"))
+			_ = os.RemoveAll("normal")
 		}()
 
 		setupCmd()
