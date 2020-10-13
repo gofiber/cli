@@ -8,7 +8,7 @@ import (
 
 func init() {
 	rootCmd.AddCommand(
-		versionCmd, newCmd,
+		versionCmd, newCmd, DevCmd,
 	)
 }
 
