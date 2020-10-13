@@ -78,6 +78,18 @@ func teardownLookPath() {
 	execLookPath = exec.LookPath
 }
 
+func setupOsExit(override ...func(int)) {
+	fn := func(_ int) {}
+	if len(override) > 0 {
+		fn = override[0]
+	}
+	osExit = fn
+}
+
+func teardownOsExit() {
+	osExit = os.Exit
+}
+
 func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
 	b := new(bytes.Buffer)
 
