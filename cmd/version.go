@@ -35,7 +35,7 @@ func versionRun(cmd *cobra.Command, _ []string) {
 	_, _ = fmt.Fprintf(w, "fiber version: %s(latest %s)\n", cur, latest)
 }
 
-var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber/?.*?\s+(.*)\n`)
+var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
 var currentVersionFile = "go.mod"
 
 func currentVersion() (string, error) {
