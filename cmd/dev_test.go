@@ -173,6 +173,14 @@ func Test_Dev_Escort_WatchingFiles(t *testing.T) {
 	}
 }
 
+func Test_Dev_Escort_WalkForWatcher(t *testing.T) {
+	t.Parallel()
+
+	e := getEscort()
+
+	e.walkForWatcher(" ")
+}
+
 func Test_Dev_Escort_HitExtensions(t *testing.T) {
 	t.Parallel()
 

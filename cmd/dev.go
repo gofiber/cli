@@ -297,6 +297,10 @@ func (e *escort) watchingPipes() {
 
 func (e *escort) walkForWatcher(root string) {
 	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
 		if info != nil && !info.IsDir() {
 			return nil
 		}
