@@ -1,101 +1,79 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
-	"os/exec"
-	"runtime"
+	"regexp"
 
 	"github.com/spf13/cobra"
 )
 
-// versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Output the fiber version number",
-	RunE: func(cmd *cobra.Command, args []string) error {
-
-		latestVersion, err := ReleaseVersion()
-		if err != nil {
-			return err
-		}
-
-		wd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("Latest fiber release: %s\n", latestVersion)
-
-		currentVersion, err := CurrentVersion(wd)
-		if err != nil {
-			fmt.Printf("Error in getting current Fiber version: %s", err)
-		}
-
-		fmt.Printf("Current fiber release: %s\n", currentVersion)
-
-		return nil
-	},
+	Short: "Print the local and released version number of fiber",
+	Run:   versionRun,
 }
 
-func init() {
-	rootCmd.AddCommand(versionCmd)
+func versionRun(cmd *cobra.Command, _ []string) {
+	var (
+		cur, latest string
+		err         error
+		w           = cmd.OutOrStdout()
+	)
+
+	if cur, err = currentVersion(); err != nil {
+		cur = err.Error()
+	}
+
+	if latest, err = latestVersion(); err != nil {
+		_, _ = fmt.Fprintf(w, "fiber version: %v\n", err)
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "fiber version: %s(latest %s)\n", cur, latest)
 }
 
-// Lookup current Fiber version, if available
-func CurrentVersion(path string) (string, error) {
+var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
+var currentVersionFile = "go.mod"
 
-	if !Exist(fmt.Sprintf("%s/go.mod", path)) {
-		return "", errors.New("go mod not found")
-	}
-
-	cmd := "go list -u -m all | grep github.com/gofiber/fiber | awk '{print $2}'"
-
-	var out []byte
-	var err error
-	switch runtime.GOOS {
-	case "windows":
-		out, err = exec.Command("cmd", "/C", cmd).Output()
-		break
-	default:
-		out, err = exec.Command("bash", "-c", cmd).Output()
-		break
-	}
+func currentVersion() (string, error) {
+	b, err := ioutil.ReadFile(currentVersionFile)
 	if err != nil {
 		return "", err
 	}
 
-	return string(out), nil
+	if submatch := currentVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
+		return string(submatch[1]), nil
+	}
 
+	return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
 }
 
-// Lookup Fiber latest release version
-func ReleaseVersion() (string, error) {
+var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"(v.*?)"`)
 
-	res, err := http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")
-	if err != nil {
-		return "", err
-	}
-	release, err := ioutil.ReadAll(res.Body)
-	if res.Body.Close() != nil {
-		return "", err
-	}
+func latestVersion() (v string, err error) {
+	var (
+		res *http.Response
+		b   []byte
+	)
 
-	if err != nil {
-		return "", err
-
+	if res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest"); err != nil {
+		return
 	}
 
-	jsonRes := make(map[string]interface{})
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
-	parseErr := json.Unmarshal(release, &jsonRes)
-	if parseErr != nil {
-		return "", err
+	if b, err = ioutil.ReadAll(res.Body); err != nil {
+		return
 	}
 
-	return fmt.Sprintf("%s", jsonRes["name"]), nil
+	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
+		return string(submatch[1]), nil
+	}
+
+	return "", errors.New("no version found in github response body")
 }
