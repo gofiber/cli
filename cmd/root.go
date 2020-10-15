@@ -14,8 +14,9 @@ func init() {
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:  "fiber",
-	Long: "🚀 Fiber is an Express inspired web framework written in Go with 💖\n Learn more on https://gofiber.io",
+	Use:           "fiber",
+	Long:          "🚀 Fiber is an Express inspired web framework written in Go with 💖\n Learn more on https://gofiber.io",
+	SilenceErrors: true,
 }
 
 var osExit = os.Exit
