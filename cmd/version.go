@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -27,12 +28,12 @@ func versionRun(cmd *cobra.Command, _ []string) {
 		cur = err.Error()
 	}
 
-	if latest, err = latestVersion(); err != nil {
+	if latest, err = latestVersion(false); err != nil {
 		_, _ = fmt.Fprintf(w, "fiber version: %v\n", err)
 		return
 	}
 
-	_, _ = fmt.Fprintf(w, "fiber version: %s(latest %s)\n", cur, latest)
+	_, _ = fmt.Fprintf(w, "fiber version: %s (latest %s)\n", cur, latest)
 }
 
 var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
@@ -53,13 +54,20 @@ func currentVersion() (string, error) {
 
 var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"(v.*?)"`)
 
-func latestVersion() (v string, err error) {
+func latestVersion(getCliVersion bool) (v string, err error) {
 	var (
 		res *http.Response
 		b   []byte
 	)
 
-	if res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest"); err != nil {
+	var targetUrl string
+	if getCliVersion {
+		targetUrl = "https://api.github.com/repos/gofiber/fiber-cli/releases/latest"
+	} else {
+		targetUrl = "https://api.github.com/repos/gofiber/fiber/releases/latest"
+	}
+
+	if res, err = http.Get(targetUrl); err != nil {
 		return
 	}
 
@@ -72,7 +80,7 @@ func latestVersion() (v string, err error) {
 	}
 
 	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
-		return string(submatch[1]), nil
+		return strings.Trim(string(submatch[1]), "v"), nil
 	}
 
 	return "", errors.New("no version found in github response body")
