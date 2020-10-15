@@ -29,8 +29,3 @@ func Execute() {
 		osExit(1)
 	}
 }
-
-// FiberCmd indicates fiber-cli's root command
-func FiberCmd() *cobra.Command {
-	return rootCmd
-}
