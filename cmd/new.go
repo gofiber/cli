@@ -112,26 +112,20 @@ var (
 	newBasicTemplate = `package main
 
 import (
-	"github.com/gofiber/fiber/v2"
-	"log"
+    "log"
+
+    "github.com/gofiber/fiber/v2"
 )
 
 func main() {
-	if err := run(); err != nil {
-		log.Fatal(err)
-	}
-}
+    app := fiber.New()
 
-func run() error {
-	app := fiber.New()
+    app.Get("/", func(c *fiber.Ctx) error {
+        return c.SendString("Hello, World!")
+    })
 
-	app.Get("/", func(c *fiber.Ctx) error {
-		return c.SendString("Hello, World!")
-	})
-	
-	return app.Listen(":3000")
-}
-`
+    log.Fatal(app.Listen(":3000"))
+}`
 
 	newSuccessTemplate = `
 Scaffolding project in %s (module %s)
