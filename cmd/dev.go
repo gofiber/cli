@@ -138,6 +138,9 @@ func (e *escort) init() (err error) {
 	}()
 
 	e.binPath = f.Name()
+	if runtime.GOOS == "windows" {
+		e.binPath += ".exe"
+	}
 
 	e.hitFunc = e.runBin
 
