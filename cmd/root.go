@@ -14,8 +14,9 @@ func init() {
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:  "fiber",
-	Long: "🚀 Fiber is an Express inspired web framework written in Go with 💖\n Learn more on https://gofiber.io",
+	Use:           "fiber",
+	Long:          "🚀 Fiber is an Express inspired web framework written in Go with 💖\n Learn more on https://gofiber.io",
+	SilenceErrors: true,
 }
 
 var osExit = os.Exit
@@ -24,6 +25,7 @@ var osExit = os.Exit
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		rootCmd.Println(err)
 		osExit(1)
 	}
 }
