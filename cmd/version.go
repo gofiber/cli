@@ -60,14 +60,13 @@ func latestVersion(getCliVersion bool) (v string, err error) {
 		b   []byte
 	)
 
-	var targetUrl string
 	if getCliVersion {
-		targetUrl = "https://api.github.com/repos/gofiber/fiber-cli/releases/latest"
+		res, err = http.Get("https://api.github.com/repos/gofiber/fiber-cli/releases/latest")
 	} else {
-		targetUrl = "https://api.github.com/repos/gofiber/fiber/releases/latest"
+		res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")
 	}
 
-	if res, err = http.Get(targetUrl); err != nil {
+	if err != nil {
 		return
 	}
 
