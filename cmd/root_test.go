@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func Test_Root_Execute(t *testing.T) {
@@ -22,8 +20,4 @@ func Test_Root_Execute(t *testing.T) {
 	}
 
 	Execute()
-}
-
-func Test_Root_FiberCmd(t *testing.T) {
-	assert.Equal(t, rootCmd, FiberCmd())
 }
