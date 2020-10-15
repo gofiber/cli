@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -33,7 +34,9 @@ func Test_Dev_Escort_Init(t *testing.T) {
 
 	at.Contains(e.root, "fiber-cli")
 	at.NotEmpty(e.binPath)
-	at.Nil(os.Remove(e.binPath))
+	if runtime.GOOS != "windows" {
+		at.Nil(os.Remove(e.binPath))
+	}
 }
 
 func Test_Dev_Escort_Run(t *testing.T) {
