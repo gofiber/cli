@@ -3,19 +3,13 @@ package cmd
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 )
-
-func init() {
-	rc.CliVersionCheckedAt = 0
-}
 
 func Test_Root_Execute(t *testing.T) {
 	setupOsExit()
@@ -49,34 +43,6 @@ func Test_Root_RootPersistentPreRun(t *testing.T) {
 	at.Contains(b.String(), "failed to load")
 }
 
-func Test_Root_LoadConfig(t *testing.T) {
-	at := assert.New(t)
-
-	t.Run("no config file", func(t *testing.T) {
-		homeDir = setupHomeDir(t, "LoadConfig")
-		defer teardownHomeDir(homeDir)
-
-		at.Nil(loadConfig())
-
-		at.FileExists(fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName))
-	})
-
-	t.Run("has config file", func(t *testing.T) {
-		homeDir = setupHomeDir(t, "LoadConfig")
-		defer teardownHomeDir(homeDir)
-
-		filename := fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName)
-
-		f, err := os.Create(filename)
-		at.Nil(err)
-		defer func() { at.Nil(f.Close()) }()
-		_, err = f.WriteString("{}")
-		at.Nil(err)
-
-		at.Nil(loadConfig())
-	})
-}
-
 func Test_Root_RootPersistentPostRun(t *testing.T) {
 	at, b := setupRootCmd(t)
 
@@ -101,14 +67,21 @@ func Test_Root_CheckCliVersion(t *testing.T) {
 
 	at.Equal(0, b.Len())
 
+	homeDir = setupHomeDir(t, "CheckCliVersion")
+	defer teardownHomeDir(homeDir)
+
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse))
 
 	checkCliVersion(rootCmd)
 
 	at.Contains(b.String(), "WARNING")
+
+	at.InDelta(time.Now().Unix(), rc.CliVersionCheckedAt, 1)
 }
 
 func Test_Root_NeedCheckCliVersion(t *testing.T) {
+	rc.CliVersionCheckedAt = 0
+
 	assert.True(t, needCheckCliVersion())
 }
 

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/muesli/termenv"
@@ -13,14 +12,9 @@ const version = "0.0.2"
 const configName = ".fiberconfig"
 
 var (
-	homeDir string
-
 	rc = rootConfig{
-		CliVersionCheckInterval: int64((time.Hour * 24) / time.Second),
-		CliVersionCheckedAt:     time.Now().Unix(),
+		CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
 	}
-
-	osExit = os.Exit
 )
 
 type rootConfig struct {
@@ -32,8 +26,6 @@ func init() {
 	rootCmd.AddCommand(
 		versionCmd, newCmd, DevCmd,
 	)
-
-	homeDir, _ = os.UserHomeDir()
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -66,21 +58,6 @@ func rootPersistentPreRun(cmd *cobra.Command, _ []string) {
 	}
 }
 
-func loadConfig() (err error) {
-	configFilePath := configName
-	if homeDir != "" {
-		configFilePath = fmt.Sprintf("%s%c", homeDir, os.PathSeparator) + configFilePath
-	}
-
-	if fileExist(configFilePath) {
-		if err = loadJson(configFilePath, &rc); err != nil {
-			return
-		}
-	}
-
-	return storeJson(configFilePath, rc)
-}
-
 func rootPersistentPostRun(cmd *cobra.Command, _ []string) {
 	checkCliVersion(cmd)
 }
@@ -100,6 +77,10 @@ func checkCliVersion(cmd *cobra.Command) {
 			Foreground(termenv.ANSIBrightYellow)
 		cmd.Println(warning)
 	}
+
+	rc.CliVersionCheckedAt = time.Now().Unix()
+
+	storeConfig()
 }
 
 func needCheckCliVersion() bool {
@@ -114,6 +95,5 @@ CLI version ` + version
 
 	versionWarningFormat = `
 WARNING: You are using fiber-cli version %s; however, version %s is available.
-You should consider upgrading via the 'go get -u github.com/gofiber/fiber-cli' command.
-`
+You should consider upgrading via the 'go get -u github.com/gofiber/fiber-cli' command.`
 )

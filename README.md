@@ -11,7 +11,10 @@ go get -u github.com/gofiber/fiber-cli/fiber
 ### Synopsis
 
 🚀 Fiber is an Express inspired web framework written in Go with 💖
- Learn more on https://gofiber.io
+ 
+Learn more on https://gofiber.io
+ 
+CLI version v0.0.x
 
 ### Options
 
