@@ -25,7 +25,7 @@ type rootConfig struct {
 
 func init() {
 	rootCmd.AddCommand(
-		versionCmd, newCmd, DevCmd,
+		versionCmd, newCmd, DevCmd, upgradeCmd,
 	)
 }
 
@@ -90,8 +90,11 @@ func checkCliVersion(cmd *cobra.Command) {
 		}
 	}
 
-	rc.CliVersionCheckedAt = time.Now().Unix()
+	updateVersionCheckedAt()
+}
 
+func updateVersionCheckedAt() {
+	rc.CliVersionCheckedAt = time.Now().Unix()
 	storeConfig()
 }
 
