@@ -47,3 +47,7 @@ func Test_Helper_Replace(t *testing.T) {
 
 	at.Nil(replace(dir, "*.go", "old", "new"))
 }
+
+func Test_Helper_StoreJson(t *testing.T) {
+	assert.NotNil(t, storeJson("", complex(1, 1)))
+}
