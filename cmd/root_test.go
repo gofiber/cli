@@ -19,5 +19,5 @@ func Test_Root_Execute(t *testing.T) {
 		return errors.New("fake error")
 	}
 
-	Execute()
+	Execute("0.0.0")
 }
