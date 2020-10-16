@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"time"
 )
@@ -123,7 +124,7 @@ func storeJson(filename string, v interface{}) error {
 }
 
 func loadJson(filename string, v interface{}) error {
-	b, err := ioutil.ReadFile(filename)
+	b, err := ioutil.ReadFile(path.Clean(filename))
 	if err != nil {
 		return err
 	}
