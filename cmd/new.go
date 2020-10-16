@@ -73,7 +73,7 @@ func createBasic(projectPath, modName string) (err error) {
 		return
 	}
 
-	return runCmd("go", "mod", "init", modName)
+	return runCmd(execCommand("go", "mod", "init", modName))
 }
 
 const boilerPlateRepo = "https://github.com/gofiber/boilerplate"
@@ -84,7 +84,7 @@ func createComplex(projectPath, modName string) (err error) {
 		return
 	}
 
-	if err = runCmd(git, "clone", boilerPlateRepo, projectPath); err != nil {
+	if err = runCmd(execCommand(git, "clone", boilerPlateRepo, projectPath)); err != nil {
 		return
 	}
 

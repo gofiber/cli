@@ -25,8 +25,7 @@ func init() {
 	homeDir, _ = os.UserHomeDir()
 }
 
-func runCmd(name string, arg ...string) (err error) {
-	cmd := execCommand(name, arg...)
+func runCmd(cmd *exec.Cmd) (err error) {
 
 	var (
 		stderr io.ReadCloser

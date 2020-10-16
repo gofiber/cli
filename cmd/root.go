@@ -25,7 +25,7 @@ type rootConfig struct {
 
 func init() {
 	rootCmd.AddCommand(
-		versionCmd, newCmd, DevCmd, upgradeCmd,
+		versionCmd, newCmd, devCmd, upgradeCmd,
 	)
 }
 
