@@ -53,13 +53,13 @@ func currentVersion() (string, error) {
 
 var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"v(.*?)"`)
 
-func latestVersion(getCliVersion bool) (v string, err error) {
+func latestVersion(isCli bool) (v string, err error) {
 	var (
 		res *http.Response
 		b   []byte
 	)
 
-	if getCliVersion {
+	if isCli {
 		res, err = http.Get("https://api.github.com/repos/gofiber/fiber-cli/releases/latest")
 	} else {
 		res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")

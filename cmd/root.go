@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.1"
+const version = "0.0.2"
 
 func init() {
 	rootCmd.AddCommand(
@@ -25,10 +25,6 @@ var rootCmd = &cobra.Command{
 	SilenceErrors:     true,
 }
 
-func rootRunE(cmd *cobra.Command, _ []string) error {
-	return cmd.Help()
-}
-
 var osExit = os.Exit
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -38,6 +34,10 @@ func Execute() {
 		rootCmd.Println(err)
 		osExit(1)
 	}
+}
+
+func rootRunE(cmd *cobra.Command, _ []string) error {
+	return cmd.Help()
 }
 
 func rootPersistentPostRun(cmd *cobra.Command, _ []string) {
