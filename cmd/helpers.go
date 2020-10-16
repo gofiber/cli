@@ -13,9 +13,17 @@ import (
 	"time"
 )
 
-var execLookPath = exec.LookPath
+var (
+	homeDir string
 
-var execCommand = exec.Command
+	execLookPath = exec.LookPath
+	execCommand  = exec.Command
+	osExit       = os.Exit
+)
+
+func init() {
+	homeDir, _ = os.UserHomeDir()
+}
 
 func runCmd(name string, arg ...string) (err error) {
 	cmd := execCommand(name, arg...)
@@ -105,6 +113,30 @@ func formatLatency(d time.Duration) time.Duration {
 	default:
 		return d
 	}
+}
+
+func loadConfig() (err error) {
+	configFilePath := configFilePath()
+
+	if fileExist(configFilePath) {
+		if err = loadJson(configFilePath, &rc); err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+func storeConfig() {
+	_ = storeJson(configFilePath(), rc)
+}
+
+func configFilePath() string {
+	if homeDir == "" {
+		return configName
+	}
+
+	return fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName)
 }
 
 var fileExist = func(filename string) bool {
