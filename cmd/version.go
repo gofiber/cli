@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"regexp"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -52,15 +51,15 @@ func currentVersion() (string, error) {
 	return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
 }
 
-var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"(v.*?)"`)
+var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"v(.*?)"`)
 
-func latestVersion(getCliVersion bool) (v string, err error) {
+func latestVersion(isCli bool) (v string, err error) {
 	var (
 		res *http.Response
 		b   []byte
 	)
 
-	if getCliVersion {
+	if isCli {
 		res, err = http.Get("https://api.github.com/repos/gofiber/fiber-cli/releases/latest")
 	} else {
 		res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")
@@ -79,7 +78,7 @@ func latestVersion(getCliVersion bool) (v string, err error) {
 	}
 
 	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
-		return strings.Trim(string(submatch[1]), "v"), nil
+		return string(submatch[1]), nil
 	}
 
 	return "", errors.New("no version found in github response body")
