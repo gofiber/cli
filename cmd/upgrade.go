@@ -10,10 +10,9 @@ import (
 )
 
 var upgradeCmd = &cobra.Command{
-	Use:     "upgrade",
-	Aliases: []string{"u"},
-	Short:   "Upgrade Fiber CLI if a newer version is available",
-	RunE:    upgradeRunE,
+	Use:   "upgrade",
+	Short: "Upgrade Fiber cli if a newer version is available",
+	RunE:  upgradeRunE,
 }
 
 func upgradeRunE(cmd *cobra.Command, _ []string) error {
@@ -23,14 +22,25 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 	}
 
 	if version != cliLatestVersion {
-		upgrader := execCommand("go", "get", "-u", "github.com/gofiber/fiber-cli/fiber")
-		upgrader.Env = append(os.Environ(), "GO111MODULE=off")
-		if err := runCmd(upgrader); err != nil {
-			return fmt.Errorf("fiber: failed to upgrade: %w", err)
-		}
-		success := fmt.Sprintf("Congratulations! Fiber-cli is now at v%s!", cliLatestVersion)
-		cmd.Println(termenv.String(success).Foreground(termenv.ANSIBrightGreen))
+		upgrade(cmd, cliLatestVersion)
+	} else {
+		msg := fmt.Sprintf("Currently Fiber cli is the latest version %s.", cliLatestVersion)
+		cmd.Println(termenv.String(msg).
+			Foreground(termenv.ANSIBrightBlue))
 	}
 
 	return nil
+}
+
+func upgrade(cmd *cobra.Command, cliLatestVersion string) {
+	upgrader := execCommand("go", "get", "-u", "github.com/gofiber/fiber-cli/fiber")
+	upgrader.Env = append(upgrader.Env, os.Environ()...)
+	upgrader.Env = append(upgrader.Env, "GO111MODULE=off")
+	if err := runCmd(upgrader); err != nil {
+		cmd.Printf("fiber: failed to upgrade: %v", err)
+		return
+	}
+
+	success := fmt.Sprintf("Done! Fiber-cli is now at v%s!", cliLatestVersion)
+	cmd.Println(termenv.String(success).Foreground(termenv.ANSIBrightGreen))
 }
