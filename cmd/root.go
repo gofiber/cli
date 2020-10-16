@@ -13,7 +13,7 @@ const configName = ".fiberconfig"
 
 var (
 	rc = rootConfig{
-		CliVersionCheckInterval: int64((time.Hour * 24) / time.Second),
+		CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
 	}
 )
 
