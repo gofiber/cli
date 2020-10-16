@@ -7,10 +7,10 @@ import (
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Upgrade Fiber CLI if a newer version is available",
-	RunE:  upgradeRun,
+	RunE:  upgradeRunE,
 }
 
-func upgradeRun(cmd *cobra.Command, _ []string) error {
+func upgradeRunE(cmd *cobra.Command, _ []string) error {
 
 	cliLatestVersion, err := latestVersion(true)
 	if err != nil {
@@ -18,8 +18,8 @@ func upgradeRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	update := execCommand("go", "get", "-u", "-v", "github.com/gofiber/fiber-cli")
-	if out, err := update.CombinedOutput(); err != nil {
-		cmd.Printf("fiber upgrade: failed to update: %s\nCheck the logs for more info.\n", out)
+	if _, err := update.CombinedOutput(); err != nil {
+		cmd.Printf("fiber upgrade: failed to update: %s\nCheck the logs for more info.\n", err)
 		return err
 	}
 
