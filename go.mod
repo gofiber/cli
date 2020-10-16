@@ -3,6 +3,9 @@ module github.com/gofiber/fiber-cli
 go 1.14
 
 require (
+	github.com/charmbracelet/bubbles v0.6.1
+	github.com/charmbracelet/bubbletea v0.11.1
+	github.com/containerd/console v1.0.1
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/jarcoal/httpmock v1.0.6
 	github.com/kr/text v0.2.0 // indirect

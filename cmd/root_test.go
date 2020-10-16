@@ -85,6 +85,14 @@ func Test_Root_NeedCheckCliVersion(t *testing.T) {
 	assert.True(t, needCheckCliVersion())
 }
 
+func Test_Root_UpgradeInternally(t *testing.T) {
+	at, b := setupRootCmd(t)
+
+	upgradeInternally(rootCmd, "1.1.1")
+	// TODO assert upgrade
+	at.Contains(b.String(), "1.1.1")
+}
+
 func setupRootCmd(t *testing.T) (*assert.Assertions, *bytes.Buffer) {
 	at := assert.New(t)
 
