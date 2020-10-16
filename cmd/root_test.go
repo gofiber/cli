@@ -3,53 +3,123 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 )
 
+func init() {
+	rc.CliVersionCheckedAt = 0
+}
+
 func Test_Root_Execute(t *testing.T) {
 	setupOsExit()
 	defer teardownOsExit()
 
-	b := &bytes.Buffer{}
-	rootCmd.SetErr(b)
-	rootCmd.SetOut(b)
+	setupRootCmd(t)
 
 	Execute()
 }
 
 func Test_Root_RunE(t *testing.T) {
-	b := &bytes.Buffer{}
-	rootCmd.SetErr(b)
-	rootCmd.SetOut(b)
+	at, b := setupRootCmd(t)
 
-	assert.Nil(t, rootRunE(rootCmd, nil))
+	at.Nil(rootRunE(rootCmd, nil))
+
+	at.Contains(b.String(), "fiber")
+}
+
+func Test_Root_RootPersistentPreRun(t *testing.T) {
+	at, b := setupRootCmd(t)
+
+	homeDir = setupHomeDir(t, "RootPersistentPreRun")
+	defer teardownHomeDir(homeDir)
+
+	oldFileExist := fileExist
+	fileExist = func(_ string) bool { return true }
+	defer func() { fileExist = oldFileExist }()
+
+	rootPersistentPreRun(rootCmd, nil)
+
+	at.Contains(b.String(), "failed to load")
+}
+
+func Test_Root_LoadConfig(t *testing.T) {
+	at := assert.New(t)
+
+	t.Run("no config file", func(t *testing.T) {
+		homeDir = setupHomeDir(t, "LoadConfig")
+		defer teardownHomeDir(homeDir)
+
+		at.Nil(loadConfig())
+
+		at.FileExists(fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName))
+	})
+
+	t.Run("has config file", func(t *testing.T) {
+		homeDir = setupHomeDir(t, "LoadConfig")
+		defer teardownHomeDir(homeDir)
+
+		filename := fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName)
+
+		f, err := os.Create(filename)
+		at.Nil(err)
+		defer func() { at.Nil(f.Close()) }()
+		_, err = f.WriteString("{}")
+		at.Nil(err)
+
+		at.Nil(loadConfig())
+	})
 }
 
 func Test_Root_RootPersistentPostRun(t *testing.T) {
-	at := assert.New(t)
+	at, b := setupRootCmd(t)
 
-	b := &bytes.Buffer{}
-	rootCmd.SetErr(b)
-	rootCmd.SetOut(b)
+	rc.CliVersionCheckedAt = time.Now().Unix()
+
+	rootPersistentPostRun(rootCmd, nil)
+
+	rc.CliVersionCheckedAt = 0
+
+	at.Equal(0, b.Len())
+}
+
+func Test_Root_CheckCliVersion(t *testing.T) {
+	at, b := setupRootCmd(t)
 
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewErrorResponder(errors.New("network error")))
 
-	rootPersistentPostRun(rootCmd, nil)
+	checkCliVersion(rootCmd)
 
 	at.Equal(0, b.Len())
 
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse))
 
-	rootPersistentPostRun(rootCmd, nil)
+	checkCliVersion(rootCmd)
 
 	at.Contains(b.String(), "WARNING")
+}
+
+func Test_Root_NeedCheckCliVersion(t *testing.T) {
+	assert.True(t, needCheckCliVersion())
+}
+
+func setupRootCmd(t *testing.T) (*assert.Assertions, *bytes.Buffer) {
+	at := assert.New(t)
+
+	b := &bytes.Buffer{}
+	rootCmd.SetErr(b)
+	rootCmd.SetOut(b)
+
+	return at, b
 }
 
 var latestCliVersionUrl = "https://api.github.com/repos/gofiber/fiber-cli/releases/latest"

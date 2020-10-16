@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -103,4 +104,29 @@ func formatLatency(d time.Duration) time.Duration {
 	default:
 		return d
 	}
+}
+
+var fileExist = func(filename string) bool {
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return false
+	}
+	return true
+}
+
+func storeJson(filename string, v interface{}) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(filename, b, 0600)
+}
+
+func loadJson(filename string, v interface{}) error {
+	b, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(b, v)
 }

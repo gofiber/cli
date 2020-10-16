@@ -3,17 +3,37 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
 
 const version = "0.0.2"
+const configName = ".fiberconfig"
+
+var (
+	homeDir string
+
+	rc = rootConfig{
+		CliVersionCheckInterval: int64((time.Hour * 24) / time.Second),
+		CliVersionCheckedAt:     time.Now().Unix(),
+	}
+
+	osExit = os.Exit
+)
+
+type rootConfig struct {
+	CliVersionCheckInterval int64 `json:"cli_version_check_interval"`
+	CliVersionCheckedAt     int64 `json:"cli_version_checked_at"`
+}
 
 func init() {
 	rootCmd.AddCommand(
 		versionCmd, newCmd, DevCmd,
 	)
+
+	homeDir, _ = os.UserHomeDir()
 }
 
 // rootCmd represents the base command when called without any subcommands
@@ -21,11 +41,10 @@ var rootCmd = &cobra.Command{
 	Use:               "fiber",
 	Long:              longDescription,
 	RunE:              rootRunE,
+	PersistentPreRun:  rootPersistentPreRun,
 	PersistentPostRun: rootPersistentPostRun,
 	SilenceErrors:     true,
 }
-
-var osExit = os.Exit
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
@@ -40,7 +59,37 @@ func rootRunE(cmd *cobra.Command, _ []string) error {
 	return cmd.Help()
 }
 
+func rootPersistentPreRun(cmd *cobra.Command, _ []string) {
+	if err := loadConfig(); err != nil {
+		warning := fmt.Sprintf("WARNING: failed to load config: %s\n\n", err)
+		cmd.Println(termenv.String(warning).Foreground(termenv.ANSIBrightYellow))
+	}
+}
+
+func loadConfig() (err error) {
+	configFilePath := configName
+	if homeDir != "" {
+		configFilePath = fmt.Sprintf("%s%c", homeDir, os.PathSeparator) + configFilePath
+	}
+
+	if fileExist(configFilePath) {
+		if err = loadJson(configFilePath, &rc); err != nil {
+			return
+		}
+	}
+
+	return storeJson(configFilePath, rc)
+}
+
 func rootPersistentPostRun(cmd *cobra.Command, _ []string) {
+	checkCliVersion(cmd)
+}
+
+func checkCliVersion(cmd *cobra.Command) {
+	if !needCheckCliVersion() {
+		return
+	}
+
 	cliLatestVersion, err := latestVersion(true)
 	if err != nil {
 		return
@@ -51,6 +100,10 @@ func rootPersistentPostRun(cmd *cobra.Command, _ []string) {
 			Foreground(termenv.ANSIBrightYellow)
 		cmd.Println(warning)
 	}
+}
+
+func needCheckCliVersion() bool {
+	return rc.CliVersionCheckedAt+rc.CliVersionCheckInterval < time.Now().Unix()
 }
 
 const (

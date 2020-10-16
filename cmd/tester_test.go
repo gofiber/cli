@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/spf13/cobra"
 )
@@ -100,4 +103,14 @@ func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
 	err := cmd.Execute()
 
 	return b.String(), err
+}
+
+func setupHomeDir(t *testing.T, pattern string) string {
+	homeDir, err := ioutil.TempDir("", "test_"+pattern)
+	assert.Nil(t, err)
+	return homeDir
+}
+
+func teardownHomeDir(dir string) {
+	_ = os.RemoveAll(dir)
 }
