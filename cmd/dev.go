@@ -23,21 +23,21 @@ import (
 var c config
 
 func init() {
-	DevCmd.PersistentFlags().StringVarP(&c.root, "root", "r", ".",
+	devCmd.PersistentFlags().StringVarP(&c.root, "root", "r", ".",
 		"root path for watch, all files must be under root")
-	DevCmd.PersistentFlags().StringVarP(&c.target, "target", "t", ".",
+	devCmd.PersistentFlags().StringVarP(&c.target, "target", "t", ".",
 		"target path for go build")
-	DevCmd.PersistentFlags().StringSliceVarP(&c.extensions, "extensions", "e",
+	devCmd.PersistentFlags().StringSliceVarP(&c.extensions, "extensions", "e",
 		[]string{"go", "tmpl", "tpl", "html"}, "file extensions to watch")
-	DevCmd.PersistentFlags().StringSliceVarP(&c.excludeDirs, "exclude_dirs", "D",
+	devCmd.PersistentFlags().StringSliceVarP(&c.excludeDirs, "exclude_dirs", "D",
 		[]string{"assets", "tmp", "vendor", "node_modules"}, "ignore these directories")
-	DevCmd.PersistentFlags().StringSliceVarP(&c.excludeFiles, "exclude_files", "F", nil, "ignore these files")
-	DevCmd.PersistentFlags().DurationVarP(&c.delay, "delay", "d", time.Second,
+	devCmd.PersistentFlags().StringSliceVarP(&c.excludeFiles, "exclude_files", "F", nil, "ignore these files")
+	devCmd.PersistentFlags().DurationVarP(&c.delay, "delay", "d", time.Second,
 		"delay to trigger rerun")
 }
 
-// DevCmd reruns the fiber project if watched files changed
-var DevCmd = &cobra.Command{
+// devCmd reruns the fiber project if watched files changed
+var devCmd = &cobra.Command{
 	Use:   "dev",
 	Short: "Rerun the fiber project if watched files changed",
 	RunE:  devRunE,

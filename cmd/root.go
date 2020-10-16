@@ -25,7 +25,7 @@ type rootConfig struct {
 
 func init() {
 	rootCmd.AddCommand(
-		versionCmd, newCmd, DevCmd, upgradeCmd,
+		versionCmd, newCmd, devCmd, upgradeCmd,
 	)
 }
 
@@ -81,7 +81,7 @@ func checkCliVersion(cmd *cobra.Command) {
 		ok, err := prompt.YesOrNo()
 
 		if err == nil && ok {
-			upgradeInternally(cmd, cliLatestVersion)
+			upgrade(cmd, cliLatestVersion)
 		}
 
 		if err != nil {
@@ -96,13 +96,6 @@ func checkCliVersion(cmd *cobra.Command) {
 func updateVersionCheckedAt() {
 	rc.CliVersionCheckedAt = time.Now().Unix()
 	storeConfig()
-}
-
-func upgradeInternally(cmd *cobra.Command, cliLatestVersion string) {
-	// TODO call upgrade
-
-	success := fmt.Sprintf("Congratulations! Fiber-cli is now at v%s!", cliLatestVersion)
-	cmd.Println(termenv.String(success).Foreground(termenv.ANSIBrightGreen))
 }
 
 func needCheckCliVersion() bool {

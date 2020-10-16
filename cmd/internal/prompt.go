@@ -18,9 +18,6 @@ type Prompt struct {
 	answer      string
 }
 
-type tickMsg struct{}
-type errMsg error
-
 func NewPrompt(title string, placeholder ...string) *Prompt {
 	p := &Prompt{
 		title: title,
@@ -36,11 +33,12 @@ func NewPrompt(title string, placeholder ...string) *Prompt {
 }
 
 func (p *Prompt) YesOrNo() (bool, error) {
-	if _, err := p.Answer(); err != nil {
+	answer, err := p.Answer()
+	if err != nil {
 		return false, err
 	}
 
-	return parseBool(p.answer), nil
+	return parseBool(answer), nil
 }
 
 func parseBool(str string) bool {
@@ -98,7 +96,7 @@ func (p *Prompt) update(msg tea.Msg, model tea.Model) (tea.Model, tea.Cmd) {
 		}
 
 	// We handle errors just like any other message
-	case errMsg:
+	case input.ErrMsg:
 		m.err = msg
 		return m, nil
 	}
