@@ -17,7 +17,8 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	update := execCommand("go", "get", "-u", "-v", "github.com/gofiber/fiber-cli")
+	update := execCommand("go", "get", "-u", "github.com/gofiber/fiber-cli")
+	update.Env = append(update.Env, "GO111MODULE=off")
 	if _, err := update.CombinedOutput(); err != nil {
 		cmd.Printf("fiber upgrade: failed to update: %s\nCheck the logs for more info.\n", err)
 		return nil
