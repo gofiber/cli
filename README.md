@@ -22,19 +22,25 @@ CLI version v0.0.x
   -h, --help   help for fiber
 ```
 
-## fiber version
+## fiber dev
 ### Synopsis
 
-Print the local and released version number of fiber
+Rerun the fiber project if watched files changed
 
 ```
-fiber version [flags]
+fiber dev [flags]
 ```
 
 ### Options
 
 ```
-  -h, --help   help for version
+  -d, --delay duration          delay to trigger rerun (default 1s)
+  -D, --exclude_dirs strings    ignore these directories (default [assets,tmp,vendor,node_modules])
+  -F, --exclude_files strings   ignore these files
+  -e, --extensions strings      file extensions to watch (default [go,tmpl,tpl,html])
+  -h, --help                    help for dev
+  -r, --root string             root path for watch, all files must be under root (default ".")
+  -t, --target string           target path for go build (default ".")
 ```
 
 ## fiber new
@@ -66,23 +72,32 @@ fiber new PROJECT [module name] [flags]
   -t, --template string   basic|complex (default "basic")
 ```
 
-## fiber dev
+## fiber upgrade
 ### Synopsis
 
-Rerun the fiber project if watched files changed
+Upgrade Fiber cli if a newer version is available
 
 ```
-fiber dev [flags]
+fiber upgrade [flags]
 ```
 
 ### Options
 
 ```
-  -d, --delay duration          delay to trigger rerun (default 1s)
-  -D, --exclude_dirs strings    ignore these directories (default [assets,tmp,vendor,node_modules])
-  -F, --exclude_files strings   ignore these files
-  -e, --extensions strings      file extensions to watch (default [go,tmpl,tpl,html])
-  -h, --help                    help for dev
-  -r, --root string             root path for watch, all files must be under root (default ".")
-  -t, --target string           target path for go build (default ".")
+  -h, --help   help for upgrade
+```
+
+## fiber version
+### Synopsis
+
+Print the local and released version number of fiber
+
+```
+fiber version [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for version
 ```
