@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gofiber/fiber-cli/cmd/internal"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
@@ -74,20 +73,8 @@ func checkCliVersion(cmd *cobra.Command) {
 	}
 
 	if version != cliLatestVersion {
-		title := termenv.String(fmt.Sprintf(versionUpgradeTitleFormat, version, cliLatestVersion)).
-			Foreground(termenv.ANSIBrightYellow)
-
-		prompt := internal.NewPrompt(title.String())
-		ok, err := prompt.YesOrNo()
-
-		if err == nil && ok {
-			upgrade(cmd, cliLatestVersion)
-		}
-
-		if err != nil {
-			warning := fmt.Sprintf("WARNING: Failed to upgrade fiber-cli: %s", err)
-			cmd.Println(termenv.String(warning).Foreground(termenv.ANSIBrightYellow))
-		}
+		cmd.Println(termenv.String(fmt.Sprintf(versionWarningFormat, version, cliLatestVersion)).
+			Foreground(termenv.ANSIBrightYellow))
 	}
 
 	updateVersionCheckedAt()
@@ -108,7 +95,7 @@ Learn more on https://gofiber.io
 
 CLI version ` + version
 
-	versionUpgradeTitleFormat = `
-You are using fiber-cli version %s; however, version %s is available.
-Would you like to upgrade now? (y/N)`
+	versionWarningFormat = `
+WARNING: You are using fiber-cli version %s; however, version %s is available.
+You should consider upgrading via the 'go get -u github.com/gofiber/fiber-cli' command.`
 )
