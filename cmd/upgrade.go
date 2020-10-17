@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/muesli/termenv"
-
 	"github.com/spf13/cobra"
 )
 
