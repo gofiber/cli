@@ -8,10 +8,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var templateType string
+var (
+	templateType string
+	repo         string
+)
 
 func init() {
 	newCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "basic|complex")
+	newCmd.Flags().StringVarP(&repo, "repo", "r", defaultRepo, "complex boilerplate repo name in github")
 }
 
 var newCmd = &cobra.Command{
@@ -76,7 +80,8 @@ func createBasic(projectPath, modName string) (err error) {
 	return runCmd(execCommand("go", "mod", "init", modName))
 }
 
-const boilerPlateRepo = "https://github.com/gofiber/boilerplate"
+const githubPrefix = "https://github.com/"
+const defaultRepo = "gofiber/boilerplate"
 
 func createComplex(projectPath, modName string) (err error) {
 	var git string
@@ -84,18 +89,19 @@ func createComplex(projectPath, modName string) (err error) {
 		return
 	}
 
-	if err = runCmd(execCommand(git, "clone", boilerPlateRepo, projectPath)); err != nil {
+	if err = runCmd(execCommand(git, "clone", githubPrefix+repo, projectPath)); err != nil {
 		return
 	}
 
-	if err = replace(projectPath, "go.mod", "boilerplate", modName); err != nil {
-		return
-	}
+	if repo == defaultRepo {
+		if err = replace(projectPath, "go.mod", "boilerplate", modName); err != nil {
+			return
+		}
 
-	if err = replace(projectPath, "*.go", "boilerplate", modName); err != nil {
-		return
+		if err = replace(projectPath, "*.go", "boilerplate", modName); err != nil {
+			return
+		}
 	}
-
 	return
 }
 
