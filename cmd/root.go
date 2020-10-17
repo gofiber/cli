@@ -96,6 +96,6 @@ Learn more on https://gofiber.io
 CLI version ` + version
 
 	versionWarningFormat = `
-WARNING: You are using fiber-cli version %s; however, version %s is available.
+WARNING: You are using fiber cli version %s; however, version %s is available.
 You should consider upgrading via the 'fiber upgrade' command.`
 )

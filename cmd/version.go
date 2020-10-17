@@ -60,7 +60,7 @@ func latestVersion(isCli bool) (v string, err error) {
 	)
 
 	if isCli {
-		res, err = http.Get("https://api.github.com/repos/gofiber/fiber-cli/releases/latest")
+		res, err = http.Get("https://api.github.com/repos/gofiber/cli/releases/latest")
 	} else {
 		res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")
 	}
