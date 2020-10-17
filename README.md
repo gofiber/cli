@@ -1,9 +1,9 @@
-# fiber-cli
+# cli
 Fiber Command Line Interface
 
 # Installation
 ```bash
-go get -u github.com/gofiber/fiber-cli/fiber
+go get -u github.com/gofiber/cli/fiber
 ```
 
 # Commands
