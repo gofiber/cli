@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/muesli/termenv"
 
@@ -33,10 +32,7 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func upgrade(cmd *cobra.Command, cliLatestVersion string) {
-	upgrader := execCommand("go", "get", "-u", "github.com/gofiber/fiber-cli/fiber")
-	upgrader.Env = append(upgrader.Env, os.Environ()...)
-	upgrader.Env = append(upgrader.Env, "GO111MODULE=off")
-	if err := runCmd(upgrader); err != nil {
+	if err := runCmd(execCommand("go", "get", "-u", "github.com/gofiber/fiber-cli/fiber")); err != nil {
 		cmd.Printf("fiber: failed to upgrade: %v", err)
 		return
 	}
