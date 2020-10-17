@@ -32,7 +32,7 @@ func Test_Dev_Escort_Init(t *testing.T) {
 	e := getEscort()
 	at.Nil(e.init())
 
-	at.Contains(e.root, "fiber-cli")
+	at.Contains(e.root, "cli")
 	at.NotEmpty(e.binPath)
 	if runtime.GOOS != "windows" {
 		at.Nil(os.Remove(e.binPath))
