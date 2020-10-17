@@ -97,5 +97,5 @@ CLI version ` + version
 
 	versionWarningFormat = `
 WARNING: You are using fiber-cli version %s; however, version %s is available.
-You should consider upgrading via the 'go get -u github.com/gofiber/fiber-cli' command.`
+You should consider upgrading via the 'fiber upgrade' command.`
 )
