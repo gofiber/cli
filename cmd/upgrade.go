@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gofiber/cli/cmd/internal"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
@@ -32,10 +33,15 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func upgrade(cmd *cobra.Command, cliLatestVersion string) {
-	upgrader := execCommand("go", "get", "-u", "github.com/gofiber/cli/fiber")
-	upgrader.Env = append(upgrader.Env, os.Environ()...)
-	upgrader.Env = append(upgrader.Env, "GO111MODULE=off")
-	if err := runCmd(upgrader); err != nil {
+	task := internal.NewSpinnerTask("Upgrading...", func() (err error) {
+		upgrader := execCommand("go", "get", "-u", "github.com/gofiber/cli/fiber")
+		upgrader.Env = append(upgrader.Env, os.Environ()...)
+		upgrader.Env = append(upgrader.Env, "GO111MODULE=off")
+
+		return runCmd(upgrader)
+	})
+
+	if err := task.Run(); err != nil {
 		cmd.Printf("fiber: failed to upgrade: %v", err)
 		return
 	}
