@@ -1,0 +1,4 @@
+# .goreleaser.yml
+archives:
+  - # Don't tar/zip binaries
+    format: binary
