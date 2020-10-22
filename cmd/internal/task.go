@@ -82,6 +82,10 @@ func (t *SpinnerTask) View() string {
 }
 
 func (t *SpinnerTask) Run() (err error) {
+	if err = checkConsole(); err != nil {
+		return
+	}
+
 	if err = t.p.Start(); err != nil {
 		return
 	}
