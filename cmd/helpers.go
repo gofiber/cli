@@ -19,6 +19,8 @@ var (
 	execLookPath = exec.LookPath
 	execCommand  = exec.Command
 	osExit       = os.Exit
+
+	skipSpinner bool
 )
 
 func init() {

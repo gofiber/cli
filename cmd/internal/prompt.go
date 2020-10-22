@@ -5,22 +5,21 @@ import (
 
 	input "github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/containerd/console"
 )
 
 type errMsg error
 
 type Prompt struct {
-	p           *tea.Program
-	textInput   input.Model
-	err         error
-	title       string
-	answer      string
+	p         *tea.Program
+	textInput input.Model
+	err       error
+	title     string
+	answer    string
 }
 
 func NewPrompt(title string, placeholder ...string) *Prompt {
 	p := &Prompt{
-		title: title,
+		title:     title,
 		textInput: input.NewModel(),
 	}
 
@@ -99,16 +98,4 @@ func (p *Prompt) View() string {
 		input.View(p.textInput),
 		"(esc to quit)",
 	)
-}
-
-func checkConsole() (err error) {
-	defer func() {
-		if e := recover(); e != nil {
-			err = fmt.Errorf("%v", e)
-		}
-	}()
-
-	console.Current()
-
-	return
 }
