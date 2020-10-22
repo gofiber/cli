@@ -1,0 +1,22 @@
+# .goreleaser.yml
+archives:
+  - # Don't tar/zip binaries
+    format: binary
+
+builds:
+  - # Path to main.go file or main package.
+    main: ./fiber/main.go
+    # Binary name
+    binary: fiber
+
+    goarch:
+      - amd64
+      - arm
+      - arm64
+
+    goos:
+      - linux
+      - windows
+
+release:
+  draft: true
