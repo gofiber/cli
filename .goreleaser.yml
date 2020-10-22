@@ -8,3 +8,12 @@ builds:
     main: ./fiber/main.go
     # Binary name
     binary: fiber
+
+    goarch:
+      - amd64
+      - arm
+      - arm64
+
+    goos:
+      - linux
+      - windows
