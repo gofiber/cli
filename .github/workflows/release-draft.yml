@@ -1,9 +1,6 @@
 name: goreleaser-draft
 
-on:
-  push:
-    tags:
-      - "*"
+on: push
 
 jobs:
   goreleaser:
