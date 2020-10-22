@@ -8,8 +8,6 @@ import (
 	"github.com/muesli/termenv"
 )
 
-var term = termenv.ColorProfile()
-
 type Task func() error
 
 type SpinnerTask struct {
@@ -19,8 +17,6 @@ type SpinnerTask struct {
 	title        string
 	task         Task
 }
-
-type finishedMsg struct{ error }
 
 func NewSpinnerTask(title string, task Task) *SpinnerTask {
 	spinnerModel := spinner.NewModel()
