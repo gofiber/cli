@@ -39,7 +39,7 @@ func upgrade(cmd *cobra.Command, cliLatestVersion string) {
 
 	scmd := internal.NewSpinnerCmd(upgrader, "Upgrading")
 
-	if err := scmd.Run(); err != nil {
+	if err := scmd.Run(); err != nil && !skipSpinner {
 		cmd.Printf("fiber: failed to upgrade: %v", err)
 		return
 	}

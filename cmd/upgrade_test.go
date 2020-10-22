@@ -11,8 +11,6 @@ import (
 )
 
 func Test_Upgrade_upgradeRunE(t *testing.T) {
-	t.Skip("reopen after spinner task finished")
-
 	at := assert.New(t)
 
 	b := &bytes.Buffer{}
@@ -28,8 +26,8 @@ func Test_Upgrade_upgradeRunE(t *testing.T) {
 
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse()))
 
-	setupCmd()
-	defer teardownCmd()
+	setupSpinner()
+	defer teardownSpinner()
 
 	at.Nil(upgradeRunE(upgradeCmd, nil))
 
@@ -50,9 +48,6 @@ func Test_Upgrade_upgrade(t *testing.T) {
 	b := &bytes.Buffer{}
 	upgradeCmd.SetErr(b)
 	upgradeCmd.SetOut(b)
-
-	setupCmd(errFlag)
-	defer teardownCmd()
 
 	upgrade(upgradeCmd, "99.99.99")
 

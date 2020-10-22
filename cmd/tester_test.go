@@ -114,3 +114,11 @@ func setupHomeDir(t *testing.T, pattern string) string {
 func teardownHomeDir(dir string) {
 	_ = os.RemoveAll(dir)
 }
+
+func setupSpinner() {
+	skipSpinner = true
+}
+
+func teardownSpinner() {
+	skipSpinner = false
+}
