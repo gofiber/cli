@@ -15,6 +15,8 @@ var upgradeCmd = &cobra.Command{
 	RunE:  upgradeRunE,
 }
 
+var upgraded bool
+
 func upgradeRunE(cmd *cobra.Command, _ []string) error {
 	cliLatestVersion, err := latestVersion(true)
 	if err != nil {
@@ -46,4 +48,6 @@ func upgrade(cmd *cobra.Command, cliLatestVersion string) {
 
 	success := fmt.Sprintf("Done! Fiber cli is now at v%s!", cliLatestVersion)
 	cmd.Println(termenv.String(success).Foreground(termenv.ANSIBrightGreen))
+
+	upgraded = true
 }

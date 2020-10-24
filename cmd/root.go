@@ -99,7 +99,7 @@ func updateVersionCheckedAt() {
 }
 
 func needCheckCliVersion() bool {
-	return rc.CliVersionCheckedAt+rc.CliVersionCheckInterval < time.Now().Unix()
+	return !upgraded && rc.CliVersionCheckedAt+rc.CliVersionCheckInterval < time.Now().Unix()
 }
 
 const (
