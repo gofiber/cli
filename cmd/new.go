@@ -80,8 +80,7 @@ func createBasic(projectPath, modName string) (err error) {
 	return runCmd(execCommand("go", "mod", "init", modName))
 }
 
-const githubPrefix = "https://github.com/"
-const defaultRepo = "gofiber/boilerplate"
+const defaultRepo = "https://github.com/gofiber/boilerplate"
 
 func createComplex(projectPath, modName string) (err error) {
 	var git string
@@ -89,7 +88,7 @@ func createComplex(projectPath, modName string) (err error) {
 		return
 	}
 
-	if err = runCmd(execCommand(git, "clone", githubPrefix+repo, projectPath)); err != nil {
+	if err = runCmd(execCommand(git, "clone", repo, projectPath)); err != nil {
 		return
 	}
 
