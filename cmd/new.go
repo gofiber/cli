@@ -16,7 +16,7 @@ var (
 
 func init() {
 	newCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "basic|complex")
-	newCmd.Flags().StringVarP(&repo, "repo", "r", defaultRepo, "complex boilerplate repo name")
+	newCmd.Flags().StringVarP(&repo, "repo", "r", defaultRepo, "complex boilerplate repo name in github or other repo url")
 }
 
 var newCmd = &cobra.Command{
@@ -87,17 +87,18 @@ const fullPathRegex = `^(http|https|git)`
 
 func createComplex(projectPath, modName string) (err error) {
 	var git string
-	var isFullPath bool
+	var reg *regexp.Regexp
 	if git, err = execLookPath("git"); err != nil {
 		return
 	}
 
-	if isFullPath, err = regexp.Match(fullPathRegex, []byte(repo)); err != nil {
+	reg, err = regexp.Compile(fullPathRegex)
+	if err != nil {
 		return
 	}
 
 	toClone := githubPrefix + repo
-	if isFullPath {
+	if isFullPath := reg.MatchString(repo); isFullPath {
 		toClone = repo
 	}
 
