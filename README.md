@@ -69,7 +69,7 @@ fiber new PROJECT [module name] [flags]
 
 ```
   -h, --help              help for new
-  -r, --repo string       complex boilerplate repo name in github (default "gofiber/boilerplate")
+  -r, --repo string       complex boilerplate repo name in github (default "https://github.com/gofiber/boilerplate")
   -t, --template string   basic|complex (default "basic")
 ```
 
