@@ -63,6 +63,15 @@ fiber new PROJECT [module name] [flags]
 
   fiber new fiber-demo -t=complex
     Generate a complex project
+
+  fiber new fiber-demo -t complex -r githubId/repo
+   Generate project based on Github repo
+
+  fiber new fiber-demo -t complex -r https://anyProvider.com/username/repo.git
+   Generate project based on repo outside Github with https
+
+  fiber new fiber-demo -t complex -r git@anyProvider.com:id/repo.git
+   Generate project based on repo outside Github with ssh
 ```
 
 ### Options
