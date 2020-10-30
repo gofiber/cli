@@ -94,8 +94,10 @@ func Test_New_CreateComplex(t *testing.T) {
 	t.Run("failed to replace pattern", func(t *testing.T) {
 		setupLookPath()
 		defer teardownLookPath()
-		setupCmd()
+		setupCmd(errFlag)
 		defer teardownCmd()
+
+		repo = "git@any.provider.com:id/repo.git"
 
 		at.NotNil(createComplex(" ", "name"))
 	})
