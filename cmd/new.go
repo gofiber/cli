@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,7 +16,7 @@ var (
 
 func init() {
 	newCmd.Flags().StringVarP(&templateType, "template", "t", "basic", "basic|complex")
-	newCmd.Flags().StringVarP(&repo, "repo", "r", defaultRepo, "complex boilerplate repo name in github")
+	newCmd.Flags().StringVarP(&repo, "repo", "r", defaultRepo, "complex boilerplate repo name in github or other repo url")
 }
 
 var newCmd = &cobra.Command{
@@ -80,7 +81,10 @@ func createBasic(projectPath, modName string) (err error) {
 	return runCmd(execCommand("go", "mod", "init", modName))
 }
 
-const defaultRepo = "https://github.com/gofiber/boilerplate"
+const githubPrefix = "https://github.com/"
+const defaultRepo = "gofiber/boilerplate"
+
+var fullPathRegex = regexp.MustCompile(`^(http|https|git)`)
 
 func createComplex(projectPath, modName string) (err error) {
 	var git string
@@ -88,7 +92,12 @@ func createComplex(projectPath, modName string) (err error) {
 		return
 	}
 
-	if err = runCmd(execCommand(git, "clone", repo, projectPath)); err != nil {
+	toClone := githubPrefix + repo
+	if isFullPath := fullPathRegex.MatchString(repo); isFullPath {
+		toClone = repo
+	}
+
+	if err = runCmd(execCommand(git, "clone", toClone, projectPath)); err != nil {
 		return
 	}
 
