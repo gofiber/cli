@@ -83,22 +83,17 @@ func createBasic(projectPath, modName string) (err error) {
 
 const githubPrefix = "https://github.com/"
 const defaultRepo = "gofiber/boilerplate"
-const fullPathRegex = `^(http|https|git)`
+
+var fullPathRegex = regexp.MustCompile(`^(http|https|git)`)
 
 func createComplex(projectPath, modName string) (err error) {
 	var git string
-	var reg *regexp.Regexp
 	if git, err = execLookPath("git"); err != nil {
 		return
 	}
 
-	reg, err = regexp.Compile(fullPathRegex)
-	if err != nil {
-		return
-	}
-
 	toClone := githubPrefix + repo
-	if isFullPath := reg.MatchString(repo); isFullPath {
+	if isFullPath := fullPathRegex.MatchString(repo); isFullPath {
 		toClone = repo
 	}
 
