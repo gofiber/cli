@@ -55,7 +55,7 @@ fiber new PROJECT [module name] [flags]
 ### Examples
 
 ```
-fiber new fiber-demo
+  fiber new fiber-demo
   Generates a project with go module name fiber-demo
 
   fiber new fiber-demo your.own/module/name
@@ -72,6 +72,7 @@ fiber new fiber-demo
 
   fiber new fiber-demo -t complex -r git@anyProvider.com:id/repo.git
   Generate project based on repo outside Github with ssh
+
 ```
 
 ### Options
