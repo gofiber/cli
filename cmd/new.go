@@ -115,22 +115,22 @@ func createComplex(projectPath, modName string) (err error) {
 
 var (
 	newExamples = `  fiber new fiber-demo
-    Generates a project with go module name fiber-demo
+  Generates a project with go module name fiber-demo
 
   fiber new fiber-demo your.own/module/name
-    Specific the go module name
+  Specific the go module name
 
   fiber new fiber-demo -t=complex
-    Generate a complex project
+  Generate a complex project
 
   fiber new fiber-demo -t complex -r githubId/repo
-   Generate project based on Github repo
+  Generate project based on Github repo
 
   fiber new fiber-demo -t complex -r https://anyProvider.com/username/repo.git
-   Generate project based on repo outside Github with https
+  Generate project based on repo outside Github with https
 
   fiber new fiber-demo -t complex -r git@anyProvider.com:id/repo.git
-   Generate project based on repo outside Github with ssh`
+  Generate project based on repo outside Github with ssh`
 
 	newBasicTemplate = `package main
 
