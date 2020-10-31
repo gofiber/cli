@@ -4,8 +4,8 @@ go 1.14
 
 require (
 	github.com/armon/consul-api v0.0.0-20180202201655-eb2c6b5be1b6 // indirect
-	github.com/charmbracelet/bubbles v0.7.2
-	github.com/charmbracelet/bubbletea v0.12.1
+	github.com/charmbracelet/bubbles v0.7.3-0.20201029012715-9b47f26bdd8c
+	github.com/charmbracelet/bubbletea v0.12.2-0.20201030073758-eae4d669176e
 	github.com/containerd/console v1.0.1
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/jarcoal/httpmock v1.0.6

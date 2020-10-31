@@ -63,7 +63,7 @@ func (p *Prompt) Answer() (result string, err error) {
 func (p *Prompt) Init() tea.Cmd {
 	p.textInput.Focus()
 
-	return input.Blink(p.textInput)
+	return input.Blink
 }
 
 func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -87,7 +87,7 @@ func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return p, nil
 	}
 
-	p.textInput, cmd = input.Update(msg, p.textInput)
+	p.textInput, cmd = p.textInput.Update(msg)
 	return p, cmd
 }
 
@@ -95,7 +95,7 @@ func (p *Prompt) View() string {
 	return fmt.Sprintf(
 		"%s\n\n%s\n\n%s\n\n",
 		p.title,
-		input.View(p.textInput),
+		p.textInput.View(),
 		"(esc to quit)",
 	)
 }
