@@ -35,7 +35,7 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func upgrade(cmd *cobra.Command, cliLatestVersion string) {
-	upgrader := execCommand("go", "get", "-u", "github.com/gofiber/cli/fiber")
+	upgrader := execCommand("go", "get", "-u", "-v", "github.com/gofiber/cli/fiber")
 	upgrader.Env = append(upgrader.Env, os.Environ()...)
 	upgrader.Env = append(upgrader.Env, "GO111MODULE=off")
 
