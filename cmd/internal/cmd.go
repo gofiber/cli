@@ -9,12 +9,14 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/containerd/console"
 	"github.com/muesli/termenv"
 )
 
 type SpinnerCmd struct {
 	p            *tea.Program
 	spinnerModel spinner.Model
+	size         console.WinSize
 	err          error
 	title        string
 	cmd          *exec.Cmd
@@ -117,6 +119,12 @@ func (t *SpinnerCmd) View() string {
 	t.UpdateOutput(t.stdout)
 	t.UpdateOutput(t.stderr)
 
+	// Make sure buf length not exceed screen width
+	maxWidth := int(t.size.Width) - 2 - len(s) - 1 - len(t.title) - 1
+	if len(t.buf) > maxWidth {
+		t.buf = append(t.buf[:maxWidth-3], []byte("...")...)
+	}
+
 	return fmt.Sprintf(spinnerCmdTemplate, s, t.title, t.buf)
 }
 
@@ -128,7 +136,7 @@ const spinnerCmdTemplate = `
 `
 
 func (t *SpinnerCmd) Run() (err error) {
-	if err = checkConsole(); err != nil {
+	if t.size, err = checkConsole(); err != nil {
 		return
 	}
 

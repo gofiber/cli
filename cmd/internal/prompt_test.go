@@ -70,7 +70,7 @@ func Test_Prompt_Update(t *testing.T) {
 	at.NotNil(p.err)
 	at.Nil(cmd)
 
-	_, cmd = p.Update(tea.KeyMsg{Type: tea.KeyRune, Rune: 'a'})
+	_, cmd = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	at.Nil(cmd)
 
 	_, cmd = p.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
