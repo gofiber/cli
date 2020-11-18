@@ -9,12 +9,14 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/containerd/console"
 	"github.com/muesli/termenv"
 )
 
 type SpinnerCmd struct {
 	p            *tea.Program
 	spinnerModel spinner.Model
+	size         console.WinSize
 	err          error
 	title        string
 	cmd          *exec.Cmd
@@ -28,7 +30,7 @@ type SpinnerCmd struct {
 
 func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 	spinnerModel := spinner.NewModel()
-	spinnerModel.Frames = spinner.Dot
+	spinnerModel.Spinner = spinner.Dot
 
 	c := &SpinnerCmd{
 		spinnerModel: spinnerModel,
@@ -49,7 +51,7 @@ func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 }
 
 func (t *SpinnerCmd) Init() tea.Cmd {
-	return tea.Batch(t.init(), spinner.Tick(t.spinnerModel))
+	return tea.Batch(t.init(), spinner.Tick)
 }
 
 func (t *SpinnerCmd) init() tea.Cmd {
@@ -100,7 +102,7 @@ func (t *SpinnerCmd) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	t.spinnerModel, cmd = spinner.Update(msg, t.spinnerModel)
+	t.spinnerModel, cmd = t.spinnerModel.Update(msg)
 	return t, cmd
 }
 
@@ -110,12 +112,18 @@ func (t *SpinnerCmd) View() string {
 	}
 
 	s := termenv.
-		String(spinner.View(t.spinnerModel)).
+		String(t.spinnerModel.View()).
 		Foreground(term.Color("205")).
 		String()
 
 	t.UpdateOutput(t.stdout)
 	t.UpdateOutput(t.stderr)
+
+	// Make sure buf length not exceed screen width
+	maxWidth := int(t.size.Width) - 2 - len(s) - 1 - len(t.title) - 1
+	if len(t.buf) > maxWidth {
+		t.buf = append(t.buf[:maxWidth-3], []byte("...")...)
+	}
 
 	return fmt.Sprintf(spinnerCmdTemplate, s, t.title, t.buf)
 }
@@ -128,7 +136,7 @@ const spinnerCmdTemplate = `
 `
 
 func (t *SpinnerCmd) Run() (err error) {
-	if err = checkConsole(); err != nil {
+	if t.size, err = checkConsole(); err != nil {
 		return
 	}
 

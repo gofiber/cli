@@ -50,7 +50,7 @@ func parseBool(str string) bool {
 }
 
 func (p *Prompt) Answer() (result string, err error) {
-	if err = checkConsole(); err != nil {
+	if _, err = checkConsole(); err != nil {
 		return
 	}
 
