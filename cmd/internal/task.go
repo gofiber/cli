@@ -20,7 +20,7 @@ type SpinnerTask struct {
 
 func NewSpinnerTask(title string, task Task) *SpinnerTask {
 	spinnerModel := spinner.NewModel()
-	spinnerModel.Frames = spinner.Dot
+	spinnerModel.Spinner = spinner.Dot
 
 	at := &SpinnerTask{
 		title:        title,
@@ -37,7 +37,7 @@ func (t *SpinnerTask) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
 			return finishedMsg{t.task()}
-		}, spinner.Tick(t.spinnerModel))
+		}, spinner.Tick)
 }
 
 func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -58,7 +58,7 @@ func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	default:
 		var cmd tea.Cmd
-		t.spinnerModel, cmd = spinner.Update(msg, t.spinnerModel)
+		t.spinnerModel, cmd = t.spinnerModel.Update(msg)
 		return t, cmd
 	}
 
@@ -70,7 +70,7 @@ func (t *SpinnerTask) View() string {
 	}
 
 	s := termenv.
-		String(spinner.View(t.spinnerModel)).
+		String(t.spinnerModel.View()).
 		Foreground(term.Color("205")).
 		String()
 

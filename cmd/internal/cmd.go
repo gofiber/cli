@@ -28,7 +28,7 @@ type SpinnerCmd struct {
 
 func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 	spinnerModel := spinner.NewModel()
-	spinnerModel.Frames = spinner.Dot
+	spinnerModel.Spinner = spinner.Dot
 
 	c := &SpinnerCmd{
 		spinnerModel: spinnerModel,
@@ -49,7 +49,7 @@ func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 }
 
 func (t *SpinnerCmd) Init() tea.Cmd {
-	return tea.Batch(t.init(), spinner.Tick(t.spinnerModel))
+	return tea.Batch(t.init(), spinner.Tick)
 }
 
 func (t *SpinnerCmd) init() tea.Cmd {
@@ -100,7 +100,7 @@ func (t *SpinnerCmd) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	t.spinnerModel, cmd = spinner.Update(msg, t.spinnerModel)
+	t.spinnerModel, cmd = t.spinnerModel.Update(msg)
 	return t, cmd
 }
 
@@ -110,7 +110,7 @@ func (t *SpinnerCmd) View() string {
 	}
 
 	s := termenv.
-		String(spinner.View(t.spinnerModel)).
+		String(t.spinnerModel.View()).
 		Foreground(term.Color("205")).
 		String()
 
