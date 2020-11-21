@@ -31,6 +31,14 @@ Rerun the fiber project if watched files changed
 fiber dev [flags]
 ```
 
+
+### Examples
+
+```
+  fiber dev --pre-run="command1 flag,command2 flag"
+  Pre run specific commands before running the project
+```
+
 ### Options
 
 ```
@@ -39,6 +47,7 @@ fiber dev [flags]
   -F, --exclude_files strings   ignore these files
   -e, --extensions strings      file extensions to watch (default [go,tmpl,tpl,html])
   -h, --help                    help for dev
+  -p, --pre-run strings         pre run commands, see example for more detail
   -r, --root string             root path for watch, all files must be under root (default ".")
   -t, --target string           target path for go build (default ".")
 ```
@@ -72,7 +81,6 @@ fiber new PROJECT [module name] [flags]
 
   fiber new fiber-demo -t complex -r git@anyProvider.com:id/repo.git
   Generate project based on repo outside Github with ssh
-
 ```
 
 ### Options
