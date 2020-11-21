@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -34,13 +36,16 @@ func init() {
 	devCmd.PersistentFlags().StringSliceVarP(&c.excludeFiles, "exclude_files", "F", nil, "ignore these files")
 	devCmd.PersistentFlags().DurationVarP(&c.delay, "delay", "d", time.Second,
 		"delay to trigger rerun")
+	devCmd.PersistentFlags().StringSliceVarP(&c.preRun, "pre-run", "p", nil,
+		"pre run commands, see example for more detail")
 }
 
 // devCmd reruns the fiber project if watched files changed
 var devCmd = &cobra.Command{
-	Use:   "dev",
-	Short: "Rerun the fiber project if watched files changed",
-	RunE:  devRunE,
+	Use:     "dev",
+	Short:   "Rerun the fiber project if watched files changed",
+	RunE:    devRunE,
+	Example: devExample,
 }
 
 func devRunE(_ *cobra.Command, _ []string) error {
@@ -55,6 +60,7 @@ type config struct {
 	excludeDirs  []string
 	excludeFiles []string
 	delay        time.Duration
+	preRun       []string
 }
 
 type escort struct {
@@ -75,6 +81,8 @@ type escort struct {
 	hitCh      chan struct{}
 	hitFunc    func()
 	compiling  atomic.Value
+
+	preRunCommands [][]string
 }
 
 func newEscort(c config) *escort {
@@ -143,6 +151,8 @@ func (e *escort) init() (err error) {
 	}
 
 	e.hitFunc = e.runBin
+
+	e.preRunCommands = parsePreRunCommands(c.preRun)
 
 	return
 }
@@ -217,6 +227,8 @@ func (e *escort) runBin() {
 	if ok := e.compiling.Load(); ok != nil && ok.(bool) {
 		return
 	}
+
+	e.doPreRun()
 
 	e.compiling.Store(true)
 	defer e.compiling.Store(false)
@@ -366,6 +378,21 @@ func (e *escort) ignoredFiles(filename string) bool {
 	return false
 }
 
+func (e *escort) doPreRun() {
+	for _, command := range e.preRunCommands {
+		cmd := execCommand(command[0], command[1:]...)
+		out, err := cmd.CombinedOutput()
+		var buf bytes.Buffer
+		_, _ = buf.WriteString(fmt.Sprintf("Pre running %s... ", command))
+		if err != nil {
+			_, _ = buf.WriteString(err.Error())
+			_, _ = buf.WriteString(":")
+		}
+		_, _ = buf.Write(out)
+		log.Print(buf.String())
+	}
+}
+
 func isRemoved(op fsnotify.Op) bool {
 	return op&fsnotify.Remove != 0
 }
@@ -377,3 +404,17 @@ func isCreated(op fsnotify.Op) bool {
 func isChmoded(op fsnotify.Op) bool {
 	return op&fsnotify.Chmod != 0
 }
+
+func parsePreRunCommands(commands []string) (list [][]string) {
+	for _, command := range commands {
+		if r := strings.Fields(strings.Trim(command, " ")); len(r) > 0 {
+			list = append(list, r)
+		}
+	}
+	return
+}
+
+const (
+	devExample = `  fiber dev --pre-run="command1 flag,command2 flag"
+  Pre run specific commands before running the project`
+)
