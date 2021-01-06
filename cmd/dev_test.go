@@ -222,6 +222,15 @@ func Test_Dev_Escort_IgnoredFiles(t *testing.T) {
 	at.False(e.ignoredFiles("b"))
 }
 
+func Test_Dev_Escort_DoPreRun(t *testing.T) {
+	t.Parallel()
+
+	e := getEscort()
+	e.preRunCommands = [][]string{{"go", "version"}, {"non-exist-command"}}
+
+	e.doPreRun()
+}
+
 func Test_Dev_IsRemoved(t *testing.T) {
 	t.Parallel()
 
@@ -283,6 +292,15 @@ func Test_Dev_IsChmoded(t *testing.T) {
 			assert.Equal(t, tc.bool, isChmoded(tc.Op))
 		})
 	}
+}
+
+func Test_Dev_ParsePreRunCommands(t *testing.T) {
+	t.Parallel()
+
+	list := parsePreRunCommands([]string{"go", "", "swag init"})
+	assert.Len(t, list, 2)
+	assert.Equal(t, []string{"go"}, list[0])
+	assert.Equal(t, []string{"swag", "init"}, list[1])
 }
 
 func getEscort() *escort {
