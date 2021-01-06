@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.12.2
 	github.com/containerd/console v1.0.1
 	github.com/fsnotify/fsnotify v1.4.9
-	github.com/jarcoal/httpmock v1.0.6
+	github.com/jarcoal/httpmock v1.0.7
 	github.com/kr/text v0.2.0 // indirect
 	github.com/muesli/termenv v0.7.4
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
