@@ -38,6 +38,8 @@ func init() {
 		"delay to trigger rerun")
 	devCmd.PersistentFlags().StringSliceVarP(&c.preRun, "pre-run", "p", nil,
 		"pre run commands, see example for more detail")
+	devCmd.PersistentFlags().StringSliceVarP(&c.args, "args", "a", nil,
+		"arguments for exec")
 }
 
 // devCmd reruns the fiber project if watched files changed
@@ -61,6 +63,7 @@ type config struct {
 	excludeFiles []string
 	delay        time.Duration
 	preRun       []string
+	args         []string
 }
 
 type escort struct {
@@ -251,7 +254,7 @@ func (e *escort) runBin() {
 
 	log.Printf("Compile done in %s!\n", formatLatency(time.Since(start)))
 
-	e.bin = execCommand(e.binPath)
+	e.bin = execCommand(e.binPath, e.args...)
 
 	e.bin.Env = os.Environ()
 
