@@ -42,6 +42,7 @@ fiber dev [flags]
 ### Options
 
 ```
+  -a, --args strings            arguments for exec
   -d, --delay duration          delay to trigger rerun (default 1s)
   -D, --exclude_dirs strings    ignore these directories (default [assets,tmp,vendor,node_modules])
   -F, --exclude_files strings   ignore these files
