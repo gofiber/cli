@@ -151,6 +151,7 @@ github.com/muesli/termenv v0.7.2/go.mod h1:ct2L5N2lmix82RaY3bMWwVu/jUFc9Ule0KGDC
 github.com/muesli/termenv v0.7.4/go.mod h1:pZ7qY9l3F7e5xsAOS0zCew2tME+p7bWeBkotCEcIIcc=
 github.com/muesli/termenv v0.8.0 h1:HxhDOZbpf9nSUhOiMUNk5jsL3XaKWAbHucoGYZf+nag=
 github.com/muesli/termenv v0.8.0/go.mod h1:kzt/D/4a88RoheZmwfqorY3A+tnsSMA9HJC/fQSFKo0=
+github.com/muesli/termenv v0.8.1/go.mod h1:kzt/D/4a88RoheZmwfqorY3A+tnsSMA9HJC/fQSFKo0=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e h1:fD57ERR4JtEqsWbfPhv4DMiApHyliiK5xCTNVSPiaAs=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
