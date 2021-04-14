@@ -28,8 +28,9 @@ github.com/bketelsen/crypt v0.0.3-0.20200106085610-5cbc8cc4026c/go.mod h1:MKsuJm
 github.com/cespare/xxhash v1.1.0/go.mod h1:XrSqR1VqqWfGrhpAt58auRo0WTKS1nRRg3ghfAqPWnc=
 github.com/charmbracelet/bubbles v0.7.7 h1:eVsAYiAJskifXaqHpPzbOZS1srMaTnuiTazC6uukBbA=
 github.com/charmbracelet/bubbles v0.7.7/go.mod h1:5WX1sSSjNCgCrzvRMN/z23HxvWaa+AI16Ch0KPZPeDs=
-github.com/charmbracelet/bubbletea v0.13.1 h1:huvX8mPaeMZ8DLulT50iEWRF+iitY5FNEDqDVLu69nM=
 github.com/charmbracelet/bubbletea v0.13.1/go.mod h1:tp9tr9Dadh0PLhgiwchE5zZJXm5543JYjHG9oY+5qSg=
+github.com/charmbracelet/bubbletea v0.13.2 h1:fSOx3q0/VbA3ChWeiNcUsNeNysD9FFWD1tZypShBuCQ=
+github.com/charmbracelet/bubbletea v0.13.2/go.mod h1:okqaA5VF0aSpEZ2HB+L/cxVw2HthIDZ1dmWoRZs8/4g=
 github.com/charmbracelet/lipgloss v0.1.2 h1:D+LUMg34W7n2pkuMrevKVxT7HXqnoRHm7IoomkX3/ZU=
 github.com/charmbracelet/lipgloss v0.1.2/go.mod h1:5D8zradw52m7QmxRF6QgwbwJi9je84g8MkWiGN07uKg=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
