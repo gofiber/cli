@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/charmbracelet/bubbles v0.7.7
-	github.com/charmbracelet/bubbletea v0.13.1
+	github.com/charmbracelet/bubbletea v0.13.2
 	github.com/containerd/console v1.0.2
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/jarcoal/httpmock v1.0.8
