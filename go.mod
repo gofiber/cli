@@ -3,7 +3,7 @@ module github.com/gofiber/cli
 go 1.14
 
 require (
-	github.com/charmbracelet/bubbles v0.7.9
+	github.com/charmbracelet/bubbles v0.8.0
 	github.com/charmbracelet/bubbletea v0.13.3
 	github.com/containerd/console v1.0.2
 	github.com/fsnotify/fsnotify v1.4.9
