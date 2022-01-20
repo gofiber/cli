@@ -3,8 +3,8 @@ module github.com/gofiber/cli
 go 1.14
 
 require (
-	github.com/charmbracelet/bubbles v0.9.0
-	github.com/charmbracelet/bubbletea v0.17.0
+	github.com/charmbracelet/bubbles v0.10.1
+	github.com/charmbracelet/bubbletea v0.19.3
 	github.com/containerd/console v1.0.3
 	github.com/fsnotify/fsnotify v1.5.1
 	github.com/jarcoal/httpmock v1.0.8
