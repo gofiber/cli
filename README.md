@@ -1,7 +1,7 @@
-[![Packaging status](https://repology.org/badge/vertical-allrepos/fiber-cli.svg)](https://repology.org/project/fiber-cli/versions)
-
 # cli
 Fiber Command Line Interface
+
+[![Packaging status](https://repology.org/badge/vertical-allrepos/fiber-cli.svg)](https://repology.org/project/fiber-cli/versions)
 
 # Installation
 ```bash
