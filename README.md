@@ -5,6 +5,11 @@ Fiber Command Line Interface
 
 # Installation
 ```bash
+# for go version since 1.16
+go install github.com/gofiber/cli/fiber@latest
+```
+```bash
+# for go version smaller than 1.16
 go get -u github.com/gofiber/cli/fiber
 ```
 
