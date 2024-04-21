@@ -3,6 +3,7 @@ module github.com/gofiber/cli
 go 1.21
 
 require (
+	github.com/Masterminds/semver/v3 v3.2.1
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/containerd/console v1.0.4

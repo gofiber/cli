@@ -1,13 +1,13 @@
 # Local Development
 
-Install [reflex](github.com/cespare/reflex)
+Install [air](github.com/cosmtrek/air)
 ```bash
-go install github.com/cespare/reflex@latest
+go install github.com/cosmtrek/air@latest
 ```
 
-Use reflex to watch for changes in the project and recompile the binary
+Use air to watch for changes in the project and recompile the binary
 ```bash
-reflex -r '\.go$' -- go install ./fiber  
+air --build.cmd="go install ./fiber"
 ```
 
 Test the binary in fiber project
