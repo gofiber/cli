@@ -2,7 +2,7 @@ package migrations
 
 import (
 	"fmt"
-	"github.com/Masterminds/semver/v3"
+	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"

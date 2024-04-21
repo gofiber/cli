@@ -2,7 +2,6 @@ package v3
 
 import (
 	"fmt"
-	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 	"strings"
 
