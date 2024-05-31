@@ -3,8 +3,9 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"regexp"
 
 	"github.com/spf13/cobra"
@@ -39,7 +40,7 @@ var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? 
 var currentVersionFile = "go.mod"
 
 func currentVersion() (string, error) {
-	b, err := ioutil.ReadFile(currentVersionFile)
+	b, err := os.ReadFile(currentVersionFile)
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +74,7 @@ func latestVersion(isCli bool) (v string, err error) {
 		_ = res.Body.Close()
 	}()
 
-	if b, err = ioutil.ReadAll(res.Body); err != nil {
+	if b, err = io.ReadAll(res.Body); err != nil {
 		return
 	}
 
