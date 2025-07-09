@@ -43,8 +43,13 @@ func Test_Root_RunE(t *testing.T) {
 func Test_Root_RootPersistentPreRun(t *testing.T) {
 	at, b := setupRootCmd(t)
 
-	homeDir = setupHomeDir(t, "RootPersistentPreRun")
-	defer teardownHomeDir(homeDir)
+	origHome := homeDir
+	tempHome := setupHomeDir(t, "RootPersistentPreRun")
+	homeDir = tempHome
+	defer func() {
+		homeDir = origHome
+		teardownHomeDir(tempHome)
+	}()
 
 	oldFileExist := fileExist
 	fileExist = func(_ string) bool { return true }
@@ -70,6 +75,9 @@ func Test_Root_RootPersistentPostRun(t *testing.T) {
 func Test_Root_CheckCliVersion(t *testing.T) {
 	at, b := setupRootCmd(t)
 
+	rc.CliVersionCheckedAt = 0
+	upgraded = false
+
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
@@ -79,8 +87,13 @@ func Test_Root_CheckCliVersion(t *testing.T) {
 
 	at.Equal(0, b.Len())
 
-	homeDir = setupHomeDir(t, "CheckCliVersion")
-	defer teardownHomeDir(homeDir)
+	origHome := homeDir
+	tempHome := setupHomeDir(t, "CheckCliVersion")
+	homeDir = tempHome
+	defer func() {
+		homeDir = origHome
+		teardownHomeDir(tempHome)
+	}()
 
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse()))
 
@@ -89,10 +102,12 @@ func Test_Root_CheckCliVersion(t *testing.T) {
 	at.Contains(b.String(), "WARNING")
 
 	at.InDelta(time.Now().Unix(), rc.CliVersionCheckedAt, 1)
+	rc.CliVersionCheckedAt = 0
 }
 
 func Test_Root_NeedCheckCliVersion(t *testing.T) {
 	rc.CliVersionCheckedAt = 0
+	upgraded = false
 
 	assert.True(t, needCheckCliVersion())
 }

@@ -57,8 +57,13 @@ func Test_Helper_LoadConfig(t *testing.T) {
 	})
 
 	t.Run("has config file", func(t *testing.T) {
-		homeDir = setupHomeDir(t, "LoadConfig")
-		defer teardownHomeDir(homeDir)
+		origHome := homeDir
+		tempHome := setupHomeDir(t, "LoadConfig")
+		homeDir = tempHome
+		defer func() {
+			homeDir = origHome
+			teardownHomeDir(tempHome)
+		}()
 
 		filename := fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName)
 
