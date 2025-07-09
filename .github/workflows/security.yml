@@ -4,9 +4,9 @@ jobs:
   Gosec:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Repository
-        uses: actions/checkout@v2
+      - name: Check out repository
+        uses: actions/checkout@v4
       - name: Run Gosec
-        uses: securego/gosec@master
-        with:
-          args: -exclude-dir=internal/*/ ./...
+        uses: securego/gosec@v2
+        with:          args: -exclude-dir=internal/*/ ./...
+
