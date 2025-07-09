@@ -1,6 +1,6 @@
 module github.com/gofiber/cli
 
-go 1.21
+go 1.24
 
 require (
 	github.com/charmbracelet/bubbles v0.18.0
