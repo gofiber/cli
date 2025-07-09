@@ -5,9 +5,37 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/" # Location of package manifests
     default_labels:
-        - "🤖 Dependencies"
+      - "🤖 Dependencies"
     schedule:
-        interval: "daily"
+      interval: "daily"
     automerged_updates:
-        -   match:
-                dependency_name: "gofiber/fiber/*"
+      - match:
+          dependency_name: "gofiber/fiber/*"
+    groups:
+      charmbracelet:
+        patterns:
+          - "github.com/charmbracelet/*"
+      muesli:
+        patterns:
+          - "github.com/muesli/*"
+      spf13:
+        patterns:
+          - "github.com/spf13/*"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+      testing:
+        patterns:
+          - "github.com/jarcoal/httpmock"
+          - "github.com/stretchr/testify"
+          - "gopkg.in/check.v1"
+  - package-ecosystem: "github-actions"
+    directory: "/" # Location of package manifests
+    default_labels:
+      - "🤖 Dependencies"
+    schedule:
+      interval: "daily"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

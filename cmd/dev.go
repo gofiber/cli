@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -77,6 +78,8 @@ type escort struct {
 	watcherErrors chan error
 	sig           chan os.Signal
 
+	wg sync.WaitGroup
+
 	binPath    string
 	bin        *exec.Cmd
 	stdoutPipe io.ReadCloser
@@ -108,14 +111,17 @@ func (e *escort) run() (err error) {
 		_ = os.Remove(e.binPath)
 	}()
 
-	go e.runBin()
-	go e.watchingBin()
-	go e.watchingFiles()
+	e.wg.Add(3)
+	go func() { defer e.wg.Done(); e.runBin() }()
+	go func() { defer e.wg.Done(); e.watchingBin() }()
+	go func() { defer e.wg.Done(); e.watchingFiles() }()
 
 	signal.Notify(e.sig, syscall.SIGTERM, syscall.SIGINT, os.Interrupt)
 	<-e.sig
 
 	e.terminate()
+	close(e.hitCh)
+	e.wg.Wait()
 
 	log.Println("See you next time 👋")
 
@@ -153,7 +159,11 @@ func (e *escort) init() (err error) {
 		e.binPath += ".exe"
 	}
 
-	e.hitFunc = e.runBin
+	e.hitFunc = func() {
+		e.wg.Add(1)
+		e.runBin()
+		e.wg.Done()
+	}
 
 	e.preRunCommands = parsePreRunCommands(c.preRun)
 
@@ -214,15 +224,22 @@ func (e *escort) watchingFiles() {
 
 func (e *escort) watchingBin() {
 	var timer *time.Timer
-	for range e.hitCh {
-		// reset timer
-		if timer != nil && !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
+	for {
+		select {
+		case <-e.ctx.Done():
+			if timer != nil {
+				timer.Stop()
 			}
+			return
+		case <-e.hitCh:
+			if timer != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer = time.AfterFunc(e.delay, e.hitFunc)
 		}
-		timer = time.AfterFunc(e.delay, e.hitFunc)
 	}
 }
 
