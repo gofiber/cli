@@ -8,11 +8,20 @@ jobs:
         platform: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-    - name: Install Go
-      uses: actions/setup-go@v1
+    - name: Check out repository
+      uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-    - name: Fetch Repository
-      uses: actions/checkout@v2
+    - name: Cache modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
     - name: Run Test
       run: go test ./... -v -race
