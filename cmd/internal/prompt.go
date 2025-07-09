@@ -2,9 +2,11 @@ package internal
 
 import (
 	"fmt"
+	"os"
 
 	input "github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/termenv"
 )
 
 type errMsg error
@@ -27,7 +29,7 @@ func NewPrompt(title string, placeholder ...string) *Prompt {
 		p.textInput.Placeholder = placeholder[0]
 	}
 
-	p.p = tea.NewProgram(p)
+	p.p = tea.NewProgram(p, tea.WithOutput(termenv.NewOutput(os.Stdout)))
 
 	return p
 }
