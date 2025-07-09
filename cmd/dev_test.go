@@ -312,5 +312,7 @@ func getEscort() *escort {
 		},
 		ctx:       c,
 		terminate: t,
+		hitCh:     make(chan struct{}, 1),
+		sig:       make(chan os.Signal, 1),
 	}
 }
