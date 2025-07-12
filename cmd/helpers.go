@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
@@ -77,12 +76,14 @@ func replaceWalkFn(path string, info os.FileInfo, pattern string, old, new []byt
 	}
 
 	if matched {
+		cleanedPath := filepath.Clean(path)
+
 		var oldContent []byte
-		if oldContent, err = ioutil.ReadFile(filepath.Clean(path)); err != nil {
+		if oldContent, err = os.ReadFile(cleanedPath); err != nil {
 			return
 		}
 
-		if err = ioutil.WriteFile(path, bytes.Replace(oldContent, old, new, -1), 0); err != nil {
+		if err = os.WriteFile(cleanedPath, bytes.Replace(oldContent, old, new, -1), 0); err != nil {
 			return
 		}
 	}
@@ -92,7 +93,7 @@ func replaceWalkFn(path string, info os.FileInfo, pattern string, old, new []byt
 
 func createFile(filePath, content string) (err error) {
 	var f *os.File
-	if f, err = os.Create(filePath); err != nil {
+	if f, err = os.Create(filepath.Clean(filePath)); err != nil {
 		return
 	}
 
@@ -153,11 +154,11 @@ func storeJson(filename string, v interface{}) error {
 		return err
 	}
 
-	return ioutil.WriteFile(filename, b, 0600)
+	return os.WriteFile(filename, b, 0600)
 }
 
 func loadJson(filename string, v interface{}) error {
-	b, err := ioutil.ReadFile(path.Clean(filename))
+	b, err := os.ReadFile(path.Clean(filename))
 	if err != nil {
 		return err
 	}

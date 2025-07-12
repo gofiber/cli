@@ -4,15 +4,20 @@ jobs:
   Build:
     strategy:
       matrix:
-        go-version: [1.21.x, 1.22.x]
+        go-version: [1.24.x]
         platform: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-    - name: Install Go
-      uses: actions/setup-go@v1
+    - name: Check out repository
+      uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-    - name: Fetch Repository
-      uses: actions/checkout@v2
+        cache: true
+        cache-dependency-path: '**/go.sum'
+    - name: Install gotestsum
+      run: go install gotest.tools/gotestsum@latest
     - name: Run Test
-      run: go test ./... -v -race
+      run: |
+        gotestsum --format standard-verbose -- -race ./...

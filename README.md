@@ -4,13 +4,10 @@ Fiber Command Line Interface
 [![Packaging status](https://repology.org/badge/vertical-allrepos/fiber-cli.svg)](https://repology.org/project/fiber-cli/versions)
 
 # Installation
+Requires Go 1.24 or later.
+
 ```bash
-# for go version since 1.16
 go install github.com/gofiber/cli/fiber@latest
-```
-```bash
-# for go version smaller than 1.16
-go get -u github.com/gofiber/cli/fiber
 ```
 
 # Commands
