@@ -353,7 +353,46 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 	return nil
 }
 
-// MigrateFilesystemMiddleware replaces filesystem middleware with static middleware
+// MigrateConfigListenerFields updates config fields that have been moved or renamed
+// in Fiber v3. It renames Prefork and Network fields and adapts them to the new
+// listener configuration fields.
+func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		replacer := strings.NewReplacer(
+			"Prefork:", "EnablePrefork:",
+			"Network:", "ListenerNetwork:",
+		)
+		return replacer.Replace(content)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate listener related config fields: %w", err)
+	}
+
+	cmd.Println("Migrating listener related config fields")
+	return nil
+}
+
+// MigrateListenerCallbacks removes deprecated OnShutdown callbacks from
+// ListenerConfig. Fiber v3 replaces these with the OnPostShutdown hook.
+func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reErr := regexp.MustCompile(`\s*OnShutdownError:\s*[^,]+,?\n`)
+		content = reErr.ReplaceAllString(content, "")
+
+		reSuccess := regexp.MustCompile(`\s*OnShutdownSuccess:\s*[^,]+,?\n`)
+		content = reSuccess.ReplaceAllString(content, "")
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate listener callbacks: %w", err)
+	}
+
+	cmd.Println("Migrating listener callbacks")
+	return nil
+}
+
+// MigrateFilesystemMiddleware replaces deprecated filesystem middleware with static middleware
 func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = strings.ReplaceAll(content,
@@ -363,13 +402,19 @@ func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 			"github.com/gofiber/fiber/v3/middleware/filesystem",
 			"github.com/gofiber/fiber/v3/middleware/static")
 
-		content = strings.ReplaceAll(content, "filesystem.New(", "static.New(\"\", ")
-		content = strings.ReplaceAll(content, "filesystem.Config{", "static.Config{")
-		content = strings.ReplaceAll(content, "Root:", "FS:")
-		content = strings.ReplaceAll(content, "http.Dir(", "os.DirFS(")
+		reNew := regexp.MustCompile(`filesystem\.New\s*\(`)
+		content = reNew.ReplaceAllString(content, `static.New("", `)
 
-		reIndex := regexp.MustCompile(`Index:\s*([^,}\n]+)`)
-		content = reIndex.ReplaceAllString(content, "IndexNames: []string{$1}")
+		content = strings.ReplaceAll(content, "filesystem.Config{", "static.Config{")
+
+		reRootHTTP := regexp.MustCompile(`Root:\s*http.Dir\(([^)]+)\)`)
+		content = reRootHTTP.ReplaceAllString(content, `FS: os.DirFS($1)`)
+
+		reRoot := regexp.MustCompile(`Root:\s*([^,\n]+)`)
+		content = reRoot.ReplaceAllString(content, `FS: os.DirFS($1)`)
+
+		reIndex := regexp.MustCompile(`Index:\s*([^,\n]+)`)
+		content = reIndex.ReplaceAllString(content, `IndexNames: []string{$1}`)
 
 		return content
 	})
@@ -377,7 +422,45 @@ func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 		return fmt.Errorf("failed to migrate filesystem middleware: %w", err)
 	}
 
-	cmd.Println("Migrating filesystem middleware usage")
+	cmd.Println("Migrating filesystem middleware")
+	return nil
+}
+
+// MigrateEnvVarConfig removes deprecated ExcludeVars field from envvar middleware configuration
+func MigrateEnvVarConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		re := regexp.MustCompile(`\s*ExcludeVars:\s*[^,]+,?\n`)
+		return re.ReplaceAllString(content, "")
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate EnvVar configs: %w", err)
+	}
+
+	cmd.Println("Migrating EnvVar middleware configs")
+	return nil
+}
+
+// MigrateHealthcheckConfig updates healthcheck middleware configuration fields
+func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		content = strings.ReplaceAll(content, "LivenessProbe:", "Probe:")
+
+		re := regexp.MustCompile(`\s*ReadinessProbe:\s*[^,]+,?\n`)
+		content = re.ReplaceAllString(content, "")
+
+		re = regexp.MustCompile(`\s*LivenessEndpoint:\s*[^,]+,?\n?`)
+		content = re.ReplaceAllString(content, "")
+
+		re = regexp.MustCompile(`\s*ReadinessEndpoint:\s*[^,]+,?\n?`)
+		content = re.ReplaceAllString(content, "")
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate healthcheck configs: %w", err)
+	}
+
+	cmd.Println("Migrating healthcheck middleware configs")
 	return nil
 }
 
@@ -397,20 +480,6 @@ func MigrateLimiterConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	}
 
 	cmd.Println("Migrating limiter middleware configs")
-	return nil
-}
-
-// MigrateEnvVarConfig removes deprecated fields from envvar middleware configuration
-func MigrateEnvVarConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`\s*ExcludeVars:\s*[^,]+,?\n`)
-		return re.ReplaceAllString(content, "")
-	})
-	if err != nil {
-		return fmt.Errorf("failed to migrate envvar configs: %w", err)
-	}
-
-	cmd.Println("Migrating envvar middleware configs")
 	return nil
 }
 

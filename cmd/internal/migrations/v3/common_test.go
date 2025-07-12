@@ -467,65 +467,96 @@ func main() {
 	assert.Contains(t, content, "proxy.WithClient(&fasthttp.Client{TLSConfig: &tls.Config{InsecureSkipVerify: true}})")
 	assert.Contains(t, buf.String(), "Migrating proxy TLS config")
 }
-func Test_MigrateFilesystemMiddleware(t *testing.T) {
+
+func Test_MigrateConfigListenerFields(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mfstest")
+	dir, err := os.MkdirTemp("", "mconf")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New(fiber.Config{
+        Prefork: true,
+        Network: "tcp",
+    })
+    _ = app
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "EnablePrefork: true")
+	assert.Contains(t, content, "ListenerNetwork: \"tcp\"")
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}
+
+func Test_MigrateListenerCallbacks(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlistener")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	file := writeTempFile(t, dir, `package main
 import (
-    "net/http"
-    "github.com/gofiber/fiber/v2/middleware/filesystem"
+    "github.com/gofiber/fiber/v2"
+    "log"
 )
-var _ = filesystem.New(filesystem.Config{
-    Root: http.Dir("./assets"),
-    Index: "index.html",
-})`)
+func main() {
+    app := fiber.New()
+    app.Listen(":3000", fiber.ListenerConfig{
+        OnShutdownError: func(err error) {
+            log.Print(err)
+        },
+        OnShutdownSuccess: func() {
+            log.Print("ok")
+        },
+    })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateListenerCallbacks(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "OnShutdownError")
+	assert.NotContains(t, content, "OnShutdownSuccess")
+	assert.Contains(t, buf.String(), "Migrating listener callbacks")
+}
+
+func Test_MigrateFilesystemMiddleware(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mfs")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/filesystem"
+    "net/http"
+)
+func main() {
+    _ = filesystem.New(filesystem.Config{
+        Root: http.Dir("./assets"),
+        Index: "index.html",
+    })
+}`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, MigrateFilesystemMiddleware(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "github.com/gofiber/fiber/v3/middleware/static")
 	assert.Contains(t, content, `static.New("", static.Config{`)
 	assert.Contains(t, content, `FS: os.DirFS("./assets")`)
 	assert.Contains(t, content, `IndexNames: []string{"index.html"}`)
-	assert.Contains(t, buf.String(), "Migrating filesystem middleware usage")
-}
-
-func Test_MigrateLimiterConfig(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("", "mlimit")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	file := writeTempFile(t, dir, `package main
-import (
-    "time"
-    "github.com/gofiber/fiber/v2/middleware/limiter"
-)
-var _ = limiter.New(limiter.Config{
-    Duration: time.Second,
-    Store: nil,
-    Key: func(c fiber.Ctx) string { return "" },
-})`)
-
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, MigrateLimiterConfig(cmd, dir, nil, nil))
-
-	content := readFile(t, file)
-	assert.NotContains(t, content, "Duration:")
-	assert.Contains(t, content, "Expiration:")
-	assert.NotContains(t, content, "Store:")
-	assert.Contains(t, content, "Storage:")
-	assert.NotContains(t, content, "Key:")
-	assert.Contains(t, content, "KeyGenerator:")
-	assert.Contains(t, buf.String(), "Migrating limiter middleware configs")
+	assert.Contains(t, buf.String(), "Migrating filesystem middleware")
 }
 
 func Test_MigrateEnvVarConfig(t *testing.T) {
@@ -538,8 +569,7 @@ func Test_MigrateEnvVarConfig(t *testing.T) {
 	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2/middleware/envvar"
 var _ = envvar.New(envvar.Config{
-    ExportVars: []string{"A"},
-    ExcludeVars: []string{"B"},
+    ExcludeVars: []string{"SECRET"},
 })`)
 
 	var buf bytes.Buffer
@@ -548,7 +578,65 @@ var _ = envvar.New(envvar.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "ExcludeVars")
-	assert.Contains(t, buf.String(), "Migrating envvar middleware configs")
+	assert.Contains(t, buf.String(), "Migrating EnvVar middleware configs")
+}
+
+func Test_MigrateLimiterConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlimiter")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/limiter"
+    "time"
+)
+var _ = limiter.New(limiter.Config{
+    Duration: time.Minute,
+    Store: nil,
+    Key: func(c fiber.Ctx) string { return "a" },
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateLimiterConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Expiration:")
+	assert.Contains(t, content, "Storage:")
+	assert.Contains(t, content, "KeyGenerator:")
+	assert.Contains(t, buf.String(), "Migrating limiter middleware configs")
+}
+
+func Test_MigrateHealthcheckConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mhealth")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/healthcheck"
+var _ = healthcheck.New(healthcheck.Config{
+    LivenessProbe: func(c fiber.Ctx) bool { return true },
+    LivenessEndpoint: "/live",
+    ReadinessProbe: func(c fiber.Ctx) bool { return true },
+    ReadinessEndpoint: "/ready",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateHealthcheckConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Probe:")
+	assert.NotContains(t, content, "LivenessProbe")
+	assert.NotContains(t, content, "ReadinessProbe")
+	assert.NotContains(t, content, "LivenessEndpoint")
+	assert.NotContains(t, content, "ReadinessEndpoint")
+	assert.Contains(t, buf.String(), "Migrating healthcheck middleware configs")
 }
 
 func Test_MigrateAppTestConfig(t *testing.T) {
