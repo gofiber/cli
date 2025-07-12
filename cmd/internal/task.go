@@ -11,11 +11,11 @@ import (
 type Task func() error
 
 type SpinnerTask struct {
-	p            *tea.Program
-	spinnerModel spinner.Model
 	err          error
-	title        string
+	p            *tea.Program
 	task         Task
+	title        string
+	spinnerModel spinner.Model
 }
 
 func NewSpinnerTask(title string, task Task) *SpinnerTask {

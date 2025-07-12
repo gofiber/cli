@@ -62,15 +62,17 @@ type config struct {
 	extensions   []string
 	excludeDirs  []string
 	excludeFiles []string
-	delay        time.Duration
 	preRun       []string
 	args         []string
+	delay        time.Duration
 }
 
 type escort struct {
-	config
+	ctx        context.Context
+	stdoutPipe io.ReadCloser
+	stderrPipe io.ReadCloser
+	compiling  atomic.Value
 
-	ctx       context.Context
 	terminate context.CancelFunc
 
 	w             *fsnotify.Watcher
@@ -78,17 +80,17 @@ type escort struct {
 	watcherErrors chan error
 	sig           chan os.Signal
 
-	wg sync.WaitGroup
+	bin     *exec.Cmd
+	hitCh   chan struct{}
+	hitFunc func()
 
-	binPath    string
-	bin        *exec.Cmd
-	stdoutPipe io.ReadCloser
-	stderrPipe io.ReadCloser
-	hitCh      chan struct{}
-	hitFunc    func()
-	compiling  atomic.Value
+	binPath string
 
 	preRunCommands [][]string
+
+	config
+
+	wg sync.WaitGroup
 }
 
 func newEscort(c config) *escort {

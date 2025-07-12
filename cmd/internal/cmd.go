@@ -14,18 +14,18 @@ import (
 )
 
 type SpinnerCmd struct {
-	p            *tea.Program
+	err error
+	p   *tea.Program
+	cmd *exec.Cmd
+
+	stdout       chan []byte
+	stderr       chan []byte
+	errCh        chan error
+	title        string
+	buf          []byte
 	spinnerModel spinner.Model
 	size         console.WinSize
-	err          error
-	title        string
-	cmd          *exec.Cmd
-
-	stdout chan []byte
-	stderr chan []byte
-	errCh  chan error
-	buf    []byte
-	done   bool
+	done         bool
 }
 
 func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {

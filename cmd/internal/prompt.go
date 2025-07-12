@@ -12,11 +12,11 @@ import (
 type errMsg error
 
 type Prompt struct {
-	p         *tea.Program
-	textInput input.Model
 	err       error
+	p         *tea.Program
 	title     string
 	answer    string
+	textInput input.Model
 }
 
 func NewPrompt(title string, placeholder ...string) *Prompt {
