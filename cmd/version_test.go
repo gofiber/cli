@@ -44,7 +44,7 @@ func Test_Version_Current(t *testing.T) {
 		defer teardownCurrentVersionFile()
 
 		_, err := currentVersion()
-		at.Error(err)
+		require.Error(t, err)
 	})
 
 	t.Run("match version", func(t *testing.T) {
@@ -90,7 +90,7 @@ require (
 		defer teardownCurrentVersionFile()
 
 		_, err := currentVersion()
-		at.Error(err)
+		require.Error(t, err)
 	})
 }
 
@@ -118,7 +118,7 @@ func Test_Version_Latest(t *testing.T) {
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewErrorResponder(errors.New("network error")))
 
 		_, err := LatestFiberVersion()
-		at.Error(err)
+		require.Error(t, err)
 	})
 
 	t.Run("version matched", func(t *testing.T) {
@@ -139,7 +139,7 @@ func Test_Version_Latest(t *testing.T) {
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, []byte("no version")))
 
 		_, err := LatestFiberVersion()
-		at.Error(err)
+		require.Error(t, err)
 	})
 }
 
