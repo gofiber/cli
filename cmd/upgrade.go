@@ -18,7 +18,7 @@ var upgradeCmd = &cobra.Command{
 var upgraded bool
 
 func upgradeRunE(cmd *cobra.Command, _ []string) error {
-	cliLatestVersion, err := latestVersion(true)
+	cliLatestVersion, err := LatestCliVersion()
 	if err != nil {
 		return err
 	}

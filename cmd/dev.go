@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -43,6 +42,10 @@ func init() {
 		"arguments for exec")
 }
 
+const (
+	windowsOS = "windows"
+)
+
 // devCmd reruns the fiber project if watched files changed
 var devCmd = &cobra.Command{
 	Use:     "dev",
@@ -58,19 +61,20 @@ func devRunE(_ *cobra.Command, _ []string) error {
 type config struct {
 	root         string
 	target       string
-	binPath      string
 	extensions   []string
 	excludeDirs  []string
 	excludeFiles []string
-	delay        time.Duration
 	preRun       []string
 	args         []string
+	delay        time.Duration
 }
 
 type escort struct {
-	config
+	ctx        context.Context
+	stdoutPipe io.ReadCloser
+	stderrPipe io.ReadCloser
+	compiling  atomic.Value
 
-	ctx       context.Context
 	terminate context.CancelFunc
 
 	w             *fsnotify.Watcher
@@ -78,17 +82,17 @@ type escort struct {
 	watcherErrors chan error
 	sig           chan os.Signal
 
-	wg sync.WaitGroup
+	bin     *exec.Cmd
+	hitCh   chan struct{}
+	hitFunc func()
 
-	binPath    string
-	bin        *exec.Cmd
-	stdoutPipe io.ReadCloser
-	stderrPipe io.ReadCloser
-	hitCh      chan struct{}
-	hitFunc    func()
-	compiling  atomic.Value
+	binPath string
 
 	preRunCommands [][]string
+
+	config
+
+	wg sync.WaitGroup
 }
 
 func newEscort(c config) *escort {
@@ -99,16 +103,20 @@ func newEscort(c config) *escort {
 	}
 }
 
-func (e *escort) run() (err error) {
-	if err = e.init(); err != nil {
-		return
+func (e *escort) run() error {
+	if err := e.init(); err != nil {
+		return err
 	}
 
 	log.Println("Welcome to fiber dev 👋")
 
 	defer func() {
-		_ = e.w.Close()
-		_ = os.Remove(e.binPath)
+		if err := e.w.Close(); err != nil {
+			log.Printf("Failed to close watcher: %v", err)
+		}
+		if err := os.Remove(e.binPath); err != nil {
+			log.Printf("Failed to remove bin: %v", err)
+		}
 	}()
 
 	e.wg.Add(3)
@@ -128,9 +136,10 @@ func (e *escort) run() (err error) {
 	return nil
 }
 
-func (e *escort) init() (err error) {
+func (e *escort) init() error {
+	var err error
 	if e.w, err = fsnotify.NewWatcher(); err != nil {
-		return
+		return fmt.Errorf("failed to create watcher: %w", err)
 	}
 
 	e.watcherEvents = e.w.Events
@@ -140,22 +149,20 @@ func (e *escort) init() (err error) {
 
 	// normalize root
 	if e.root, err = filepath.Abs(e.root); err != nil {
-		return
+		return fmt.Errorf("failed to get abs path for root: %w", err)
 	}
 
 	// create bin target
-	var f *os.File
-	if f, err = ioutil.TempFile("", ""); err != nil {
-		return
+	f, err := os.CreateTemp("", "")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer func() {
-		if e := f.Close(); e != nil {
-			err = e
-		}
-	}()
+	if cerr := f.Close(); cerr != nil {
+		return fmt.Errorf("failed to close temp file: %w", cerr)
+	}
 
 	e.binPath = f.Name()
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		e.binPath += ".exe"
 	}
 
@@ -167,7 +174,7 @@ func (e *escort) init() (err error) {
 
 	e.preRunCommands = parsePreRunCommands(c.preRun)
 
-	return
+	return nil
 }
 
 func (e *escort) watchingFiles() {
@@ -244,8 +251,10 @@ func (e *escort) watchingBin() {
 }
 
 func (e *escort) runBin() {
-	if ok := e.compiling.Load(); ok != nil && ok.(bool) {
-		return
+	if ok := e.compiling.Load(); ok != nil {
+		if val, ok := ok.(bool); ok && val {
+			return
+		}
 	}
 
 	e.doPreRun()
@@ -289,10 +298,14 @@ func (e *escort) runBin() {
 func (e *escort) cleanOldBin() {
 	defer func() {
 		if e.stdoutPipe != nil {
-			_ = e.stdoutPipe.Close()
+			if err := e.stdoutPipe.Close(); err != nil {
+				log.Printf("Failed to close stdout pipe: %v", err)
+			}
 		}
 		if e.stderrPipe != nil {
-			_ = e.stderrPipe.Close()
+			if err := e.stderrPipe.Close(); err != nil {
+				log.Printf("Failed to close stderr pipe: %v", err)
+			}
 		}
 	}()
 
@@ -300,11 +313,13 @@ func (e *escort) cleanOldBin() {
 	log.Println("Killing old pid", pid)
 
 	var err error
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		err = execCommand("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 	} else {
 		err = e.bin.Process.Kill()
-		_, _ = e.bin.Process.Wait()
+		if _, waitErr := e.bin.Process.Wait(); waitErr != nil {
+			log.Printf("Failed to wait for process %d: %v", pid, waitErr)
+		}
 	}
 
 	if err != nil {
@@ -319,13 +334,21 @@ func (e *escort) watchingPipes() {
 	if e.stdoutPipe, err = e.bin.StdoutPipe(); err != nil {
 		log.Printf("Failed to get stdout pipe: %s", err)
 	} else {
-		go func() { _, _ = io.Copy(os.Stdout, e.stdoutPipe) }()
+		go func() {
+			if _, err := io.Copy(os.Stdout, e.stdoutPipe); err != nil {
+				log.Printf("Failed to copy stdout: %v", err)
+			}
+		}()
 	}
 
 	if e.stderrPipe, err = e.bin.StderrPipe(); err != nil {
 		log.Printf("Failed to get stderr pipe: %s", err)
 	} else {
-		go func() { _, _ = io.Copy(os.Stderr, e.stderrPipe) }()
+		go func() {
+			if _, err := io.Copy(os.Stderr, e.stderrPipe); err != nil {
+				log.Printf("Failed to copy stderr: %v", err)
+			}
+		}()
 	}
 }
 
@@ -403,12 +426,20 @@ func (e *escort) doPreRun() {
 		cmd := execCommand(command[0], command[1:]...)
 		out, err := cmd.CombinedOutput()
 		var buf bytes.Buffer
-		_, _ = buf.WriteString(fmt.Sprintf("Pre running %s... ", command))
-		if err != nil {
-			_, _ = buf.WriteString(err.Error())
-			_, _ = buf.WriteString(":")
+		if _, werr := buf.WriteString(fmt.Sprintf("Pre running %s... ", command)); werr != nil {
+			log.Printf("Failed to write to buffer: %v", werr)
 		}
-		_, _ = buf.Write(out)
+		if err != nil {
+			if _, werr := buf.WriteString(err.Error()); werr != nil {
+				log.Printf("Failed to write error to buffer: %v", werr)
+			}
+			if _, werr := buf.WriteString(":"); werr != nil {
+				log.Printf("Failed to write colon to buffer: %v", werr)
+			}
+		}
+		if _, werr := buf.Write(out); werr != nil {
+			log.Printf("Failed to write output to buffer: %v", werr)
+		}
 		log.Print(buf.String())
 	}
 }
@@ -431,7 +462,7 @@ func parsePreRunCommands(commands []string) (list [][]string) {
 			list = append(list, r)
 		}
 	}
-	return
+	return list
 }
 
 const (

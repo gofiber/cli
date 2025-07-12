@@ -11,15 +11,15 @@ import (
 type Task func() error
 
 type SpinnerTask struct {
-	p            *tea.Program
-	spinnerModel spinner.Model
 	err          error
-	title        string
+	p            *tea.Program
 	task         Task
+	title        string
+	spinnerModel spinner.Model
 }
 
 func NewSpinnerTask(title string, task Task) *SpinnerTask {
-	spinnerModel := spinner.NewModel()
+	spinnerModel := spinner.New()
 	spinnerModel.Spinner = spinner.Dot
 
 	at := &SpinnerTask{
@@ -37,16 +37,15 @@ func (t *SpinnerTask) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
 			return finishedMsg{t.task()}
-		}, spinner.Tick)
+		}, t.spinnerModel.Tick)
 }
 
 func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
-			t.err = fmt.Errorf("quit by %s\n", msg.String())
+			t.err = fmt.Errorf("quit by %s", msg.String())
 			return t, tea.Quit
 		default:
 			return t, nil
@@ -61,7 +60,6 @@ func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		t.spinnerModel, cmd = t.spinnerModel.Update(msg)
 		return t, cmd
 	}
-
 }
 
 func (t *SpinnerTask) View() string {
@@ -79,11 +77,11 @@ func (t *SpinnerTask) View() string {
 
 func (t *SpinnerTask) Run() (err error) {
 	if _, err = checkConsole(); err != nil {
-		return
+		return err
 	}
 
-	if err = t.p.Start(); err != nil {
-		return
+	if _, err = t.p.Run(); err != nil {
+		return fmt.Errorf("run spinner: %w", err)
 	}
 
 	return t.err

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_New_Run(t *testing.T) {
@@ -12,8 +13,8 @@ func Test_New_Run(t *testing.T) {
 
 	t.Run("new project", func(t *testing.T) {
 		defer func() {
-			at.Nil(os.Chdir("../"))
-			_ = os.RemoveAll("normal")
+			require.NoError(t, os.Chdir("../"))
+			require.NoError(t, os.RemoveAll("normal"))
 		}()
 
 		setupCmd()
@@ -21,14 +22,14 @@ func Test_New_Run(t *testing.T) {
 
 		out, err := runCobraCmd(newCmd, "normal")
 
-		at.Nil(err)
+		require.NoError(t, err)
 		at.Contains(out, "Done")
 	})
 
 	t.Run("custom mod name", func(t *testing.T) {
 		defer func() {
-			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("custom_mod_name"))
+			require.NoError(t, os.Chdir("../"))
+			require.NoError(t, os.RemoveAll("custom_mod_name"))
 		}()
 
 		setupCmd()
@@ -36,28 +37,28 @@ func Test_New_Run(t *testing.T) {
 
 		out, err := runCobraCmd(newCmd, "custom_mod_name", "name")
 
-		at.Nil(err)
+		require.NoError(t, err)
 		at.Contains(out, "name")
 	})
 
 	t.Run("create complex project", func(t *testing.T) {
 		defer func() {
-			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("complex"))
+			require.NoError(t, os.Chdir("../"))
+			require.NoError(t, os.RemoveAll("complex"))
 		}()
 
 		setupCmd()
 		defer teardownCmd()
 
 		out, err := runCobraCmd(newCmd, "complex", "-t=complex")
-		at.Nil(err)
+		require.NoError(t, err)
 		at.Contains(out, "Done")
 	})
 
 	t.Run("failed to create complex project", func(t *testing.T) {
 		defer func() {
-			at.Nil(os.Chdir("../"))
-			at.Nil(os.RemoveAll("complex_failed"))
+			require.NoError(t, os.Chdir("../"))
+			require.NoError(t, os.RemoveAll("complex_failed"))
 		}()
 
 		setupCmd(errFlag)
@@ -65,30 +66,28 @@ func Test_New_Run(t *testing.T) {
 
 		out, err := runCobraCmd(newCmd, "complex_failed", "-t=complex")
 
-		at.NotNil(err)
+		require.Error(t, err)
 		at.Contains(out, "failed to run")
 	})
 
 	t.Run("invalid project name", func(t *testing.T) {
 		out, err := runCobraCmd(newCmd, ".")
 
-		at.NotNil(err)
+		require.Error(t, err)
 		at.Contains(out, ".")
 	})
 }
 
 func Test_New_CreateBasic(t *testing.T) {
-	assert.NotNil(t, createBasic(" ", "name"))
+	require.Error(t, createBasic(" ", "name"))
 }
 
 func Test_New_CreateComplex(t *testing.T) {
-	at := assert.New(t)
-
 	t.Run("look path error", func(t *testing.T) {
 		setupLookPath(errFlag)
 		defer teardownLookPath()
 
-		at.NotNil(createComplex(" ", "name"))
+		require.Error(t, createComplex(" ", "name"))
 	})
 
 	t.Run("failed to replace pattern", func(t *testing.T) {
@@ -99,6 +98,6 @@ func Test_New_CreateComplex(t *testing.T) {
 
 		repo = "git@any.provider.com:id/repo.git"
 
-		at.NotNil(createComplex(" ", "name"))
+		require.Error(t, createComplex(" ", "name"))
 	})
 }

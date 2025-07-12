@@ -12,17 +12,17 @@ import (
 type errMsg error
 
 type Prompt struct {
-	p         *tea.Program
-	textInput input.Model
 	err       error
+	p         *tea.Program
 	title     string
 	answer    string
+	textInput input.Model
 }
 
 func NewPrompt(title string, placeholder ...string) *Prompt {
 	p := &Prompt{
 		title:     title,
-		textInput: input.NewModel(),
+		textInput: input.New(),
 	}
 
 	if len(placeholder) > 0 {
@@ -53,11 +53,11 @@ func parseBool(str string) bool {
 
 func (p *Prompt) Answer() (result string, err error) {
 	if _, err = checkConsole(); err != nil {
-		return
+		return "", fmt.Errorf("check console: %w", err)
 	}
 
-	if err := p.p.Start(); err != nil {
-		return "", err
+	if _, err := p.p.Run(); err != nil {
+		return "", fmt.Errorf("run prompt: %w", err)
 	}
 	return p.answer, nil
 }
@@ -81,6 +81,8 @@ func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			p.answer = p.textInput.Value()
 			return p, tea.Quit
+		default:
+			// ignore other keys
 		}
 
 	// We handle errors just like any other message

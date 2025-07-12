@@ -27,14 +27,13 @@ func init() {
 }
 
 func runCmd(cmd *exec.Cmd) (err error) {
-
 	var (
 		stderr io.ReadCloser
 		stdout io.ReadCloser
 	)
 
 	if stderr, err = cmd.StderrPipe(); err != nil {
-		return
+		return err
 	}
 	defer func() {
 		_ = stderr.Close()
@@ -42,7 +41,7 @@ func runCmd(cmd *exec.Cmd) (err error) {
 	go func() { _, _ = io.Copy(os.Stderr, stderr) }()
 
 	if stdout, err = cmd.StdoutPipe(); err != nil {
-		return
+		return err
 	}
 	defer func() {
 		_ = stdout.Close()
@@ -53,7 +52,7 @@ func runCmd(cmd *exec.Cmd) (err error) {
 		err = fmt.Errorf("failed to run %s", cmd.String())
 	}
 
-	return
+	return err
 }
 
 // replaces matching file patterns in a path, including subdirectories
@@ -72,7 +71,7 @@ func replace(path, pattern, old, new string) error {
 func replaceWalkFn(path string, info os.FileInfo, pattern string, old, new []byte) (err error) {
 	var matched bool
 	if matched, err = filepath.Match(pattern, info.Name()); err != nil {
-		return
+		return err
 	}
 
 	if matched {
@@ -80,28 +79,28 @@ func replaceWalkFn(path string, info os.FileInfo, pattern string, old, new []byt
 
 		var oldContent []byte
 		if oldContent, err = os.ReadFile(cleanedPath); err != nil {
-			return
+			return err
 		}
 
 		if err = os.WriteFile(cleanedPath, bytes.Replace(oldContent, old, new, -1), 0); err != nil {
-			return
+			return err
 		}
 	}
 
-	return
+	return nil
 }
 
 func createFile(filePath, content string) (err error) {
 	var f *os.File
 	if f, err = os.Create(filepath.Clean(filePath)); err != nil {
-		return
+		return err
 	}
 
 	defer func() { _ = f.Close() }()
 
 	_, err = f.WriteString(content)
 
-	return
+	return err
 }
 
 func formatLatency(d time.Duration) time.Duration {
@@ -122,15 +121,15 @@ func loadConfig() (err error) {
 
 	if fileExist(configFilePath) {
 		if err = loadJson(configFilePath, &rc); err != nil {
-			return
+			return err
 		}
 	}
 
-	return
+	return nil
 }
 
 func storeConfig() {
-	_ = storeJson(configFilePath(), rc)
+	_ = storeJSON(configFilePath(), rc)
 }
 
 func configFilePath() string {
@@ -148,16 +147,16 @@ var fileExist = func(filename string) bool {
 	return true
 }
 
-func storeJson(filename string, v interface{}) error {
+func storeJSON(filename string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filename, b, 0600)
+	return os.WriteFile(filename, b, 0o600)
 }
 
-func loadJson(filename string, v interface{}) error {
+func loadJson(filename string, v any) error {
 	b, err := os.ReadFile(path.Clean(filename))
 	if err != nil {
 		return err
