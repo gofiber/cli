@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -529,6 +530,40 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating listener callbacks")
 }
 
+func Test_MigrateListenMethods(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlisten")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "crypto/tls"
+)
+func main() {
+    app := fiber.New()
+    cert, _ := tls.LoadX509KeyPair("cert.pem", "key.pem")
+    app.ListenTLS(":443", "cert.pem", "key.pem")
+    app.ListenTLSWithCertificate(":443", cert)
+    app.ListenMutualTLS(":443", "cert.pem", "key.pem", "ca.pem")
+    app.ListenMutualTLSWithCertificate(":443", cert, "ca.pem")
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateListenMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ListenTLS(")
+	assert.NotContains(t, content, "ListenTLSWithCertificate(")
+	assert.NotContains(t, content, "ListenMutualTLS(")
+	assert.NotContains(t, content, "ListenMutualTLSWithCertificate(")
+	assert.Equal(t, 4, strings.Count(content, ".Listen("))
+	assert.Contains(t, buf.String(), "Migrating listen methods")
+}
+
 func Test_MigrateFilesystemMiddleware(t *testing.T) {
 	t.Parallel()
 
@@ -689,4 +724,54 @@ func handler(c fiber.Ctx) error {
 	content := readFile(t, file)
 	assert.Contains(t, content, `requestid.FromContext(c)`)
 	assert.Contains(t, buf.String(), "Migrating middleware locals")
+}
+
+func Test_MigrateReqHeaderParser(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mrhp")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    var v any
+    c.ReqHeaderParser(&v)
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateReqHeaderParser(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `.Bind().Header(&v)`)
+	assert.Contains(t, buf.String(), "Migrating request header parser helper")
+}
+
+func Test_MigrateSessionConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msession")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/session"
+    "time"
+)
+var _ = session.New(session.Config{
+    Expiration: 5 * time.Minute,
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateSessionConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "IdleTimeout:")
+	assert.NotContains(t, content, "Expiration:")
+	assert.Contains(t, buf.String(), "Migrating session middleware configs")
 }

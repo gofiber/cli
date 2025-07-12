@@ -483,6 +483,23 @@ func MigrateLimiterConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
+// MigrateSessionConfig updates session middleware configuration fields
+func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reConfig := regexp.MustCompile(`session\.Config{[^}]*}`)
+		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
+			s = strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
+			return s
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate session configs: %w", err)
+	}
+
+	cmd.Println("Migrating session middleware configs")
+	return nil
+}
+
 // MigrateAppTestConfig updates app.Test calls to use the new TestConfig parameter
 func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
@@ -522,5 +539,42 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	}
 
 	cmd.Println("Migrating middleware locals")
+	return nil
+}
+
+// MigrateListenMethods replaces removed Listen helpers with Listen
+func MigrateListenMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	replacer := strings.NewReplacer(
+		".ListenTLSWithCertificate(", ".Listen(",
+		".ListenTLS(", ".Listen(",
+		".ListenMutualTLSWithCertificate(", ".Listen(",
+		".ListenMutualTLS(", ".Listen(",
+	)
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return replacer.Replace(content)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate listen methods: %w", err)
+	}
+
+	cmd.Println("Migrating listen methods")
+	return nil
+}
+
+// MigrateReqHeaderParser replaces the deprecated ReqHeaderParser helper with the new binding API
+func MigrateReqHeaderParser(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	replacer := strings.NewReplacer(
+		".ReqHeaderParser(", ".Bind().Header(",
+	)
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return replacer.Replace(content)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate ReqHeaderParser: %w", err)
+	}
+
+	cmd.Println("Migrating request header parser helper")
 	return nil
 }
