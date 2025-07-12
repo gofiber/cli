@@ -119,10 +119,11 @@ func Test_Dev_Escort_WatchingFiles(t *testing.T) {
 	)
 
 	e := getEscort()
-	e.hitCh = make(chan struct{})
+	e.hitCh = make(chan struct{}, 2)
 
 	e.w, err = fsnotify.NewWatcher()
 	require.NoError(t, err)
+	defer func() { require.NoError(t, e.w.Close()) }()
 
 	e.extensions = []string{"go"}
 	e.watcherEvents = make(chan fsnotify.Event)
