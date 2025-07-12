@@ -11,6 +11,7 @@ import (
 	"github.com/jarcoal/httpmock"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Root_Execute(t *testing.T) {
@@ -35,7 +36,7 @@ func Test_Root_Execute(t *testing.T) {
 func Test_Root_RunE(t *testing.T) {
 	at, b := setupRootCmd(t)
 
-	at.Nil(rootRunE(rootCmd, nil))
+	require.NoError(t, rootRunE(rootCmd, nil))
 
 	at.Contains(b.String(), "fiber")
 }
@@ -81,7 +82,7 @@ func Test_Root_CheckCliVersion(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewErrorResponder(errors.New("network error")))
+	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewErrorResponder(errors.New("network error")))
 
 	checkCliVersion(rootCmd)
 
@@ -95,7 +96,7 @@ func Test_Root_CheckCliVersion(t *testing.T) {
 		teardownHomeDir(tempHome)
 	}()
 
-	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse()))
+	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewBytesResponder(200, fakeCliVersionResponse()))
 
 	checkCliVersion(rootCmd)
 
@@ -113,6 +114,7 @@ func Test_Root_NeedCheckCliVersion(t *testing.T) {
 }
 
 func setupRootCmd(t *testing.T) (*assert.Assertions, *bytes.Buffer) {
+	t.Helper()
 	at := assert.New(t)
 
 	b := &bytes.Buffer{}
@@ -122,7 +124,7 @@ func setupRootCmd(t *testing.T) (*assert.Assertions, *bytes.Buffer) {
 	return at, b
 }
 
-var latestCliVersionUrl = "https://api.github.com/repos/gofiber/cli/releases/latest"
+var latestCliVersionURL = "https://api.github.com/repos/gofiber/cli/releases/latest"
 
 var fakeCliVersionResponse = func(version ...string) []byte {
 	v := "99.99.99"

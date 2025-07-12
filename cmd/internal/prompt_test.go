@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Prompt_New(t *testing.T) {
@@ -26,7 +27,7 @@ func Test_Prompt_Answer(t *testing.T) {
 
 	p := NewPrompt("")
 	_, err := p.Answer()
-	assert.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func Test_Prompt_YesOrNo(t *testing.T) {
@@ -34,7 +35,7 @@ func Test_Prompt_YesOrNo(t *testing.T) {
 
 	p := NewPrompt("")
 	_, err := p.YesOrNo()
-	assert.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func Test_Prompt_ParseBool(t *testing.T) {
@@ -67,7 +68,7 @@ func Test_Prompt_Update(t *testing.T) {
 	at.Nil(cmd)
 
 	_, cmd = p.Update(errMsg(errors.New("fake error")))
-	at.NotNil(p.err)
+	require.Error(t, p.err)
 	at.Nil(cmd)
 
 	_, cmd = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})

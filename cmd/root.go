@@ -9,14 +9,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.9"
-const configName = ".fiberconfig"
-
-var (
-	rc = rootConfig{
-		CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
-	}
+const (
+	version    = "0.0.9"
+	configName = ".fiberconfig"
 )
+
+var rc = rootConfig{
+	CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
+}
 
 type rootConfig struct {
 	CliVersionCheckInterval int64 `json:"cli_version_check_interval"`
@@ -68,7 +68,7 @@ func checkCliVersion(cmd *cobra.Command) {
 		return
 	}
 
-	cliLatestVersion, err := latestVersion(true)
+	cliLatestVersion, err := LatestCliVersion()
 	if err != nil {
 		return
 	}

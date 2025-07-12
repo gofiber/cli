@@ -41,7 +41,7 @@ func newRunE(cmd *cobra.Command, args []string) (err error) {
 	projectPath := fmt.Sprintf("%s%c%s", wd, os.PathSeparator, projectName)
 
 	if err = createProject(projectPath); err != nil {
-		return
+		return err
 	}
 	defer func() {
 		if err != nil {
@@ -65,8 +65,8 @@ func newRunE(cmd *cobra.Command, args []string) (err error) {
 }
 
 func createProject(projectPath string) (err error) {
-	if err = os.Mkdir(projectPath, 0750); err != nil {
-		return
+	if err = os.Mkdir(projectPath, 0o750); err != nil {
+		return err
 	}
 
 	return os.Chdir(projectPath)
@@ -75,21 +75,23 @@ func createProject(projectPath string) (err error) {
 func createBasic(projectPath, modName string) (err error) {
 	// create main.go
 	if err = createFile(fmt.Sprintf("%s%cmain.go", projectPath, os.PathSeparator), newBasicTemplate); err != nil {
-		return
+		return err
 	}
 
 	return runCmd(execCommand("go", "mod", "init", modName))
 }
 
-const githubPrefix = "https://github.com/"
-const defaultRepo = "gofiber/boilerplate"
+const (
+	githubPrefix = "https://github.com/"
+	defaultRepo  = "gofiber/boilerplate"
+)
 
 var fullPathRegex = regexp.MustCompile(`^(http|https|git)`)
 
 func createComplex(projectPath, modName string) (err error) {
 	var git string
 	if git, err = execLookPath("git"); err != nil {
-		return
+		return err
 	}
 
 	toClone := githubPrefix + repo
@@ -98,19 +100,19 @@ func createComplex(projectPath, modName string) (err error) {
 	}
 
 	if err = runCmd(execCommand(git, "clone", toClone, projectPath)); err != nil {
-		return
+		return err
 	}
 
 	if repo == defaultRepo {
 		if err = replace(projectPath, "go.mod", "boilerplate", modName); err != nil {
-			return
+			return err
 		}
 
 		if err = replace(projectPath, "*.go", "boilerplate", modName); err != nil {
-			return
+			return err
 		}
 	}
-	return
+	return err
 }
 
 var (

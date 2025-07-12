@@ -16,8 +16,6 @@ linters-settings:
         deny:
           - pkg: "flag"
             desc: '`flag` package is only allowed in main.go'
-          - pkg: "log"
-            desc: 'logging is provided by `pkg/log`'
           - pkg: "io/ioutil"
             desc: '`io/ioutil` package is deprecated, use the `io` and `os` package instead'
           # TODO: Prevent using these without a reason
@@ -56,7 +54,6 @@ linters-settings:
   gci:
     sections:
       - standard
-      - prefix(github.com/gofiber/fiber)
       - default
       - blank
       - dot
@@ -86,7 +83,7 @@ linters-settings:
         # checkExported: false
 
   gofumpt:
-    module-path: github.com/gofiber/fiber
+    module-path: github.com/gofiber/cli
     extra-rules: true
 
   gosec:
@@ -250,8 +247,6 @@ issues:
   exclude-case-sensitive: true
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-dirs:
-    - internal # TODO: Do not ignore internal packages
   exclude-files:
     - '_msgp\.go'
     - '_msgp_test\.go'
@@ -278,14 +273,14 @@ linters:
     - asciicheck
     - bidichk
     - bodyclose
-    - containedctx
+    # - containedctx TODO: Enable
     - contextcheck
     # - cyclop
     - decorder
     - depguard
     - dogsled
     # - dupl
-    - dupword # TODO: Enable
+    - dupword
     - durationcheck
     - errcheck
     - errchkjson
@@ -346,7 +341,7 @@ linters:
     # - nlreturn
     - noctx
     - nolintlint
-    - nonamedreturns
+    # - nonamedreturns
     - nosprintfhostport
     # - paralleltest # TODO: Enable
     - perfsprint

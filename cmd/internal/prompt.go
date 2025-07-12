@@ -22,7 +22,7 @@ type Prompt struct {
 func NewPrompt(title string, placeholder ...string) *Prompt {
 	p := &Prompt{
 		title:     title,
-		textInput: input.NewModel(),
+		textInput: input.New(),
 	}
 
 	if len(placeholder) > 0 {
@@ -56,7 +56,7 @@ func (p *Prompt) Answer() (result string, err error) {
 		return
 	}
 
-	if err := p.p.Start(); err != nil {
+	if _, err := p.p.Run(); err != nil {
 		return "", err
 	}
 	return p.answer, nil

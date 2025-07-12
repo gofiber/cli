@@ -19,7 +19,7 @@ type SpinnerTask struct {
 }
 
 func NewSpinnerTask(title string, task Task) *SpinnerTask {
-	spinnerModel := spinner.NewModel()
+	spinnerModel := spinner.New()
 	spinnerModel.Spinner = spinner.Dot
 
 	at := &SpinnerTask{
@@ -37,12 +37,11 @@ func (t *SpinnerTask) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
 			return finishedMsg{t.task()}
-		}, spinner.Tick)
+		}, t.spinnerModel.Tick)
 }
 
 func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
@@ -61,7 +60,6 @@ func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		t.spinnerModel, cmd = t.spinnerModel.Update(msg)
 		return t, cmd
 	}
-
 }
 
 func (t *SpinnerTask) View() string {
@@ -79,11 +77,11 @@ func (t *SpinnerTask) View() string {
 
 func (t *SpinnerTask) Run() (err error) {
 	if _, err = checkConsole(); err != nil {
-		return
+		return err
 	}
 
-	if err = t.p.Start(); err != nil {
-		return
+	if _, err = t.p.Run(); err != nil {
+		return err
 	}
 
 	return t.err

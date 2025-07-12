@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"testing"
@@ -17,11 +16,13 @@ import (
 var (
 	needError bool
 	errFlag   = struct{}{}
+	testExit  = os.Exit // for testing exit
 )
 
 func fakeExecCommand(command string, args ...string) *exec.Cmd {
 	cs := []string{"-test.run=TestHelperProcess", "--", command}
 	cs = append(cs, args...)
+	// gosec: G204 - safe for test, args are controlled
 	cmd := exec.Command(os.Args[0], cs...)
 	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 	if needError {
@@ -46,15 +47,17 @@ func TestHelperProcess(t *testing.T) {
 
 	if len(args) == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "No command")
-		os.Exit(2)
+		testExit(2)
+		return
 	}
 
 	if os.Getenv("GO_WANT_HELPER_NEED_ERR") == "1" {
 		_, _ = fmt.Fprintf(os.Stderr, "fake error")
-		os.Exit(1)
+		testExit(1)
+		return
 	}
 
-	os.Exit(0)
+	testExit(0)
 }
 
 func setupCmd(flag ...struct{}) {
@@ -70,11 +73,11 @@ func teardownCmd() {
 }
 
 func setupLookPath(flag ...struct{}) {
-	execLookPath = func(file string) (s string, err error) {
+	execLookPath = func(_ string) (s string, err error) {
 		if len(flag) > 0 {
 			err = errors.New("fake look path error")
 		}
-		return
+		return "", err
 	}
 }
 
@@ -88,10 +91,12 @@ func setupOsExit(override ...func(int)) {
 		fn = override[0]
 	}
 	osExit = fn
+	testExit = fn
 }
 
 func teardownOsExit() {
 	osExit = os.Exit
+	testExit = os.Exit
 }
 
 func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
@@ -107,13 +112,17 @@ func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
 }
 
 func setupHomeDir(t *testing.T, pattern string) string {
-	homeDir, err := ioutil.TempDir("", "test_"+pattern)
-	assert.Nil(t, err)
+	t.Helper()
+	homeDir, err := os.MkdirTemp("", "test_"+pattern)
+	assert.NoError(t, err)
 	return homeDir
 }
 
 func teardownHomeDir(dir string) {
-	_ = os.RemoveAll(dir)
+	err := os.RemoveAll(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to remove temp dir: %v", err)
+	}
 }
 
 func setupSpinner() {

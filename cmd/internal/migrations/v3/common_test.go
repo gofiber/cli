@@ -2,27 +2,27 @@ package v3
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func writeTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	err := os.WriteFile(path, []byte(content), 0o644)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	return path
 }
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	return string(b)
 }
 
@@ -36,8 +36,8 @@ func newCmd(buf *bytes.Buffer) *cobra.Command {
 func Test_MigrateHandlerSignatures(t *testing.T) {
 	t.Parallel()
 
-	dir, err := ioutil.TempDir("", "mhstest")
-	assert.Nil(t, err)
+	dir, err := os.MkdirTemp("", "mhstest")
+	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
 	file := writeTempFile(t, dir, "main.go", `package main
@@ -47,7 +47,7 @@ func handler(c *fiber.Ctx) error { return nil }
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	assert.Nil(t, MigrateHandlerSignatures(cmd, dir, nil, nil))
+	require.NoError(t, MigrateHandlerSignatures(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "*fiber.Ctx")
@@ -58,14 +58,14 @@ func handler(c *fiber.Ctx) error { return nil }
 func Test_MigrateParserMethods(t *testing.T) {
 	t.Parallel()
 
-	dir, err := ioutil.TempDir("", "mptest")
-	assert.Nil(t, err)
+	dir, err := os.MkdirTemp("", "mptest")
+	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
 	file := writeTempFile(t, dir, "main.go", `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c fiber.Ctx) error {
-    var v interface{}
+    var v any
     c.BodyParser(&v)
     c.CookieParser(&v)
     c.ParamsParser(&v)
@@ -76,7 +76,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	assert.Nil(t, MigrateParserMethods(cmd, dir, nil, nil))
+	require.NoError(t, MigrateParserMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Bind().Body(&v)")
@@ -89,8 +89,8 @@ func handler(c fiber.Ctx) error {
 func Test_MigrateRedirectMethods(t *testing.T) {
 	t.Parallel()
 
-	dir, err := ioutil.TempDir("", "mrtest")
-	assert.Nil(t, err)
+	dir, err := os.MkdirTemp("", "mrtest")
+	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
 	file := writeTempFile(t, dir, "main.go", `package main
@@ -105,7 +105,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	assert.Nil(t, MigrateRedirectMethods(cmd, dir, nil, nil))
+	require.NoError(t, MigrateRedirectMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Redirect().To(\"/foo\")")
@@ -117,8 +117,8 @@ func handler(c fiber.Ctx) error {
 func Test_MigrateGenericHelpers(t *testing.T) {
 	t.Parallel()
 
-	dir, err := ioutil.TempDir("", "mghtest")
-	assert.Nil(t, err)
+	dir, err := os.MkdirTemp("", "mghtest")
+	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
 	file := writeTempFile(t, dir, "main.go", `package main
@@ -134,7 +134,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	assert.Nil(t, MigrateGenericHelpers(cmd, dir, nil, nil))
+	require.NoError(t, MigrateGenericHelpers(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "fiber.Params[int](c, \"id\"")

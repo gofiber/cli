@@ -8,6 +8,7 @@ import (
 
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Version_Printer(t *testing.T) {
@@ -21,7 +22,7 @@ func Test_Version_Printer(t *testing.T) {
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, fakeVersionResponse))
 
 		out, err := runCobraCmd(versionCmd)
-		at.NoError(err)
+		require.NoError(t, err)
 		at.Contains(out, "2.0.6")
 	})
 
@@ -33,7 +34,7 @@ func Test_Version_Printer(t *testing.T) {
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, []byte("no version")))
 
 		out, err := runCobraCmd(versionCmd)
-		at.NoError(err)
+		require.NoError(t, err)
 		at.Contains(out, "no version")
 	})
 }
@@ -63,7 +64,7 @@ require (
 		defer teardownCurrentVersionFile()
 
 		v, err := currentVersion()
-		at.NoError(err)
+		require.NoError(t, err)
 		at.Equal("v2.0.6", v)
 	})
 
@@ -79,7 +80,7 @@ require (
 		defer teardownCurrentVersionFile()
 
 		v, err := currentVersion()
-		at.NoError(err)
+		require.NoError(t, err)
 		at.Equal("v0.0.0-20200926082917-55763e7e6ee3", v)
 	})
 
@@ -124,7 +125,7 @@ func Test_Version_Latest(t *testing.T) {
 
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewErrorResponder(errors.New("network error")))
 
-		_, err := latestVersion(false)
+		_, err := LatestFiberVersion()
 		at.Error(err)
 	})
 
@@ -135,8 +136,8 @@ func Test_Version_Latest(t *testing.T) {
 
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, fakeVersionResponse))
 
-		v, err := latestVersion(false)
-		at.NoError(err)
+		v, err := LatestFiberVersion()
+		require.NoError(t, err)
 		at.Equal("2.0.6", v)
 	})
 
@@ -147,7 +148,7 @@ func Test_Version_Latest(t *testing.T) {
 
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, []byte("no version")))
 
-		_, err := latestVersion(false)
+		_, err := LatestFiberVersion()
 		at.Error(err)
 	})
 }

@@ -2,19 +2,18 @@ package migrations
 
 import (
 	"fmt"
-	semver "github.com/Masterminds/semver/v3"
-	"github.com/spf13/cobra"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
+	semver "github.com/Masterminds/semver/v3"
+	"github.com/spf13/cobra"
+
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-var (
-	pkgRegex = regexp.MustCompile(`(github\.com\/gofiber\/fiber\/)(v\d+)( *?)(v[\w.-]+)`)
-)
+var pkgRegex = regexp.MustCompile(`(github\.com\/gofiber\/fiber\/)(v\d+)( *?)(v[\w.-]+)`)
 
 func MigrateGoPkgs(cmd *cobra.Command, cwd string, curr *semver.Version, target *semver.Version) error {
 	pkgReplacer := strings.NewReplacer(
@@ -43,7 +42,7 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, curr *semver.Version, target 
 	)
 
 	// update go.mod file
-	if err := os.WriteFile(modFile, []byte(fileContentStr), 0644); err != nil {
+	if err := os.WriteFile(modFile, []byte(fileContentStr), 0o644); err != nil {
 		return err
 	}
 

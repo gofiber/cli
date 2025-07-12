@@ -2,21 +2,21 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/Masterminds/semver/v3"
 	"github.com/gofiber/cli/cmd/internal/migrations"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
-	"os"
-	"strings"
 )
 
 var (
-	targetVersionS     string
-	latestFiberVersion string
+	targetVersionS string
 )
 
 func init() {
-	latestFiberVersion, _ := latestVersion(false)
+	latestFiberVersion, _ := LatestFiberVersion()
 
 	migrateCmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version e.g: "+latestFiberVersion+" Format: X.Y.Z")
 	migrateCmd.MarkFlagRequired("to")

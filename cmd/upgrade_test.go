@@ -8,6 +8,7 @@ import (
 
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Upgrade_upgradeRunE(t *testing.T) {
@@ -21,24 +22,24 @@ func Test_Upgrade_upgradeRunE(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewErrorResponder(errors.New("network error")))
+	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewErrorResponder(errors.New("network error")))
 
-	at.NotNil(upgradeRunE(upgradeCmd, nil))
+	require.Error(t, upgradeRunE(upgradeCmd, nil))
 
-	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse()))
+	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewBytesResponder(200, fakeCliVersionResponse()))
 
 	setupSpinner()
 	defer teardownSpinner()
 
-	at.Nil(upgradeRunE(upgradeCmd, nil))
+	require.NoError(t, upgradeRunE(upgradeCmd, nil))
 
 	at.Contains(b.String(), "99.99.99")
 
-	httpmock.RegisterResponder(http.MethodGet, latestCliVersionUrl, httpmock.NewBytesResponder(200, fakeCliVersionResponse(version)))
+	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewBytesResponder(200, fakeCliVersionResponse(version)))
 
 	b.Reset()
 
-	at.Nil(upgradeRunE(upgradeCmd, nil))
+	require.NoError(t, upgradeRunE(upgradeCmd, nil))
 
 	at.Contains(b.String(), "Currently")
 }
