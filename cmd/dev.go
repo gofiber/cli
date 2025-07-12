@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -101,16 +100,20 @@ func newEscort(c config) *escort {
 	}
 }
 
-func (e *escort) run() (err error) {
-	if err = e.init(); err != nil {
-		return
+func (e *escort) run() error {
+	if err := e.init(); err != nil {
+		return err
 	}
 
 	log.Println("Welcome to fiber dev 👋")
 
 	defer func() {
-		_ = e.w.Close()
-		_ = os.Remove(e.binPath)
+		if err := e.w.Close(); err != nil {
+			log.Printf("Failed to close watcher: %v", err)
+		}
+		if err := os.Remove(e.binPath); err != nil {
+			log.Printf("Failed to remove bin: %v", err)
+		}
 	}()
 
 	e.wg.Add(3)
@@ -130,9 +133,10 @@ func (e *escort) run() (err error) {
 	return nil
 }
 
-func (e *escort) init() (err error) {
+func (e *escort) init() error {
+	var err error
 	if e.w, err = fsnotify.NewWatcher(); err != nil {
-		return
+		return err
 	}
 
 	e.watcherEvents = e.w.Events
@@ -142,19 +146,17 @@ func (e *escort) init() (err error) {
 
 	// normalize root
 	if e.root, err = filepath.Abs(e.root); err != nil {
-		return
+		return err
 	}
 
 	// create bin target
-	var f *os.File
-	if f, err = ioutil.TempFile("", ""); err != nil {
-		return
+	f, err := os.CreateTemp("", "")
+	if err != nil {
+		return err
 	}
-	defer func() {
-		if e := f.Close(); e != nil {
-			err = e
-		}
-	}()
+	if cerr := f.Close(); cerr != nil {
+		return cerr
+	}
 
 	e.binPath = f.Name()
 	if runtime.GOOS == "windows" {
@@ -169,7 +171,7 @@ func (e *escort) init() (err error) {
 
 	e.preRunCommands = parsePreRunCommands(c.preRun)
 
-	return
+	return nil
 }
 
 func (e *escort) watchingFiles() {

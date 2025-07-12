@@ -247,6 +247,7 @@ func Test_Dev_IsRemoved(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Op.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.bool, isRemoved(tc.Op))
 		})
 	}
@@ -268,6 +269,7 @@ func Test_Dev_IsCreated(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Op.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.bool, isCreated(tc.Op))
 		})
 	}
@@ -289,6 +291,7 @@ func Test_Dev_IsChmoded(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Op.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.bool, isChmoded(tc.Op))
 		})
 	}

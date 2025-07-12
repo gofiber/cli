@@ -34,6 +34,8 @@ func newCmd(buf *bytes.Buffer) *cobra.Command {
 }
 
 func Test_MigrateHandlerSignatures(t *testing.T) {
+	t.Parallel()
+
 	dir, err := ioutil.TempDir("", "mhstest")
 	assert.Nil(t, err)
 	defer os.RemoveAll(dir)
@@ -54,6 +56,8 @@ func handler(c *fiber.Ctx) error { return nil }
 }
 
 func Test_MigrateParserMethods(t *testing.T) {
+	t.Parallel()
+
 	dir, err := ioutil.TempDir("", "mptest")
 	assert.Nil(t, err)
 	defer os.RemoveAll(dir)
@@ -83,6 +87,8 @@ func handler(c fiber.Ctx) error {
 }
 
 func Test_MigrateRedirectMethods(t *testing.T) {
+	t.Parallel()
+
 	dir, err := ioutil.TempDir("", "mrtest")
 	assert.Nil(t, err)
 	defer os.RemoveAll(dir)
@@ -109,6 +115,8 @@ func handler(c fiber.Ctx) error {
 }
 
 func Test_MigrateGenericHelpers(t *testing.T) {
+	t.Parallel()
+
 	dir, err := ioutil.TempDir("", "mghtest")
 	assert.Nil(t, err)
 	defer os.RemoveAll(dir)

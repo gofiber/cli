@@ -28,12 +28,15 @@ func Test_Helpers_FormatLatency(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.d.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, formatLatency(tc.d), tc.expected)
 		})
 	}
 }
 
 func Test_Helper_Replace(t *testing.T) {
+	t.Parallel()
+
 	at := assert.New(t)
 
 	dir, err := ioutil.TempDir("", "test_helper_replace")
@@ -50,13 +53,16 @@ func Test_Helper_Replace(t *testing.T) {
 }
 
 func Test_Helper_LoadConfig(t *testing.T) {
+	t.Parallel()
 	at := assert.New(t)
 
 	t.Run("no config file", func(t *testing.T) {
+		t.Parallel()
 		at.Nil(loadConfig())
 	})
 
 	t.Run("has config file", func(t *testing.T) {
+		t.Parallel()
 		origHome := homeDir
 		tempHome := setupHomeDir(t, "LoadConfig")
 		homeDir = tempHome
@@ -78,10 +84,13 @@ func Test_Helper_LoadConfig(t *testing.T) {
 }
 
 func Test_Helper_StoreJson(t *testing.T) {
+	t.Parallel()
+
 	assert.NotNil(t, storeJson("", complex(1, 1)))
 }
 
 func Test_Helper_ConfigFilePath(t *testing.T) {
+	t.Parallel()
 	dir := homeDir
 	homeDir = ""
 	assert.Equal(t, configName, configFilePath())

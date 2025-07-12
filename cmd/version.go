@@ -67,15 +67,17 @@ func latestVersion(isCli bool) (v string, err error) {
 	}
 
 	if err != nil {
-		return
+		return "", err
 	}
 
 	defer func() {
-		_ = res.Body.Close()
+		if cerr := res.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
 	}()
 
 	if b, err = io.ReadAll(res.Body); err != nil {
-		return
+		return "", err
 	}
 
 	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
