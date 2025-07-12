@@ -52,15 +52,11 @@ func Test_Helper_Replace(t *testing.T) {
 }
 
 func Test_Helper_LoadConfig(t *testing.T) {
-	t.Parallel()
-
 	t.Run("no config file", func(t *testing.T) {
-		t.Parallel()
 		require.NoError(t, loadConfig())
 	})
 
 	t.Run("has config file", func(t *testing.T) {
-		t.Parallel()
 		origHome := homeDir
 		tempHome := setupHomeDir(t, "LoadConfig")
 		homeDir = tempHome
@@ -88,7 +84,6 @@ func Test_Helper_StoreJSON(t *testing.T) {
 }
 
 func Test_Helper_ConfigFilePath(t *testing.T) {
-	t.Parallel()
 	dir := homeDir
 	homeDir = ""
 	assert.Equal(t, configName, configFilePath())

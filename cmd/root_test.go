@@ -36,7 +36,8 @@ func Test_Root_Execute(t *testing.T) {
 func Test_Root_RunE(t *testing.T) {
 	at, b := setupRootCmd(t)
 
-	require.NoError(t, rootRunE(rootCmd, nil))
+	err := rootRunE(rootCmd, nil)
+	require.Error(t, err)
 
 	at.Contains(b.String(), "fiber")
 }

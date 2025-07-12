@@ -12,7 +12,6 @@ import (
 )
 
 func Test_Upgrade_upgradeRunE(t *testing.T) {
-	t.Parallel()
 	at := assert.New(t)
 
 	b := &bytes.Buffer{}
@@ -45,7 +44,6 @@ func Test_Upgrade_upgradeRunE(t *testing.T) {
 }
 
 func Test_Upgrade_upgrade(t *testing.T) {
-	t.Parallel()
 	at := assert.New(t)
 
 	b := &bytes.Buffer{}

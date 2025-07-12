@@ -12,10 +12,8 @@ import (
 )
 
 func Test_Version_Printer(t *testing.T) {
-	t.Parallel()
 	at := assert.New(t)
 	t.Run("success", func(t *testing.T) {
-		t.Parallel()
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
@@ -27,7 +25,6 @@ func Test_Version_Printer(t *testing.T) {
 	})
 
 	t.Run("latest err", func(t *testing.T) {
-		t.Parallel()
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
@@ -40,11 +37,9 @@ func Test_Version_Printer(t *testing.T) {
 }
 
 func Test_Version_Current(t *testing.T) {
-	t.Parallel()
 	at := assert.New(t)
 
 	t.Run("file not found", func(t *testing.T) {
-		t.Parallel()
 		setupCurrentVersionFile()
 		defer teardownCurrentVersionFile()
 
@@ -85,7 +80,6 @@ require (
 	})
 
 	t.Run("package not found", func(t *testing.T) {
-		t.Parallel()
 		content := `module fiber-demo
 go 1.14
 require (
@@ -116,10 +110,8 @@ func teardownCurrentVersionFile() {
 }
 
 func Test_Version_Latest(t *testing.T) {
-	t.Parallel()
 	at := assert.New(t)
 	t.Run("http get error", func(t *testing.T) {
-		t.Parallel()
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
@@ -130,7 +122,6 @@ func Test_Version_Latest(t *testing.T) {
 	})
 
 	t.Run("version matched", func(t *testing.T) {
-		t.Parallel()
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
@@ -142,7 +133,6 @@ func Test_Version_Latest(t *testing.T) {
 	})
 
 	t.Run("no version matched", func(t *testing.T) {
-		t.Parallel()
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
