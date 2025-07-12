@@ -22,7 +22,7 @@ var (
 func fakeExecCommand(command string, args ...string) *exec.Cmd {
 	cs := []string{"-test.run=TestHelperProcess", "--", command}
 	cs = append(cs, args...)
-	// gosec: G204 - safe for test, args are controlled
+	// #nosec G204 -- safe for test, args are controlled
 	cmd := exec.Command(os.Args[0], cs...)
 	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 	if needError {

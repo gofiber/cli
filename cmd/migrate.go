@@ -11,15 +11,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	targetVersionS string
-)
+var targetVersionS string
 
 func init() {
-	latestFiberVersion, _ := LatestFiberVersion()
+	latestFiberVersion, err := LatestFiberVersion()
+	if err != nil {
+		latestFiberVersion = ""
+	}
 
-	migrateCmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version e.g: "+latestFiberVersion+" Format: X.Y.Z")
-	migrateCmd.MarkFlagRequired("to")
+	migrateCmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version e.g:"+latestFiberVersion+" Format: X.Y.Z")
+	if err := migrateCmd.MarkFlagRequired("to"); err != nil {
+		panic(err)
+	}
 }
 
 var migrateCmd = &cobra.Command{
@@ -31,7 +34,7 @@ var migrateCmd = &cobra.Command{
 func migrateRunE(cmd *cobra.Command, _ []string) error {
 	currentVersionS, err := currentVersion()
 	if err != nil {
-		return fmt.Errorf("current fiber project version not found: %v", err)
+		return fmt.Errorf("current fiber project version not found: %w", err)
 	}
 	currentVersionS = strings.TrimPrefix(currentVersionS, "v")
 	currentVersion := semver.MustParse(currentVersionS)
@@ -39,7 +42,7 @@ func migrateRunE(cmd *cobra.Command, _ []string) error {
 	targetVersionS = strings.TrimPrefix(targetVersionS, "v")
 	targetVersion, err := semver.NewVersion(targetVersionS)
 	if err != nil {
-		return fmt.Errorf("invalid version for \"%s\": %v", targetVersionS, err)
+		return fmt.Errorf("invalid version for \"%s\": %w", targetVersionS, err)
 	}
 
 	if !targetVersion.GreaterThan(currentVersion) {
@@ -48,12 +51,12 @@ func migrateRunE(cmd *cobra.Command, _ []string) error {
 
 	wd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("cannot get current working directory: %v", err)
+		return fmt.Errorf("cannot get current working directory: %w", err)
 	}
 
 	err = migrations.DoMigration(cmd, wd, currentVersion, targetVersion)
 	if err != nil {
-		return fmt.Errorf("migration failed %v", err)
+		return fmt.Errorf("migration failed %w", err)
 	}
 
 	msg := fmt.Sprintf("Migration from Fiber %s to %s", currentVersionS, targetVersionS)

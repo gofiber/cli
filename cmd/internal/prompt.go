@@ -53,11 +53,11 @@ func parseBool(str string) bool {
 
 func (p *Prompt) Answer() (result string, err error) {
 	if _, err = checkConsole(); err != nil {
-		return
+		return "", fmt.Errorf("check console: %w", err)
 	}
 
 	if _, err := p.p.Run(); err != nil {
-		return "", err
+		return "", fmt.Errorf("run prompt: %w", err)
 	}
 	return p.answer, nil
 }
@@ -81,6 +81,8 @@ func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			p.answer = p.textInput.Value()
 			return p, tea.Quit
+		default:
+			// ignore other keys
 		}
 
 	// We handle errors just like any other message

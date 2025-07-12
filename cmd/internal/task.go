@@ -45,7 +45,7 @@ func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
-			t.err = fmt.Errorf("quit by %s\n", msg.String())
+			t.err = fmt.Errorf("quit by %s", msg.String())
 			return t, tea.Quit
 		default:
 			return t, nil
@@ -81,7 +81,7 @@ func (t *SpinnerTask) Run() (err error) {
 	}
 
 	if _, err = t.p.Run(); err != nil {
-		return err
+		return fmt.Errorf("run spinner: %w", err)
 	}
 
 	return t.err

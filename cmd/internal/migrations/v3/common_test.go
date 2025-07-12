@@ -38,7 +38,7 @@ func Test_MigrateHandlerSignatures(t *testing.T) {
 
 	dir, err := os.MkdirTemp("", "mhstest")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	file := writeTempFile(t, dir, "main.go", `package main
 import "github.com/gofiber/fiber/v2"
@@ -60,7 +60,7 @@ func Test_MigrateParserMethods(t *testing.T) {
 
 	dir, err := os.MkdirTemp("", "mptest")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	file := writeTempFile(t, dir, "main.go", `package main
 import "github.com/gofiber/fiber/v2"
@@ -91,7 +91,7 @@ func Test_MigrateRedirectMethods(t *testing.T) {
 
 	dir, err := os.MkdirTemp("", "mrtest")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	file := writeTempFile(t, dir, "main.go", `package main
 import "github.com/gofiber/fiber/v2"
@@ -119,7 +119,7 @@ func Test_MigrateGenericHelpers(t *testing.T) {
 
 	dir, err := os.MkdirTemp("", "mghtest")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	file := writeTempFile(t, dir, "main.go", `package main
 import "github.com/gofiber/fiber/v2"

@@ -37,15 +37,20 @@ func newRunE(cmd *cobra.Command, args []string) (err error) {
 		modName = args[1]
 	}
 
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
 	projectPath := fmt.Sprintf("%s%c%s", wd, os.PathSeparator, projectName)
 
-	if err = createProject(projectPath); err != nil {
+	if err := createProject(projectPath); err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			_ = os.RemoveAll(projectPath)
+			if rmErr := os.RemoveAll(projectPath); rmErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "failed to remove project dir: %v", rmErr)
+			}
 		}
 	}()
 
@@ -64,17 +69,20 @@ func newRunE(cmd *cobra.Command, args []string) (err error) {
 	return create(projectPath, modName)
 }
 
-func createProject(projectPath string) (err error) {
-	if err = os.Mkdir(projectPath, 0o750); err != nil {
-		return err
+func createProject(projectPath string) error {
+	if err := os.Mkdir(projectPath, 0o750); err != nil {
+		return fmt.Errorf("create directory: %w", err)
 	}
 
-	return os.Chdir(projectPath)
+	if err := os.Chdir(projectPath); err != nil {
+		return fmt.Errorf("change directory: %w", err)
+	}
+
+	return nil
 }
 
-func createBasic(projectPath, modName string) (err error) {
-	// create main.go
-	if err = createFile(fmt.Sprintf("%s%cmain.go", projectPath, os.PathSeparator), newBasicTemplate); err != nil {
+func createBasic(projectPath, modName string) error {
+	if err := createFile(fmt.Sprintf("%s%cmain.go", projectPath, os.PathSeparator), newBasicTemplate); err != nil {
 		return err
 	}
 
@@ -88,9 +96,9 @@ const (
 
 var fullPathRegex = regexp.MustCompile(`^(http|https|git)`)
 
-func createComplex(projectPath, modName string) (err error) {
-	var git string
-	if git, err = execLookPath("git"); err != nil {
+func createComplex(projectPath, modName string) error {
+	git, err := execLookPath("git")
+	if err != nil {
 		return err
 	}
 
@@ -99,20 +107,20 @@ func createComplex(projectPath, modName string) (err error) {
 		toClone = repo
 	}
 
-	if err = runCmd(execCommand(git, "clone", toClone, projectPath)); err != nil {
+	if err := runCmd(execCommand(git, "clone", toClone, projectPath)); err != nil {
 		return err
 	}
 
 	if repo == defaultRepo {
-		if err = replace(projectPath, "go.mod", "boilerplate", modName); err != nil {
+		if err := replace(projectPath, "go.mod", "boilerplate", modName); err != nil {
 			return err
 		}
 
-		if err = replace(projectPath, "*.go", "boilerplate", modName); err != nil {
+		if err := replace(projectPath, "*.go", "boilerplate", modName); err != nil {
 			return err
 		}
 	}
-	return err
+	return nil
 }
 
 var (

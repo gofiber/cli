@@ -23,7 +23,7 @@ func Test_Root_Execute(t *testing.T) {
 	oldRunE := rootCmd.RunE
 
 	rootCmd.RunE = func(_ *cobra.Command, _ []string) error {
-		return fmt.Errorf("fake error")
+		return errors.New("fake error")
 	}
 
 	Execute()

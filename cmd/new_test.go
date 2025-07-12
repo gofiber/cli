@@ -14,7 +14,7 @@ func Test_New_Run(t *testing.T) {
 	t.Run("new project", func(t *testing.T) {
 		defer func() {
 			require.NoError(t, os.Chdir("../"))
-			_ = os.RemoveAll("normal")
+			require.NoError(t, os.RemoveAll("normal"))
 		}()
 
 		setupCmd()

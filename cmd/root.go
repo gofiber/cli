@@ -49,7 +49,7 @@ func Execute() {
 }
 
 func rootRunE(cmd *cobra.Command, _ []string) error {
-	return cmd.Help()
+	return fmt.Errorf("help: %w", cmd.Help())
 }
 
 func rootPersistentPreRun(cmd *cobra.Command, _ []string) {
