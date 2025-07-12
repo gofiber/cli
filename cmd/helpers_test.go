@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func Test_Helpers_FormatLatency(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.d.String(), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, formatLatency(tc.d), tc.expected)
+			assert.Equal(t, tc.expected, formatLatency(tc.d))
 		})
 	}
 }
@@ -70,7 +71,7 @@ func Test_Helper_LoadConfig(t *testing.T) {
 
 		filename := fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName)
 
-		f, err := os.Create(filename)
+		f, err := os.Create(filepath.Clean(filename))
 		require.NoError(t, err)
 		defer func() { require.NoError(t, f.Close()) }()
 		_, err = f.WriteString("{}")

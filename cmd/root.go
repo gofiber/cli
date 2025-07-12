@@ -95,7 +95,9 @@ func checkCliVersion(cmd *cobra.Command) {
 
 func updateVersionCheckedAt() {
 	rc.CliVersionCheckedAt = time.Now().Unix()
-	storeConfig()
+	if err := storeConfig(); err != nil {
+		fmt.Printf("failed to store config: %v\n", err)
+	}
 }
 
 func needCheckCliVersion() bool {

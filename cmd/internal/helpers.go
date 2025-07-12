@@ -6,14 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/containerd/console"
 	"github.com/muesli/termenv"
 )
 
 var term = termenv.ColorProfile()
 
-type finishedMsg struct{ error }
+type finishedError struct{ error }
 
 func checkConsole() (size console.WinSize, err error) {
 	defer func() {
@@ -22,28 +21,23 @@ func checkConsole() (size console.WinSize, err error) {
 		}
 	}()
 
-	return console.Current().Size()
-}
-
-func errCmd(err error) tea.Cmd {
-	return func() tea.Msg {
-		return finishedMsg{err}
+	size, err = console.Current().Size()
+	if err != nil {
+		return size, fmt.Errorf("get console size: %w", err)
 	}
+	return size, nil
 }
 
 type FileProcessor func(content string) string
 
 func ChangeFileContent(cwd string, processorFn FileProcessor) error {
-	// change go files in project
 	err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			// fmt.Printf("Error while traversing %s: %v\n", path, err)
 			return err
 		}
 
 		// Skip directories named "vendor"
 		if info.IsDir() && info.Name() == "vendor" {
-			// fmt.Printf("Skipping directory: %s\n", path)
 			return filepath.SkipDir
 		}
 
@@ -51,18 +45,17 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) error {
 		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") {
 			return nil
 		}
-		// fmt.Printf("Processing Go file: %s\n", path)
-		fileContent, err := os.ReadFile(path)
+		fileContent, err := os.ReadFile(path) // #nosec G304
 
 		// update go.mod file
-		if err2 := os.WriteFile(path, []byte(processorFn(string(fileContent))), 0o644); err != nil {
-			return err2
+		if err2 := os.WriteFile(path, []byte(processorFn(string(fileContent))), 0o600); err2 != nil {
+			return fmt.Errorf("write file %s: %w", path, err2)
 		}
 
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("Error while traversing the directory tree: %v\n", err)
+		return fmt.Errorf("error while traversing the directory tree: %w", err)
 	}
 
 	return nil

@@ -29,7 +29,7 @@ type SpinnerCmd struct {
 }
 
 func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
-	spinnerModel := spinner.NewModel()
+	spinnerModel := spinner.New()
 	spinnerModel.Spinner = spinner.Dot
 
 	c := &SpinnerCmd{
@@ -51,37 +51,38 @@ func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 }
 
 func (t *SpinnerCmd) Init() tea.Cmd {
-	return tea.Batch(t.init(), spinner.Tick)
+	return tea.Batch(t.start(), t.spinnerModel.Tick)
 }
 
-func (t *SpinnerCmd) init() tea.Cmd {
+func (t *SpinnerCmd) start() tea.Cmd {
 	return func() tea.Msg {
-		if p, err := t.cmd.StdoutPipe(); err != nil {
-			return finishedMsg{err}
-		} else {
-			go t.watchOutput(t.stdout, p)
+		p, err := t.cmd.StdoutPipe()
+		if err != nil {
+			return finishedError{err}
 		}
-		if p, err := t.cmd.StderrPipe(); err != nil {
-			return finishedMsg{err}
-		} else {
-			go t.watchOutput(t.stderr, p)
+		go t.watchOutput(t.stdout, p)
+
+		p, err = t.cmd.StderrPipe()
+		if err != nil {
+			return finishedError{err}
 		}
-		return finishedMsg{t.cmd.Start()}
+		go t.watchOutput(t.stderr, p)
+
+		return finishedError{t.cmd.Start()}
 	}
 }
 
 func (t *SpinnerCmd) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
-			t.err = fmt.Errorf("quit by %s\n", msg.String())
+			t.err = fmt.Errorf("quit by %s", msg.String())
 			return t, tea.Quit
 		default:
 			return t, nil
 		}
-	case finishedMsg:
+	case finishedError:
 		if t.err = msg.error; t.err != nil {
 			return t, tea.Quit
 		}
@@ -132,16 +133,16 @@ const spinnerCmdTemplate = `
   %s %s %s
 
      (esc/q/ctrl+c to quit)
-    
+
 `
 
 func (t *SpinnerCmd) Run() (err error) {
 	if t.size, err = checkConsole(); err != nil {
-		return
+		return err
 	}
 
-	if err = t.p.Start(); err != nil {
-		return
+	if _, err = t.p.Run(); err != nil {
+		return err
 	}
 
 	return t.err
@@ -158,7 +159,11 @@ func (t *SpinnerCmd) UpdateOutput(c <-chan []byte) {
 }
 
 func (t *SpinnerCmd) watchOutput(out chan<- []byte, rc io.ReadCloser) {
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			t.errCh <- err
+		}
+	}()
 	br := bufio.NewReader(rc)
 	for {
 		b, _, err := br.ReadLine()

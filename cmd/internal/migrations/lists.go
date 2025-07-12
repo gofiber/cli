@@ -42,11 +42,11 @@ func DoMigration(cmd *cobra.Command, cwd string, curr *semver.Version, target *s
 	for _, m := range Migrations {
 		toC, err := semver.NewConstraint(m.To)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse to constraint %s: %w", m.To, err)
 		}
 		fromC, err := semver.NewConstraint(m.From)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse from constraint %s: %w", m.From, err)
 		}
 
 		if fromC.Check(curr) && toC.Check(target) {
@@ -56,7 +56,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr *semver.Version, target *s
 				}
 			}
 		} else {
-			fmt.Printf("Skipping migration from %s to %s\n", m.From, m.To)
+			_, _ = fmt.Printf("Skipping migration from %s to %s\n", m.From, m.To)
 		}
 	}
 

@@ -18,7 +18,7 @@ func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _ *semver.Version,
 		return sigReplacer.Replace(content)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to migrate handler signatures: %v", err)
+		return fmt.Errorf("failed to migrate handler signatures: %w", err)
 	}
 
 	cmd.Println("Migrating handler signatures")
@@ -39,7 +39,7 @@ func MigrateParserMethods(cmd *cobra.Command, cwd string, _ *semver.Version, _ *
 		return replacer.Replace(content)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to migrate parser methods: %v", err)
+		return fmt.Errorf("failed to migrate parser methods: %w", err)
 	}
 
 	cmd.Println("Migrating parser methods")
@@ -59,7 +59,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _ *semver.Version, _
 		return replacer.Replace(content)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to migrate redirect methods: %v", err)
+		return fmt.Errorf("failed to migrate redirect methods: %w", err)
 	}
 
 	cmd.Println("Migrating redirect methods")
@@ -84,7 +84,7 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _ *semver.Version, _ 
 		return content
 	})
 	if err != nil {
-		return fmt.Errorf("failed to migrate generic helpers: %v", err)
+		return fmt.Errorf("failed to migrate generic helpers: %w", err)
 	}
 
 	cmd.Println("Migrating generic helpers")

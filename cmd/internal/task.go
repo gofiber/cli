@@ -36,7 +36,7 @@ func NewSpinnerTask(title string, task Task) *SpinnerTask {
 func (t *SpinnerTask) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
-			return finishedMsg{t.task()}
+			return finishedError{t.task()}
 		}, t.spinnerModel.Tick)
 }
 
@@ -51,7 +51,7 @@ func (t *SpinnerTask) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return t, nil
 		}
 
-	case finishedMsg:
+	case finishedError:
 		t.err = msg.error
 		return t, tea.Quit
 

@@ -23,7 +23,9 @@ var (
 )
 
 func init() {
-	homeDir, _ = os.UserHomeDir()
+	if dir, err := os.UserHomeDir(); err == nil {
+		homeDir = dir
+	}
 }
 
 func runCmd(cmd *exec.Cmd) (err error) {
@@ -33,74 +35,96 @@ func runCmd(cmd *exec.Cmd) (err error) {
 	)
 
 	if stderr, err = cmd.StderrPipe(); err != nil {
-		return err
+		return fmt.Errorf("stderr pipe: %w", err)
 	}
 	defer func() {
-		_ = stderr.Close()
+		if cerr := stderr.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "close stderr pipe: %v", cerr)
+		}
 	}()
-	go func() { _, _ = io.Copy(os.Stderr, stderr) }()
+	go func() {
+		if _, cErr := io.Copy(os.Stderr, stderr); cErr != nil {
+			fmt.Fprintf(os.Stderr, "copy stderr: %v", cErr)
+		}
+	}()
 
 	if stdout, err = cmd.StdoutPipe(); err != nil {
-		return err
+		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	defer func() {
-		_ = stdout.Close()
+		if cerr := stdout.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "close stdout pipe: %v", cerr)
+		}
 	}()
-	go func() { _, _ = io.Copy(os.Stdout, stdout) }()
+	go func() {
+		if _, cErr := io.Copy(os.Stdout, stdout); cErr != nil {
+			fmt.Fprintf(os.Stderr, "copy stdout: %v", cErr)
+		}
+	}()
 
 	if err = cmd.Run(); err != nil {
-		err = fmt.Errorf("failed to run %s", cmd.String())
+		err = fmt.Errorf("failed to run %s: %w", cmd.String(), err)
 	}
 
 	return err
 }
 
 // replaces matching file patterns in a path, including subdirectories
-func replace(path, pattern, old, new string) error {
-	return filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+func replace(pathname, pattern, old, replacement string) error {
+	walkErr := filepath.Walk(pathname, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
 			return nil
 		}
-		return replaceWalkFn(path, info, pattern, []byte(old), []byte(new))
+		return replaceWalkFn(p, info, pattern, []byte(old), []byte(replacement))
 	})
+	if walkErr != nil {
+		return fmt.Errorf("walk %s: %w", pathname, walkErr)
+	}
+	return nil
 }
 
-func replaceWalkFn(path string, info os.FileInfo, pattern string, old, new []byte) (err error) {
+func replaceWalkFn(pathname string, info os.FileInfo, pattern string, old, replacement []byte) (err error) {
 	var matched bool
 	if matched, err = filepath.Match(pattern, info.Name()); err != nil {
-		return err
+		return fmt.Errorf("match pattern %s: %w", pattern, err)
 	}
 
 	if matched {
-		cleanedPath := filepath.Clean(path)
+		cleanedPath := filepath.Clean(pathname)
 
-		var oldContent []byte
-		if oldContent, err = os.ReadFile(cleanedPath); err != nil {
-			return err
+		oldContent, readErr := os.ReadFile(cleanedPath)
+		if readErr != nil {
+			return fmt.Errorf("read file %s: %w", cleanedPath, readErr)
 		}
 
-		if err = os.WriteFile(cleanedPath, bytes.Replace(oldContent, old, new, -1), 0); err != nil {
-			return err
+		if err := os.WriteFile(cleanedPath, bytes.Replace(oldContent, old, replacement, -1), 0); err != nil {
+			return fmt.Errorf("write file %s: %w", cleanedPath, err)
 		}
 	}
 
 	return nil
 }
 
-func createFile(filePath, content string) (err error) {
-	var f *os.File
-	if f, err = os.Create(filepath.Clean(filePath)); err != nil {
-		return err
+func createFile(filePath, content string) error {
+	f, err := os.Create(filepath.Clean(filePath))
+	if err != nil {
+		return fmt.Errorf("create %s: %w", filePath, err)
 	}
 
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "close file: %v", cerr)
+		}
+	}()
 
-	_, err = f.WriteString(content)
+	if _, err := f.WriteString(content); err != nil {
+		return fmt.Errorf("write %s: %w", filePath, err)
+	}
 
-	return err
+	return nil
 }
 
 func formatLatency(d time.Duration) time.Duration {
@@ -120,7 +144,7 @@ func loadConfig() (err error) {
 	configFilePath := configFilePath()
 
 	if fileExist(configFilePath) {
-		if err = loadJson(configFilePath, &rc); err != nil {
+		if err := loadJSON(configFilePath, &rc); err != nil {
 			return err
 		}
 	}
@@ -128,8 +152,8 @@ func loadConfig() (err error) {
 	return nil
 }
 
-func storeConfig() {
-	_ = storeJSON(configFilePath(), rc)
+func storeConfig() error {
+	return storeJSON(configFilePath(), rc)
 }
 
 func configFilePath() string {
@@ -150,17 +174,24 @@ var fileExist = func(filename string) bool {
 func storeJSON(filename string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal json: %w", err)
 	}
 
-	return os.WriteFile(filename, b, 0o600)
+	if err := os.WriteFile(filename, b, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", filename, err)
+	}
+
+	return nil
 }
 
-func loadJson(filename string, v any) error {
+func loadJSON(filename string, v any) error {
 	b, err := os.ReadFile(path.Clean(filename))
 	if err != nil {
-		return err
+		return fmt.Errorf("read file %s: %w", filename, err)
 	}
 
-	return json.Unmarshal(b, v)
+	if err := json.Unmarshal(b, v); err != nil {
+		return fmt.Errorf("unmarshal %s: %w", filename, err)
+	}
+	return nil
 }

@@ -25,14 +25,14 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, curr *semver.Version, target 
 		return pkgReplacer.Replace(content)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to migrate Go packages: %v", err)
+		return fmt.Errorf("failed to migrate Go packages: %w", err)
 	}
 
 	// get go.mod file
 	modFile := "go.mod"
 	fileContent, err := os.ReadFile(modFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", modFile, err)
 	}
 
 	// replace old version with new version in go.mod file
@@ -42,8 +42,8 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, curr *semver.Version, target 
 	)
 
 	// update go.mod file
-	if err := os.WriteFile(modFile, []byte(fileContentStr), 0o644); err != nil {
-		return err
+	if err := os.WriteFile(modFile, []byte(fileContentStr), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", modFile, err)
 	}
 
 	cmd.Println("Migrating Go packages")

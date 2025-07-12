@@ -14,14 +14,14 @@ import (
 func writeTempFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	err := os.WriteFile(path, []byte(content), 0o644)
+	err := os.WriteFile(path, []byte(content), 0o600)
 	require.NoError(t, err)
 	return path
 }
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304
 	require.NoError(t, err)
 	return string(b)
 }
