@@ -23,12 +23,14 @@ type Migration struct {
 // Example structure:
 // {"from": ">=2.0.0", "to": "<=3.*.*", "fn": [MigrateFN, MigrateFN]}
 var Migrations = []Migration{
+	{From: ">=1.0.0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
 	{
 		From: ">=2.0.0",
 		To:   "<4.0.0-0",
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
 			v3migrations.MigrateParserMethods,
+			v3migrations.MigrateAllParams,
 			v3migrations.MigrateRedirectMethods,
 			v3migrations.MigrateGenericHelpers,
 			v3migrations.MigrateAddMethod,
@@ -36,7 +38,6 @@ var Migrations = []Migration{
 			v3migrations.MigrateLoggerTags,
 			v3migrations.MigrateStaticRoutes,
 			v3migrations.MigrateTrustedProxyConfig,
-			v3migrations.MigrateAllParams,
 			v3migrations.MigrateMount,
 			v3migrations.MigrateTrustedProxyConfig,
 			v3migrations.MigrateContextMethods,
@@ -46,7 +47,6 @@ var Migrations = []Migration{
 			v3migrations.MigrateProxyTLSConfig,
 		},
 	},
-	{From: ">=1.0.0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
 }
 
 // DoMigration runs all migrations

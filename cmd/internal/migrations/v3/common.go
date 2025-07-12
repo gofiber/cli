@@ -97,7 +97,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	replacer := strings.NewReplacer(
 		".Context()", ".RequestCtx()",
 		".UserContext()", ".Context()",
-		".SetUserContext(", ".SetContext(",
+		".SetUserContext(", ".SetContext(", // TODO: check if this is correct
 	)
 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
