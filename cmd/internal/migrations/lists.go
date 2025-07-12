@@ -6,11 +6,11 @@ import (
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 
-	"github.com/gofiber/cli/cmd/internal/migrations/v3"
+	v3migrations "github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
 // MigrationFn is a function that will be called during migration
-type MigrationFn func(cmd *cobra.Command, cwd string, curr *semver.Version, target *semver.Version) error
+type MigrationFn func(cmd *cobra.Command, cwd string, curr, target *semver.Version) error
 
 // Migration is a single migration
 type Migration struct {
@@ -27,10 +27,10 @@ var Migrations = []Migration{
 		From: ">=2.0.0",
 		To:   "<4.0.0-0",
 		Functions: []MigrationFn{
-			v3.MigrateHandlerSignatures,
-			v3.MigrateParserMethods,
-			v3.MigrateRedirectMethods,
-			v3.MigrateGenericHelpers,
+			v3migrations.MigrateHandlerSignatures,
+			v3migrations.MigrateParserMethods,
+			v3migrations.MigrateRedirectMethods,
+			v3migrations.MigrateGenericHelpers,
 		},
 	},
 	{From: ">=1.0.0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
@@ -38,7 +38,7 @@ var Migrations = []Migration{
 
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
-func DoMigration(cmd *cobra.Command, cwd string, curr *semver.Version, target *semver.Version) error {
+func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version) error {
 	for _, m := range Migrations {
 		toC, err := semver.NewConstraint(m.To)
 		if err != nil {
@@ -56,7 +56,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr *semver.Version, target *s
 				}
 			}
 		} else {
-			_, _ = fmt.Printf("Skipping migration from %s to %s\n", m.From, m.To)
+			cmd.Printf("Skipping migration from %s to %s\n", m.From, m.To)
 		}
 	}
 

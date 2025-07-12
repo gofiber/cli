@@ -46,6 +46,9 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) error {
 			return nil
 		}
 		fileContent, err := os.ReadFile(path) // #nosec G304
+		if err != nil {
+			return fmt.Errorf("read file %s: %w", path, err)
+		}
 
 		// update go.mod file
 		if err2 := os.WriteFile(path, []byte(processorFn(string(fileContent))), 0o600); err2 != nil {

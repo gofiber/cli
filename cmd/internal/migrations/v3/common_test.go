@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func writeTempFile(t *testing.T, dir, name, content string) string {
+func writeTempFile(t *testing.T, dir, content string) string {
 	t.Helper()
-	path := filepath.Join(dir, name)
+	path := filepath.Join(dir, "main.go")
 	err := os.WriteFile(path, []byte(content), 0o600)
 	require.NoError(t, err)
 	return path
@@ -40,7 +40,7 @@ func Test_MigrateHandlerSignatures(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	file := writeTempFile(t, dir, "main.go", `package main
+	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c *fiber.Ctx) error { return nil }
 `)
@@ -62,7 +62,7 @@ func Test_MigrateParserMethods(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	file := writeTempFile(t, dir, "main.go", `package main
+	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c fiber.Ctx) error {
     var v any
@@ -93,7 +93,7 @@ func Test_MigrateRedirectMethods(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	file := writeTempFile(t, dir, "main.go", `package main
+	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c fiber.Ctx) error {
     c.Redirect("/foo")
@@ -121,7 +121,7 @@ func Test_MigrateGenericHelpers(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	file := writeTempFile(t, dir, "main.go", `package main
+	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c fiber.Ctx) error {
     _ = c.ParamsInt("id", 0)

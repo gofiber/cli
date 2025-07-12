@@ -142,7 +142,7 @@ func (t *SpinnerCmd) Run() (err error) {
 	}
 
 	if _, err = t.p.Run(); err != nil {
-		return err
+		return fmt.Errorf("program run: %w", err)
 	}
 
 	return t.err

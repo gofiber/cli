@@ -100,7 +100,7 @@ func replaceWalkFn(pathname string, info os.FileInfo, pattern string, old, repla
 			return fmt.Errorf("read file %s: %w", cleanedPath, readErr)
 		}
 
-		if err := os.WriteFile(cleanedPath, bytes.Replace(oldContent, old, replacement, -1), 0); err != nil {
+		if err := os.WriteFile(cleanedPath, bytes.ReplaceAll(oldContent, old, replacement), 0); err != nil {
 			return fmt.Errorf("write file %s: %w", cleanedPath, err)
 		}
 	}

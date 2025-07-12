@@ -11,7 +11,7 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _ *semver.Version, _ *semver.Version) error {
+func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	sigReplacer := strings.NewReplacer("*fiber.Ctx", "fiber.Ctx")
 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
@@ -27,7 +27,7 @@ func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _ *semver.Version,
 }
 
 // MigrateParserMethods replaces deprecated parser helper methods with the new binding API
-func MigrateParserMethods(cmd *cobra.Command, cwd string, _ *semver.Version, _ *semver.Version) error {
+func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	replacer := strings.NewReplacer(
 		".BodyParser(", ".Bind().Body(",
 		".CookieParser(", ".Bind().Cookie(",
@@ -47,7 +47,7 @@ func MigrateParserMethods(cmd *cobra.Command, cwd string, _ *semver.Version, _ *
 }
 
 // MigrateRedirectMethods updates redirect helper methods to the new API
-func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _ *semver.Version, _ *semver.Version) error {
+func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	replacer := strings.NewReplacer(
 		".RedirectBack(", ".Redirect().Back(",
 		".RedirectToRoute(", ".Redirect().Route(",
@@ -67,7 +67,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _ *semver.Version, _
 }
 
 // MigrateGenericHelpers migrates helper functions that now use generics
-func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _ *semver.Version, _ *semver.Version) error {
+func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		reParamsInt := regexp.MustCompile(`(\w+)\.ParamsInt\(`)
 		content = reParamsInt.ReplaceAllString(content, "fiber.Params[int]($1, ")

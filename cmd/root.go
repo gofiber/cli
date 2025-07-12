@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gofiber/cli/cmd/internal"
@@ -96,7 +97,9 @@ func checkCliVersion(cmd *cobra.Command) {
 func updateVersionCheckedAt() {
 	rc.CliVersionCheckedAt = time.Now().Unix()
 	if err := storeConfig(); err != nil {
-		fmt.Printf("failed to store config: %v\n", err)
+		if _, pErr := fmt.Fprintf(os.Stdout, "failed to store config: %v\n", err); pErr != nil {
+			fmt.Fprintf(os.Stderr, "print error: %v", pErr)
+		}
 	}
 }
 
