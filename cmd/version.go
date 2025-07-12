@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"regexp"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -27,7 +30,7 @@ func versionRun(cmd *cobra.Command, _ []string) {
 		cur = err.Error()
 	}
 
-	if latest, err = latestVersion(false); err != nil {
+	if latest, err = LatestFiberVersion(); err != nil {
 		_, _ = fmt.Fprintf(w, "fiber version: %v\n", err)
 		return
 	}
@@ -35,13 +38,15 @@ func versionRun(cmd *cobra.Command, _ []string) {
 	_, _ = fmt.Fprintf(w, "fiber version: %s (latest %s)\n", cur, latest)
 }
 
-var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
-var currentVersionFile = "go.mod"
+var (
+	currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
+	currentVersionFile   = "go.mod"
+)
 
 func currentVersion() (string, error) {
-	b, err := ioutil.ReadFile(currentVersionFile)
+	b, err := os.ReadFile(currentVersionFile)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read current version file: %w", err)
 	}
 
 	if submatch := currentVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
@@ -53,28 +58,45 @@ func currentVersion() (string, error) {
 
 var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"v(.*?)"`)
 
-func latestVersion(isCli bool) (v string, err error) {
+// LatestFiberVersion retrieves the most recent Fiber release version from GitHub.
+func LatestFiberVersion() (string, error) {
+	return latestVersionByURL("https://api.github.com/repos/gofiber/fiber/releases/latest")
+}
+
+// LatestCliVersion retrieves the latest Fiber CLI release version from GitHub.
+func LatestCliVersion() (string, error) {
+	return latestVersionByURL("https://api.github.com/repos/gofiber/cli/releases/latest")
+}
+
+func latestVersionByURL(url string) (string, error) {
 	var (
 		res *http.Response
 		b   []byte
 	)
 
-	if isCli {
-		res, err = http.Get("https://api.github.com/repos/gofiber/cli/releases/latest")
-	} else {
-		res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create http request: %w", err)
 	}
 
+	client := &http.Client{}
+	res, err = client.Do(req)
 	if err != nil {
-		return
+		return "", fmt.Errorf("http request failed: %w", err)
 	}
 
 	defer func() {
-		_ = res.Body.Close()
+		if cerr := res.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
 	}()
 
-	if b, err = ioutil.ReadAll(res.Body); err != nil {
-		return
+	b, err = io.ReadAll(res.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response body: %w", err)
 	}
 
 	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {

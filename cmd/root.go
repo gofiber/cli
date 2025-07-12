@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gofiber/cli/cmd/internal"
@@ -9,14 +10,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.9"
-const configName = ".fiberconfig"
-
-var (
-	rc = rootConfig{
-		CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
-	}
+const (
+	version    = "0.0.9"
+	configName = ".fiberconfig"
 )
+
+var rc = rootConfig{
+	CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
+}
 
 type rootConfig struct {
 	CliVersionCheckInterval int64 `json:"cli_version_check_interval"`
@@ -25,7 +26,7 @@ type rootConfig struct {
 
 func init() {
 	rootCmd.AddCommand(
-		versionCmd, newCmd, devCmd, upgradeCmd,
+		versionCmd, newCmd, devCmd, upgradeCmd, migrateCmd,
 	)
 }
 
@@ -49,7 +50,7 @@ func Execute() {
 }
 
 func rootRunE(cmd *cobra.Command, _ []string) error {
-	return cmd.Help()
+	return fmt.Errorf("help: %w", cmd.Help())
 }
 
 func rootPersistentPreRun(cmd *cobra.Command, _ []string) {
@@ -68,7 +69,7 @@ func checkCliVersion(cmd *cobra.Command) {
 		return
 	}
 
-	cliLatestVersion, err := latestVersion(true)
+	cliLatestVersion, err := LatestCliVersion()
 	if err != nil {
 		return
 	}
@@ -95,7 +96,11 @@ func checkCliVersion(cmd *cobra.Command) {
 
 func updateVersionCheckedAt() {
 	rc.CliVersionCheckedAt = time.Now().Unix()
-	storeConfig()
+	if err := storeConfig(); err != nil {
+		if _, pErr := fmt.Fprintf(os.Stdout, "failed to store config: %v\n", err); pErr != nil {
+			fmt.Fprintf(os.Stderr, "print error: %v", pErr)
+		}
+	}
 }
 
 func needCheckCliVersion() bool {

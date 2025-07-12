@@ -2,12 +2,13 @@ package cmd
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Helpers_FormatLatency(t *testing.T) {
@@ -28,32 +29,31 @@ func Test_Helpers_FormatLatency(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.d.String(), func(t *testing.T) {
-			assert.Equal(t, formatLatency(tc.d), tc.expected)
+			t.Parallel()
+			assert.Equal(t, tc.expected, formatLatency(tc.d))
 		})
 	}
 }
 
 func Test_Helper_Replace(t *testing.T) {
-	at := assert.New(t)
+	t.Parallel()
 
-	dir, err := ioutil.TempDir("", "test_helper_replace")
-	at.Nil(err)
+	dir, err := os.MkdirTemp("", "test_helper_replace")
+	require.NoError(t, err)
 	defer func() {
-		at.Nil(os.RemoveAll(dir))
+		require.NoError(t, os.RemoveAll(dir))
 	}()
 
-	f, err := ioutil.TempFile(dir, "*.go")
-	at.Nil(err)
-	at.Nil(f.Close())
+	f, err := os.CreateTemp(dir, "*.go")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 
-	at.Nil(replace(dir, "*.go", "old", "new"))
+	require.NoError(t, replace(dir, "*.go", "old", "new"))
 }
 
 func Test_Helper_LoadConfig(t *testing.T) {
-	at := assert.New(t)
-
 	t.Run("no config file", func(t *testing.T) {
-		at.Nil(loadConfig())
+		require.NoError(t, loadConfig())
 	})
 
 	t.Run("has config file", func(t *testing.T) {
@@ -67,18 +67,20 @@ func Test_Helper_LoadConfig(t *testing.T) {
 
 		filename := fmt.Sprintf("%s%c%s", homeDir, os.PathSeparator, configName)
 
-		f, err := os.Create(filename)
-		at.Nil(err)
-		defer func() { at.Nil(f.Close()) }()
+		f, err := os.Create(filepath.Clean(filename))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, f.Close()) }()
 		_, err = f.WriteString("{}")
-		at.Nil(err)
+		require.NoError(t, err)
 
-		at.Nil(loadConfig())
+		require.NoError(t, loadConfig())
 	})
 }
 
-func Test_Helper_StoreJson(t *testing.T) {
-	assert.NotNil(t, storeJson("", complex(1, 1)))
+func Test_Helper_StoreJSON(t *testing.T) {
+	t.Parallel()
+
+	require.Error(t, storeJSON("", complex(1, 1)))
 }
 
 func Test_Helper_ConfigFilePath(t *testing.T) {

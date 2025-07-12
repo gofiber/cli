@@ -1,51 +1,55 @@
 # cli
+
 Fiber Command Line Interface
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/fiber-cli.svg)](https://repology.org/project/fiber-cli/versions)
 
-# Installation
+## Installation
+
 Requires Go 1.24 or later.
 
 ```bash
 go install github.com/gofiber/cli/fiber@latest
 ```
 
-# Commands
+## Commands
+
 ## fiber
+
 ### Synopsis
 
 🚀 Fiber is an Express inspired web framework written in Go with 💖
- 
-Learn more on https://gofiber.io
- 
+
+Learn more on [gofiber.io](https://gofiber.io)
+
 CLI version v0.0.x
 
 ### Options
 
-```
+```text
   -h, --help   help for fiber
 ```
 
 ## fiber dev
+
 ### Synopsis
 
 Rerun the fiber project if watched files changed
 
-```
+```bash
 fiber dev [flags]
 ```
 
-
 ### Examples
 
-```
+```bash
   fiber dev --pre-run="command1 flag,command2 flag"
   Pre run specific commands before running the project
 ```
 
 ### Options
 
-```
+```text
   -a, --args strings            arguments for exec
   -d, --delay duration          delay to trigger rerun (default 1s)
   -D, --exclude_dirs strings    ignore these directories (default [assets,tmp,vendor,node_modules])
@@ -58,17 +62,18 @@ fiber dev [flags]
 ```
 
 ## fiber new
+
 ### Synopsis
 
 Generate a new fiber project
 
-```
+```bash
 fiber new PROJECT [module name] [flags]
 ```
 
 ### Examples
 
-```
+```bash
   fiber new fiber-demo
   Generates a project with go module name fiber-demo
 
@@ -90,38 +95,57 @@ fiber new PROJECT [module name] [flags]
 
 ### Options
 
-```
+```text
   -h, --help              help for new
   -r, --repo string       complex boilerplate repo name in github or other repo url (default "gofiber/boilerplate")
   -t, --template string   basic|complex (default "basic")
 ```
 
+## fiber migrate
+
+### Synopsis
+
+Migrate Fiber project version to a newer version
+
+```bash
+fiber migrate --to 3.0.0
+```
+
+### Options
+
+```text
+  -t, --to string   Migrate to a specific version e.g:3.0.0 Format: X.Y.Z
+  -h, --help        help for migrate
+```
+
 ## fiber upgrade
+
 ### Synopsis
 
 Upgrade Fiber cli if a newer version is available
 
-```
+```bash
 fiber upgrade [flags]
 ```
 
 ### Options
 
-```
+```text
   -h, --help   help for upgrade
 ```
 
 ## fiber version
+
 ### Synopsis
 
 Print the local and released version number of fiber
 
-```
+```bash
 fiber version [flags]
 ```
 
 ### Options
 
-```
+```text
   -h, --help   help for version
 ```

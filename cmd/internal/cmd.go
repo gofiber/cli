@@ -13,23 +13,26 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// SpinnerCmd wraps an exec.Cmd and displays a spinner while it runs.
 type SpinnerCmd struct {
-	p            *tea.Program
+	err error
+	p   *tea.Program
+	cmd *exec.Cmd
+
+	stdout       chan []byte
+	stderr       chan []byte
+	errCh        chan error
+	title        string
+	buf          []byte
 	spinnerModel spinner.Model
 	size         console.WinSize
-	err          error
-	title        string
-	cmd          *exec.Cmd
-
-	stdout chan []byte
-	stderr chan []byte
-	errCh  chan error
-	buf    []byte
-	done   bool
+	done         bool
 }
 
+// NewSpinnerCmd returns a SpinnerCmd that runs the given command. The optional
+// title is shown alongside the spinner.
 func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
-	spinnerModel := spinner.NewModel()
+	spinnerModel := spinner.New()
 	spinnerModel.Spinner = spinner.Dot
 
 	c := &SpinnerCmd{
@@ -50,38 +53,40 @@ func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 	return c
 }
 
+// Init implements the tea.Model interface.
 func (t *SpinnerCmd) Init() tea.Cmd {
-	return tea.Batch(t.init(), spinner.Tick)
+	return tea.Batch(t.start(), t.spinnerModel.Tick)
 }
 
-func (t *SpinnerCmd) init() tea.Cmd {
+func (t *SpinnerCmd) start() tea.Cmd {
 	return func() tea.Msg {
-		if p, err := t.cmd.StdoutPipe(); err != nil {
-			return finishedMsg{err}
-		} else {
-			go t.watchOutput(t.stdout, p)
+		p, err := t.cmd.StdoutPipe()
+		if err != nil {
+			return finishedError{err}
 		}
-		if p, err := t.cmd.StderrPipe(); err != nil {
-			return finishedMsg{err}
-		} else {
-			go t.watchOutput(t.stderr, p)
+		go t.watchOutput(t.stdout, p)
+
+		p, err = t.cmd.StderrPipe()
+		if err != nil {
+			return finishedError{err}
 		}
-		return finishedMsg{t.cmd.Start()}
+		go t.watchOutput(t.stderr, p)
+
+		return finishedError{t.cmd.Start()}
 	}
 }
 
 func (t *SpinnerCmd) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
-			t.err = fmt.Errorf("quit by %s\n", msg.String())
+			t.err = fmt.Errorf("quit by %s", msg.String())
 			return t, tea.Quit
 		default:
 			return t, nil
 		}
-	case finishedMsg:
+	case finishedError:
 		if t.err = msg.error; t.err != nil {
 			return t, tea.Quit
 		}
@@ -132,21 +137,23 @@ const spinnerCmdTemplate = `
   %s %s %s
 
      (esc/q/ctrl+c to quit)
-    
+
 `
 
+// Run executes the command and manages the spinner lifecycle.
 func (t *SpinnerCmd) Run() (err error) {
 	if t.size, err = checkConsole(); err != nil {
-		return
+		return err
 	}
 
-	if err = t.p.Start(); err != nil {
-		return
+	if _, err = t.p.Run(); err != nil {
+		return fmt.Errorf("program run: %w", err)
 	}
 
 	return t.err
 }
 
+// UpdateOutput retrieves lines from c and stores them for display.
 func (t *SpinnerCmd) UpdateOutput(c <-chan []byte) {
 	select {
 	case b := <-c:
@@ -157,8 +164,13 @@ func (t *SpinnerCmd) UpdateOutput(c <-chan []byte) {
 	}
 }
 
+// watchOutput reads lines from rc and forwards them to out until an error occurs.
 func (t *SpinnerCmd) watchOutput(out chan<- []byte, rc io.ReadCloser) {
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			t.errCh <- err
+		}
+	}()
 	br := bufio.NewReader(rc)
 	for {
 		b, _, err := br.ReadLine()

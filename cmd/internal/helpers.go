@@ -2,15 +2,17 @@ package internal
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/containerd/console"
 	"github.com/muesli/termenv"
 )
 
 var term = termenv.ColorProfile()
 
-type finishedMsg struct{ error }
+type finishedError struct{ error }
 
 func checkConsole() (size console.WinSize, err error) {
 	defer func() {
@@ -19,11 +21,48 @@ func checkConsole() (size console.WinSize, err error) {
 		}
 	}()
 
-	return console.Current().Size()
+	size, err = console.Current().Size()
+	if err != nil {
+		return size, fmt.Errorf("get console size: %w", err)
+	}
+	return size, nil
 }
 
-func errCmd(err error) tea.Cmd {
-	return func() tea.Msg {
-		return finishedMsg{err}
+// FileProcessor processes the file content and returns the modified content.
+type FileProcessor func(content string) string
+
+// ChangeFileContent walks through cwd and applies the processorFn to every Go
+// file found. Files in a vendor directory are skipped.
+func ChangeFileContent(cwd string, processorFn FileProcessor) error {
+	err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories named "vendor"
+		if info.IsDir() && info.Name() == "vendor" {
+			return filepath.SkipDir
+		}
+
+		// Check if the file is a Go file (ending with ".go")
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") {
+			return nil
+		}
+		fileContent, err := os.ReadFile(path) // #nosec G304
+		if err != nil {
+			return fmt.Errorf("read file %s: %w", path, err)
+		}
+
+		// update go.mod file
+		if err2 := os.WriteFile(path, []byte(processorFn(string(fileContent))), 0o600); err2 != nil {
+			return fmt.Errorf("write file %s: %w", path, err2)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("error while traversing the directory tree: %w", err)
 	}
+
+	return nil
 }
