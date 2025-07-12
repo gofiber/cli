@@ -173,6 +173,29 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, buf.String(), "Migrating context methods")
 }
 
+func Test_MigrateViewBind(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mvbtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    return c.Bind("index", fiber.Map{})
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateViewBind(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, ".ViewBind(")
+	assert.NotContains(t, content, "c.Bind(")
+	assert.Contains(t, buf.String(), "Migrating view binding helpers")
+}
+
 func Test_MigrateAllParams(t *testing.T) {
 	t.Parallel()
 
@@ -443,4 +466,139 @@ func main() {
 	content := readFile(t, file)
 	assert.Contains(t, content, "proxy.WithClient(&fasthttp.Client{TLSConfig: &tls.Config{InsecureSkipVerify: true}})")
 	assert.Contains(t, buf.String(), "Migrating proxy TLS config")
+}
+func Test_MigrateFilesystemMiddleware(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mfstest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "net/http"
+    "github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+var _ = filesystem.New(filesystem.Config{
+    Root: http.Dir("./assets"),
+    Index: "index.html",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateFilesystemMiddleware(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "github.com/gofiber/fiber/v3/middleware/static")
+	assert.Contains(t, content, `static.New("", static.Config{`)
+	assert.Contains(t, content, `FS: os.DirFS("./assets")`)
+	assert.Contains(t, content, `IndexNames: []string{"index.html"}`)
+	assert.Contains(t, buf.String(), "Migrating filesystem middleware usage")
+}
+
+func Test_MigrateLimiterConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlimit")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "time"
+    "github.com/gofiber/fiber/v2/middleware/limiter"
+)
+var _ = limiter.New(limiter.Config{
+    Duration: time.Second,
+    Store: nil,
+    Key: func(c fiber.Ctx) string { return "" },
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateLimiterConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "Duration:")
+	assert.Contains(t, content, "Expiration:")
+	assert.NotContains(t, content, "Store:")
+	assert.Contains(t, content, "Storage:")
+	assert.NotContains(t, content, "Key:")
+	assert.Contains(t, content, "KeyGenerator:")
+	assert.Contains(t, buf.String(), "Migrating limiter middleware configs")
+}
+
+func Test_MigrateEnvVarConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "menvvar")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/envvar"
+var _ = envvar.New(envvar.Config{
+    ExportVars: []string{"A"},
+    ExcludeVars: []string{"B"},
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateEnvVarConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ExcludeVars")
+	assert.Contains(t, buf.String(), "Migrating envvar middleware configs")
+}
+
+func Test_MigrateAppTestConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtestcfg")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "net/http/httptest"
+    "time"
+)
+func main() {
+    app := fiber.New()
+    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+    _ = app.Test(req, 2*time.Second)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateAppTestConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `app.Test(req, fiber.TestConfig{Timeout: 2*time.Second})`)
+	assert.Contains(t, buf.String(), "Migrating app.Test usages")
+}
+
+func Test_MigrateMiddlewareLocals(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlocals")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    id := c.Locals("requestid")
+    _ = id
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `requestid.FromContext(c)`)
+	assert.Contains(t, buf.String(), "Migrating middleware locals")
 }

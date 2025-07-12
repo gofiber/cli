@@ -111,6 +111,21 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
+// MigrateViewBind replaces the old Ctx.Bind view binding helper with ViewBind
+func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	replacer := strings.NewReplacer(".Bind(", ".ViewBind(")
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return replacer.Replace(content)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate ViewBind calls: %w", err)
+	}
+
+	cmd.Println("Migrating view binding helpers")
+	return nil
+}
+
 // MigrateAllParams replaces deprecated AllParams helper with the new binding API
 func MigrateAllParams(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	replacer := strings.NewReplacer(
@@ -335,5 +350,108 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 	}
 
 	cmd.Println("Migrating trusted proxy config")
+	return nil
+}
+
+// MigrateFilesystemMiddleware replaces filesystem middleware with static middleware
+func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		content = strings.ReplaceAll(content,
+			"github.com/gofiber/fiber/v2/middleware/filesystem",
+			"github.com/gofiber/fiber/v3/middleware/static")
+		content = strings.ReplaceAll(content,
+			"github.com/gofiber/fiber/v3/middleware/filesystem",
+			"github.com/gofiber/fiber/v3/middleware/static")
+
+		content = strings.ReplaceAll(content, "filesystem.New(", "static.New(\"\", ")
+		content = strings.ReplaceAll(content, "filesystem.Config{", "static.Config{")
+		content = strings.ReplaceAll(content, "Root:", "FS:")
+		content = strings.ReplaceAll(content, "http.Dir(", "os.DirFS(")
+
+		reIndex := regexp.MustCompile(`Index:\s*([^,}\n]+)`)
+		content = reIndex.ReplaceAllString(content, "IndexNames: []string{$1}")
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate filesystem middleware: %w", err)
+	}
+
+	cmd.Println("Migrating filesystem middleware usage")
+	return nil
+}
+
+// MigrateLimiterConfig updates limiter middleware configuration fields
+func MigrateLimiterConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reConfig := regexp.MustCompile(`limiter\.Config{[^}]*}`)
+		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
+			s = strings.ReplaceAll(s, "Duration:", "Expiration:")
+			s = strings.ReplaceAll(s, "Store:", "Storage:")
+			s = strings.ReplaceAll(s, "Key:", "KeyGenerator:")
+			return s
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate limiter configs: %w", err)
+	}
+
+	cmd.Println("Migrating limiter middleware configs")
+	return nil
+}
+
+// MigrateEnvVarConfig removes deprecated fields from envvar middleware configuration
+func MigrateEnvVarConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		re := regexp.MustCompile(`\s*ExcludeVars:\s*[^,]+,?\n`)
+		return re.ReplaceAllString(content, "")
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate envvar configs: %w", err)
+	}
+
+	cmd.Println("Migrating envvar middleware configs")
+	return nil
+}
+
+// MigrateAppTestConfig updates app.Test calls to use the new TestConfig parameter
+func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		re := regexp.MustCompile(`\.Test\(([^,\n]+),\s*([^\n)]+)\)`)
+		return re.ReplaceAllString(content, `.Test($1, fiber.TestConfig{Timeout: $2})`)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate app.Test calls: %w", err)
+	}
+
+	cmd.Println("Migrating app.Test usages")
+	return nil
+}
+
+// MigrateMiddlewareLocals replaces Locals lookups for middleware data with helper functions
+func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		replacements := []struct {
+			re   *regexp.Regexp
+			repl string
+		}{
+			{regexp.MustCompile(`(\w+)\.Locals\("requestid"\)`), `requestid.FromContext($1)`},
+			{regexp.MustCompile(`(\w+)\.Locals\("csrf"\)`), `csrf.TokenFromContext($1)`},
+			{regexp.MustCompile(`(\w+)\.Locals\("csrf_handler"\)`), `csrf.HandlerFromContext($1)`},
+			{regexp.MustCompile(`(\w+)\.Locals\("session"\)`), `session.FromContext($1)`},
+			{regexp.MustCompile(`(\w+)\.Locals\("username"\)`), `basicauth.UsernameFromContext($1)`},
+			{regexp.MustCompile(`(\w+)\.Locals\("password"\)`), `basicauth.PasswordFromContext($1)`},
+			{regexp.MustCompile(`(\w+)\.Locals\("token"\)`), `keyauth.TokenFromContext($1)`},
+		}
+		for _, r := range replacements {
+			content = r.re.ReplaceAllString(content, r.repl)
+		}
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate middleware locals: %w", err)
+	}
+
+	cmd.Println("Migrating middleware locals")
 	return nil
 }
