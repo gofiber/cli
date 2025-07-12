@@ -22,7 +22,16 @@ type Migration struct {
 // Example structure:
 // {"from": ">=2.0.0", "to": "<=3.*.*", "fn": [MigrateFN, MigrateFN]}
 var Migrations = []Migration{
-	{From: ">=2.0.0", To: "<4.0.0-0", Functions: []MigrationFn{v3.MigrateHandlerSignatures}},
+	{
+		From: ">=2.0.0",
+		To:   "<4.0.0-0",
+		Functions: []MigrationFn{
+			v3.MigrateHandlerSignatures,
+			v3.MigrateParserMethods,
+			v3.MigrateRedirectMethods,
+			v3.MigrateGenericHelpers,
+		},
+	},
 	{From: ">=1.0.0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
 }
 
