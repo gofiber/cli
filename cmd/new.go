@@ -78,7 +78,18 @@ func createBasic(projectPath, modName string) (err error) {
 		return
 	}
 
-	return runCmd(execCommand("go", "mod", "init", modName))
+	if err = runCmd(execCommand("go", "mod", "init", modName)); err != nil{
+		return
+	}
+	
+	//Execute go mod tidy in the project directory
+	installModules := execCommand("go", "mod", "tidy")
+	installModules.Dir = fmt.Sprintf("%s%c", projectPath, os.PathSeparator)
+	if err = runCmd(installModules); err != nil{
+		return
+	}
+
+	return
 }
 
 const githubPrefix = "https://github.com/"
