@@ -221,29 +221,6 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating Mount usages")
 }
 
-func Test_MigrateRouterAddSignature(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("", "maddtest")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/fiber/v2"
-func main() {
-    app := fiber.New()
-    app.Add(fiber.MethodGet, "/", func(c fiber.Ctx) error { return nil })
-}`)
-
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, MigrateRouterAddSignature(cmd, dir, nil, nil))
-
-	content := readFile(t, file)
-	assert.Contains(t, content, "app.Add([]string{fiber.MethodGet}, \"/\"")
-	assert.Contains(t, buf.String(), "Migrating Router.Add signature")
-}
-
 func Test_MigrateAddMethod(t *testing.T) {
 	t.Parallel()
 
@@ -312,4 +289,158 @@ var _ = logger.TagHeader
 	assert.NotContains(t, content, "TagHeader")
 	assert.Contains(t, content, "TagReqHeader")
 	assert.Contains(t, buf.String(), "Migrating logger tag constants")
+}
+
+func Test_MigrateStaticRoutes(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msrtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    app.Static("/", "./public")
+    app.Static("/prefix", "./public", Static{Index: "index.htm"})
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateStaticRoutes(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `.Get("/*", static.New("./public"))`)
+	assert.Contains(t, content, `static.New("./public", static.Config{IndexNames: []string{"index.htm"}})`)
+	assert.Contains(t, buf.String(), "Migrating app.Static usage")
+}
+
+func Test_MigrateTrustedProxyConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtpctest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New(fiber.Config{
+        EnableTrustedProxyCheck: true,
+        TrustedProxies: []string{"0.8.0.0"},
+    })
+    _ = app
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateTrustedProxyConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "TrustProxy: true")
+	assert.Contains(t, content, "TrustProxyConfig: fiber.TrustProxyConfig{Proxies: []string{\"0.8.0.0\"}},")
+	assert.Contains(t, buf.String(), "Migrating trusted proxy config")
+}
+
+func Test_MigrateCORSConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcors")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/cors"
+var _ = cors.New(cors.Config{
+    AllowOrigins: "https://a.com,https://b.com",
+    AllowMethods: "GET,POST",
+    AllowHeaders: "Content-Type",
+    ExposeHeaders: "Content-Length",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateCORSConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `AllowOrigins: []string{"https://a.com", "https://b.com"}`)
+	assert.Contains(t, content, `AllowMethods: []string{"GET", "POST"}`)
+	assert.Contains(t, content, `AllowHeaders: []string{"Content-Type"}`)
+	assert.Contains(t, content, `ExposeHeaders: []string{"Content-Length"}`)
+	assert.Contains(t, buf.String(), "Migrating CORS middleware configs")
+}
+
+func Test_MigrateCSRFConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcsrf")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+    "time"
+)
+var _ = csrf.New(csrf.Config{
+    Expiration: 10 * time.Minute,
+    SessionKey: "csrf",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateCSRFConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "IdleTimeout:")
+	assert.NotContains(t, content, "Expiration:")
+	assert.NotContains(t, content, "SessionKey")
+	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
+}
+
+func Test_MigrateMonitorImport(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mmonitor")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/monitor"
+var _ = monitor.New()`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateMonitorImport(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "github.com/gofiber/contrib/monitor")
+	assert.NotContains(t, content, "fiber/v2/middleware/monitor")
+	assert.Contains(t, buf.String(), "Migrating monitor middleware import")
+}
+
+func Test_MigrateProxyTLSConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mproxy")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/proxy"
+    "crypto/tls"
+)
+func main() {
+    proxy.WithTlsConfig(&tls.Config{InsecureSkipVerify: true})
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateProxyTLSConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "proxy.WithClient(&fasthttp.Client{TLSConfig: &tls.Config{InsecureSkipVerify: true}})")
+	assert.Contains(t, buf.String(), "Migrating proxy TLS config")
 }

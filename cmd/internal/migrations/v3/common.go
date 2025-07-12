@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -142,20 +143,6 @@ func MigrateMount(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	return nil
 }
 
-// MigrateRouterAddSignature updates Router.Add signature to use a slice of methods
-func MigrateRouterAddSignature(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`\.Add\((\s*[^,]+\s*),`)
-		return re.ReplaceAllString(content, ".Add([]string{$1},")
-	})
-	if err != nil {
-		return fmt.Errorf("failed to migrate Router.Add signature: %w", err)
-	}
-
-	cmd.Println("Migrating Router.Add signature")
-	return nil
-}
-
 // MigrateAddMethod adapts the Add method signature
 func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
@@ -167,6 +154,92 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 	}
 
 	cmd.Println("Migrating Add method calls")
+	return nil
+}
+
+// MigrateCORSConfig updates cors middleware configuration fields
+func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		conv := func(src string, re *regexp.Regexp, field string) string {
+			return re.ReplaceAllStringFunc(src, func(s string) string {
+				matches := re.FindStringSubmatch(s)
+				if len(matches) < 2 {
+					return s
+				}
+				parts := strings.Split(matches[1], ",")
+				for i, p := range parts {
+					parts[i] = fmt.Sprintf("%q", strings.TrimSpace(p))
+				}
+				return fmt.Sprintf("%s: []string{%s}", field, strings.Join(parts, ", "))
+			})
+		}
+
+		reOrigins := regexp.MustCompile(`AllowOrigins:\s*"([^"]*)"`)
+		content = conv(content, reOrigins, "AllowOrigins")
+
+		reMethods := regexp.MustCompile(`AllowMethods:\s*"([^"]*)"`)
+		content = conv(content, reMethods, "AllowMethods")
+
+		reHeaders := regexp.MustCompile(`AllowHeaders:\s*"([^"]*)"`)
+		content = conv(content, reHeaders, "AllowHeaders")
+
+		reExpose := regexp.MustCompile(`ExposeHeaders:\s*"([^"]*)"`)
+		content = conv(content, reExpose, "ExposeHeaders")
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate CORS configs: %w", err)
+	}
+
+	cmd.Println("Migrating CORS middleware configs")
+	return nil
+}
+
+// MigrateCSRFConfig updates csrf middleware configuration fields
+func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	replacer := strings.NewReplacer("Expiration:", "IdleTimeout:")
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		content = replacer.Replace(content)
+		re := regexp.MustCompile(`\s*SessionKey:\s*[^,]+,?\n`)
+		return re.ReplaceAllString(content, "")
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate CSRF configs: %w", err)
+	}
+
+	cmd.Println("Migrating CSRF middleware configs")
+	return nil
+}
+
+// MigrateMonitorImport updates monitor middleware import path
+func MigrateMonitorImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return strings.ReplaceAll(content,
+			"github.com/gofiber/fiber/v2/middleware/monitor",
+			"github.com/gofiber/contrib/monitor")
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate monitor import: %w", err)
+	}
+
+	cmd.Println("Migrating monitor middleware import")
+	return nil
+}
+
+// MigrateProxyTLSConfig updates proxy TLS helper to new client configuration
+func MigrateProxyTLSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		re := regexp.MustCompile(`proxy\.WithTlsConfig\(([^)]+)\)`)
+		return re.ReplaceAllString(content,
+			"proxy.WithClient(&fasthttp.Client{TLSConfig: $1})")
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate proxy TLS config: %w", err)
+	}
+
+	cmd.Println("Migrating proxy TLS config")
 	return nil
 }
 
@@ -198,5 +271,69 @@ func MigrateLoggerTags(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	}
 
 	cmd.Println("Migrating logger tag constants")
+	return nil
+}
+
+// MigrateStaticRoutes replaces app.Static calls with static middleware
+func MigrateStaticRoutes(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		re := regexp.MustCompile(`\.Static\(\s*("[^"]*")\s*,\s*("[^"]*")(?:,\s*([^)]*))?\)`)
+		return re.ReplaceAllStringFunc(content, func(m string) string {
+			sub := re.FindStringSubmatch(m)
+			pathLit := sub[1]
+			root := sub[2]
+			cfg := sub[3]
+
+			path, err := strconv.Unquote(pathLit)
+			if err != nil {
+				path = strings.Trim(pathLit, "\"")
+			}
+
+			switch path {
+			case "/":
+				path = "/*"
+			case "*":
+				// keep as is
+			default:
+				path += "*"
+			}
+
+			quoted := strconv.Quote(path)
+
+			if cfg != "" {
+				cfg = strings.TrimSpace(cfg)
+				cfg = strings.Replace(cfg, "Static{", "static.Config{", 1)
+				reIndex := regexp.MustCompile(`Index:\s*([^,}\n]+)`)
+				cfg = reIndex.ReplaceAllString(cfg, "IndexNames: []string{$1}")
+				return fmt.Sprintf(".Get(%s, static.New(%s, %s))", quoted, root, cfg)
+			}
+
+			return fmt.Sprintf(".Get(%s, static.New(%s))", quoted, root)
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate static usages: %w", err)
+	}
+
+	cmd.Println("Migrating app.Static usage")
+	return nil
+}
+
+// MigrateTrustedProxyConfig updates trusted proxy configuration options
+func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reEnable := regexp.MustCompile(`EnableTrustedProxyCheck`)
+		content = reEnable.ReplaceAllString(content, "TrustProxy")
+
+		reProxies := regexp.MustCompile(`TrustedProxies:\s*([^,\n]+),`)
+		content = reProxies.ReplaceAllString(content, "TrustProxyConfig: fiber.TrustProxyConfig{Proxies: $1},")
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate trusted proxy config: %w", err)
+	}
+
+	cmd.Println("Migrating trusted proxy config")
 	return nil
 }
