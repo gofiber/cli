@@ -143,3 +143,173 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, "fiber.Query[bool](c, \"ok\"")
 	assert.Contains(t, buf.String(), "Migrating generic helpers")
 }
+
+func Test_MigrateContextMethods(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    ctx := c.Context()
+    uc := c.UserContext()
+    c.SetUserContext(ctx)
+    _ = uc
+    return nil
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateContextMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, ".RequestCtx()")
+	assert.Contains(t, content, ".Context()")
+	assert.Contains(t, content, ".SetContext(")
+	assert.Contains(t, buf.String(), "Migrating context methods")
+}
+
+func Test_MigrateAllParams(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maptest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    var p any
+    c.AllParams(&p)
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateAllParams(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, ".Bind().URI(&p)")
+	assert.Contains(t, buf.String(), "Migrating AllParams")
+}
+
+func Test_MigrateMount(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mmtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    api := fiber.New()
+    app.Mount("/api", api)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateMount(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, ".Use(\"/api\", api)")
+	assert.Contains(t, buf.String(), "Migrating Mount usages")
+}
+
+func Test_MigrateRouterAddSignature(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maddtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    app.Add(fiber.MethodGet, "/", func(c fiber.Ctx) error { return nil })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateRouterAddSignature(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "app.Add([]string{fiber.MethodGet}, \"/\"")
+	assert.Contains(t, buf.String(), "Migrating Router.Add signature")
+}
+
+func Test_MigrateAddMethod(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maddtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    app.Add(fiber.MethodGet, "/foo", func(c fiber.Ctx) error { return nil })
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateAddMethod(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `Add([]string{fiber.MethodGet}, "/foo"`)
+	assert.Contains(t, buf.String(), "Migrating Add method calls")
+}
+
+func Test_MigrateMimeConstants(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mmimetest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+const mime = fiber.MIMEApplicationJavaScript
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateMimeConstants(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "MIMEApplicationJavaScript")
+	assert.Contains(t, content, "MIMETextJavaScript")
+	assert.Contains(t, buf.String(), "Migrating MIME constants")
+}
+
+func Test_MigrateLoggerTags(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mloggertest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/logger"
+)
+var _ = logger.TagHeader
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, MigrateLoggerTags(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TagHeader")
+	assert.Contains(t, content, "TagReqHeader")
+	assert.Contains(t, buf.String(), "Migrating logger tag constants")
+}
