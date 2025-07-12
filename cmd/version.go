@@ -58,10 +58,12 @@ func currentVersion() (string, error) {
 
 var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"v(.*?)"`)
 
+// LatestFiberVersion retrieves the most recent Fiber release version from GitHub.
 func LatestFiberVersion() (string, error) {
 	return latestVersionByURL("https://api.github.com/repos/gofiber/fiber/releases/latest")
 }
 
+// LatestCliVersion retrieves the latest Fiber CLI release version from GitHub.
 func LatestCliVersion() (string, error) {
 	return latestVersionByURL("https://api.github.com/repos/gofiber/cli/releases/latest")
 }

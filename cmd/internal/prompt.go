@@ -11,6 +11,7 @@ import (
 
 type errMsg error
 
+// Prompt represents a small interactive input prompt used in the CLI.
 type Prompt struct {
 	err       error
 	p         *tea.Program
@@ -19,6 +20,7 @@ type Prompt struct {
 	textInput input.Model
 }
 
+// NewPrompt initializes a new Prompt with an optional placeholder value.
 func NewPrompt(title string, placeholder ...string) *Prompt {
 	p := &Prompt{
 		title:     title,
@@ -34,6 +36,7 @@ func NewPrompt(title string, placeholder ...string) *Prompt {
 	return p
 }
 
+// YesOrNo runs the prompt and returns true if the answer resembles "yes".
 func (p *Prompt) YesOrNo() (bool, error) {
 	answer, err := p.Answer()
 	if err != nil {
@@ -43,6 +46,7 @@ func (p *Prompt) YesOrNo() (bool, error) {
 	return parseBool(answer), nil
 }
 
+// parseBool returns true if the provided string represents a truthy value.
 func parseBool(str string) bool {
 	switch str {
 	case "1", "t", "T", "true", "TRUE", "True", "y", "Y", "yes", "Yes":
@@ -51,6 +55,7 @@ func parseBool(str string) bool {
 	return false
 }
 
+// Answer displays the prompt and returns the user's input.
 func (p *Prompt) Answer() (result string, err error) {
 	if _, err = checkConsole(); err != nil {
 		return "", fmt.Errorf("check console: %w", err)
@@ -62,12 +67,14 @@ func (p *Prompt) Answer() (result string, err error) {
 	return p.answer, nil
 }
 
+// Init initializes the bubbletea program for the prompt.
 func (p *Prompt) Init() tea.Cmd {
 	p.textInput.Focus()
 
 	return input.Blink
 }
 
+// Update handles prompt events and updates its state.
 func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -95,6 +102,7 @@ func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return p, cmd
 }
 
+// View renders the prompt UI.
 func (p *Prompt) View() string {
 	return fmt.Sprintf(
 		"%s\n\n%s\n\n%s\n\n",

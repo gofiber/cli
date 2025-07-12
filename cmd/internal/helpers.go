@@ -28,8 +28,11 @@ func checkConsole() (size console.WinSize, err error) {
 	return size, nil
 }
 
+// FileProcessor processes the file content and returns the modified content.
 type FileProcessor func(content string) string
 
+// ChangeFileContent walks through cwd and applies the processorFn to every Go
+// file found. Files in a vendor directory are skipped.
 func ChangeFileContent(cwd string, processorFn FileProcessor) error {
 	err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// SpinnerCmd wraps an exec.Cmd and displays a spinner while it runs.
 type SpinnerCmd struct {
 	err error
 	p   *tea.Program
@@ -28,6 +29,8 @@ type SpinnerCmd struct {
 	done         bool
 }
 
+// NewSpinnerCmd returns a SpinnerCmd that runs the given command. The optional
+// title is shown alongside the spinner.
 func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 	spinnerModel := spinner.New()
 	spinnerModel.Spinner = spinner.Dot
@@ -50,6 +53,7 @@ func NewSpinnerCmd(cmd *exec.Cmd, title ...string) *SpinnerCmd {
 	return c
 }
 
+// Init implements the tea.Model interface.
 func (t *SpinnerCmd) Init() tea.Cmd {
 	return tea.Batch(t.start(), t.spinnerModel.Tick)
 }
@@ -136,6 +140,7 @@ const spinnerCmdTemplate = `
 
 `
 
+// Run executes the command and manages the spinner lifecycle.
 func (t *SpinnerCmd) Run() (err error) {
 	if t.size, err = checkConsole(); err != nil {
 		return err
@@ -148,6 +153,7 @@ func (t *SpinnerCmd) Run() (err error) {
 	return t.err
 }
 
+// UpdateOutput retrieves lines from c and stores them for display.
 func (t *SpinnerCmd) UpdateOutput(c <-chan []byte) {
 	select {
 	case b := <-c:
@@ -158,6 +164,7 @@ func (t *SpinnerCmd) UpdateOutput(c <-chan []byte) {
 	}
 }
 
+// watchOutput reads lines from rc and forwards them to out until an error occurs.
 func (t *SpinnerCmd) watchOutput(out chan<- []byte, rc io.ReadCloser) {
 	defer func() {
 		if err := rc.Close(); err != nil {

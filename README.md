@@ -101,6 +101,23 @@ fiber new PROJECT [module name] [flags]
   -t, --template string   basic|complex (default "basic")
 ```
 
+## fiber migrate
+
+### Synopsis
+
+Migrate Fiber project version to a newer version
+
+```bash
+fiber migrate --to 3.0.0
+```
+
+### Options
+
+```text
+  -t, --to string   Migrate to a specific version e.g:3.0.0 Format: X.Y.Z
+  -h, --help        help for migrate
+```
+
 ## fiber upgrade
 
 ### Synopsis
