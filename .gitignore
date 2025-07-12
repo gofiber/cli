@@ -1,9 +1,31 @@
+# Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+
+# Test binary, built with `go test -c`
 *.test
-*.out
-.idea/
+*.tmp
+
+# Output of the go coverage tool
+**/*.out
+
+# IDE files
+.vscode
+.DS_Store
+.idea
+
+# Misc
+*.test.gz
+*.test.zst
+*.test.br
+*.pprof
+*.workspace
+
+# Dependencies
+/vendor/
+vendor/
 vendor
+/Godeps/
