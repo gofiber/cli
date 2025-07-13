@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 func runGoMod(root string) error {
 	dirs, err := fiberModuleDirs(root)
 	if err != nil {
-		return err
+		return fmt.Errorf("find modules: %w", err)
 	}
 	for _, dir := range dirs {
 		commands := [][]string{
@@ -22,7 +23,7 @@ func runGoMod(root string) error {
 			{"go", "mod", "vendor"},
 		}
 		for _, args := range commands {
-			cmd := execCommand(args[0], args[1:]...)
+			cmd := execCommand(args[0], args[1:]...) // #nosec G204 -- commands are controlled
 			cmd.Dir = dir
 			if err := runCmd(cmd); err != nil {
 				return err
@@ -36,7 +37,7 @@ func runGoMod(root string) error {
 // requires github.com/gofiber/fiber. vendor directories are skipped.
 func fiberModuleDirs(root string) ([]string, error) {
 	var dirs []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -44,9 +45,9 @@ func fiberModuleDirs(root string) ([]string, error) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && d.Name() == "go.mod" {
-			b, err := os.ReadFile(path)
+			b, err := os.ReadFile(path) // #nosec G304
 			if err != nil {
-				return err
+				return fmt.Errorf("read %s: %w", path, err)
 			}
 			if bytes.Contains(b, []byte("github.com/gofiber/fiber")) {
 				dirs = append(dirs, filepath.Dir(path))
@@ -54,8 +55,8 @@ func fiberModuleDirs(root string) ([]string, error) {
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
+	if walkErr != nil {
+		return nil, fmt.Errorf("walk %s: %w", root, walkErr)
 	}
 	return dirs, nil
 }

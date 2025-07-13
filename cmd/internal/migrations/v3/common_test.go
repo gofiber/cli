@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	v3 "github.com/gofiber/cli/cmd/internal/migrations/v3"
+	v3 "github.com/gofiber/cli/cmd/internal/migrations/v3" //nolint:revive // alias required
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
