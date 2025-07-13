@@ -59,6 +59,10 @@ func migrateRunE(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("migration failed %w", err)
 	}
 
+	if err := runGoMod(wd); err != nil {
+		return fmt.Errorf("go mod: %w", err)
+	}
+
 	msg := fmt.Sprintf("Migration from Fiber %s to %s", currentVersionS, targetVersionS)
 	cmd.Println(termenv.String(msg).
 		Foreground(termenv.ANSIBrightBlue))
