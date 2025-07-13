@@ -69,17 +69,14 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 
 // MigrateGenericHelpers migrates helper functions that now use generics
 func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reParamsInt := regexp.MustCompile(`(\w+)\.ParamsInt\(`)
+	reQueryInt := regexp.MustCompile(`(\w+)\.QueryInt\(`)
+	reQueryFloat := regexp.MustCompile(`(\w+)\.QueryFloat\(`)
+	reQueryBool := regexp.MustCompile(`(\w+)\.QueryBool\(`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		reParamsInt := regexp.MustCompile(`(\w+)\.ParamsInt\(`)
 		content = reParamsInt.ReplaceAllString(content, "fiber.Params[int]($1, ")
-
-		reQueryInt := regexp.MustCompile(`(\w+)\.QueryInt\(`)
 		content = reQueryInt.ReplaceAllString(content, "fiber.Query[int]($1, ")
-
-		reQueryFloat := regexp.MustCompile(`(\w+)\.QueryFloat\(`)
 		content = reQueryFloat.ReplaceAllString(content, "fiber.Query[float64]($1, ")
-
-		reQueryBool := regexp.MustCompile(`(\w+)\.QueryBool\(`)
 		content = reQueryBool.ReplaceAllString(content, "fiber.Query[bool]($1, ")
 
 		return content
@@ -113,33 +110,17 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 // MigrateViewBind replaces the old Ctx.Bind view binding helper with ViewBind
 func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	replacer := strings.NewReplacer(".Bind(", ".ViewBind(")
+	// Replace .Bind() with arguments, not the Bind() from the binding package
+	reViewBind := regexp.MustCompile(`\.Bind\(([^)]+)\)`)
 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return replacer.Replace(content)
+		return reViewBind.ReplaceAllString(content, ".ViewBind($1)")
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate ViewBind calls: %w", err)
 	}
 
 	cmd.Println("Migrating view binding helpers")
-	return nil
-}
-
-// MigrateAllParams replaces deprecated AllParams helper with the new binding API
-func MigrateAllParams(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	replacer := strings.NewReplacer(
-		".AllParams(", ".Bind().URI(",
-	)
-
-	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return replacer.Replace(content)
-	})
-	if err != nil {
-		return fmt.Errorf("failed to migrate AllParams: %w", err)
-	}
-
-	cmd.Println("Migrating AllParams")
 	return nil
 }
 
@@ -160,8 +141,9 @@ func MigrateMount(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 
 // MigrateAddMethod adapts the Add method signature
 func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`\.Add\(\s*([^,\n]+)\s*,`)
+
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`\.Add\(\s*([^,\n]+)\s*,`)
 		return re.ReplaceAllString(content, ".Add([]string{$1},")
 	})
 	if err != nil {
@@ -174,6 +156,11 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 
 // MigrateCORSConfig updates cors middleware configuration fields
 func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reOrigins := regexp.MustCompile(`AllowOrigins:\s*"([^"]*)"`)
+	reMethods := regexp.MustCompile(`AllowMethods:\s*"([^"]*)"`)
+	reHeaders := regexp.MustCompile(`AllowHeaders:\s*"([^"]*)"`)
+	reExpose := regexp.MustCompile(`ExposeHeaders:\s*"([^"]*)"`)
+
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		conv := func(src string, re *regexp.Regexp, field string) string {
 			return re.ReplaceAllStringFunc(src, func(s string) string {
@@ -189,16 +176,9 @@ func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 			})
 		}
 
-		reOrigins := regexp.MustCompile(`AllowOrigins:\s*"([^"]*)"`)
 		content = conv(content, reOrigins, "AllowOrigins")
-
-		reMethods := regexp.MustCompile(`AllowMethods:\s*"([^"]*)"`)
 		content = conv(content, reMethods, "AllowMethods")
-
-		reHeaders := regexp.MustCompile(`AllowHeaders:\s*"([^"]*)"`)
 		content = conv(content, reHeaders, "AllowHeaders")
-
-		reExpose := regexp.MustCompile(`ExposeHeaders:\s*"([^"]*)"`)
 		content = conv(content, reExpose, "ExposeHeaders")
 
 		return content
@@ -214,10 +194,9 @@ func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 // MigrateCSRFConfig updates csrf middleware configuration fields
 func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	replacer := strings.NewReplacer("Expiration:", "IdleTimeout:")
-
+	re := regexp.MustCompile(`\s*SessionKey:\s*[^,]+,?\n`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = replacer.Replace(content)
-		re := regexp.MustCompile(`\s*SessionKey:\s*[^,]+,?\n`)
 		return re.ReplaceAllString(content, "")
 	})
 	if err != nil {
@@ -230,10 +209,9 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 
 // MigrateMonitorImport updates monitor middleware import path
 func MigrateMonitorImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`github\.com/gofiber/fiber/([^/]+)/middleware/monitor`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return strings.ReplaceAll(content,
-			"github.com/gofiber/fiber/v2/middleware/monitor",
-			"github.com/gofiber/contrib/monitor")
+		return re.ReplaceAllString(content, "github.com/gofiber/contrib/monitor")
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate monitor import: %w", err)
@@ -245,8 +223,8 @@ func MigrateMonitorImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 
 // MigrateProxyTLSConfig updates proxy TLS helper to new client configuration
 func MigrateProxyTLSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`proxy\.WithTlsConfig\(([^)]+)\)`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`proxy\.WithTlsConfig\(([^)]+)\)`)
 		return re.ReplaceAllString(content,
 			"proxy.WithClient(&fasthttp.Client{TLSConfig: $1})")
 	})
@@ -336,11 +314,10 @@ func MigrateStaticRoutes(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 
 // MigrateTrustedProxyConfig updates trusted proxy configuration options
 func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reEnable := regexp.MustCompile(`EnableTrustedProxyCheck`)
+	reProxies := regexp.MustCompile(`TrustedProxies:\s*([^,\n]+),`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		reEnable := regexp.MustCompile(`EnableTrustedProxyCheck`)
 		content = reEnable.ReplaceAllString(content, "TrustProxy")
-
-		reProxies := regexp.MustCompile(`TrustedProxies:\s*([^,\n]+),`)
 		content = reProxies.ReplaceAllString(content, "TrustProxyConfig: fiber.TrustProxyConfig{Proxies: $1},")
 
 		return content
@@ -375,11 +352,10 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 // MigrateListenerCallbacks removes deprecated OnShutdown callbacks from
 // ListenerConfig. Fiber v3 replaces these with the OnPostShutdown hook.
 func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reErr := regexp.MustCompile(`\s*OnShutdownError:\s*[^,]+,?\n`)
+	reSuccess := regexp.MustCompile(`\s*OnShutdownSuccess:\s*[^,]+,?\n`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		reErr := regexp.MustCompile(`\s*OnShutdownError:\s*[^,]+,?\n`)
 		content = reErr.ReplaceAllString(content, "")
-
-		reSuccess := regexp.MustCompile(`\s*OnShutdownSuccess:\s*[^,]+,?\n`)
 		content = reSuccess.ReplaceAllString(content, "")
 
 		return content
@@ -428,8 +404,8 @@ func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 
 // MigrateEnvVarConfig removes deprecated ExcludeVars field from envvar middleware configuration
 func MigrateEnvVarConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`\s*ExcludeVars:\s*[^,]+,?\n`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`\s*ExcludeVars:\s*[^,]+,?\n`)
 		return re.ReplaceAllString(content, "")
 	})
 	if err != nil {

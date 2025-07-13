@@ -29,8 +29,8 @@ var Migrations = []Migration{
 		To:   "<4.0.0-0",
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
+			v3migrations.MigrateViewBind,
 			v3migrations.MigrateParserMethods,
-			v3migrations.MigrateAllParams,
 			v3migrations.MigrateRedirectMethods,
 			v3migrations.MigrateGenericHelpers,
 			v3migrations.MigrateAddMethod,
@@ -43,7 +43,6 @@ var Migrations = []Migration{
 			v3migrations.MigrateListenerCallbacks,
 			v3migrations.MigrateListenMethods,
 			v3migrations.MigrateContextMethods,
-			v3migrations.MigrateViewBind,
 			v3migrations.MigrateCORSConfig,
 			v3migrations.MigrateCSRFConfig,
 			v3migrations.MigrateMonitorImport,
