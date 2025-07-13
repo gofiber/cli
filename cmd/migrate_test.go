@@ -44,7 +44,7 @@ func handler(c *fiber.Ctx) error {
     uc := c.UserContext()
     c.SetUserContext(uc)
     _ = ctx
-    return c.Bind("index", fiber.Map{})
+    return c.Bind(fiber.Map{})
 }
 
 func main() {
@@ -82,10 +82,11 @@ func main() {
 	content := readFileTB(t, filepath.Join(dir, "main.go"))
 	at := assert.New(t)
 	at.Contains(content, "github.com/gofiber/fiber/v3")
-	at.Contains(content, "github.com/gofiber/fiber/v3/middleware/monitor")
+	at.Contains(content, "github.com/gofiber/contrib/monitor")
 	at.NotContains(content, "*fiber.Ctx")
 	at.Contains(content, "fiber.Ctx")
-	at.Contains(content, ".ViewBind().Body(&v)")
+	at.Contains(content, ".Bind().Body(&v)")
+	at.Contains(content, ".ViewBind(fiber.Map{})")
 	at.Contains(content, ".Redirect().Back()")
 	at.Contains(content, "fiber.Params[int](c, \"id\"")
 	at.Contains(content, ".Use(\"/api\", app)")
