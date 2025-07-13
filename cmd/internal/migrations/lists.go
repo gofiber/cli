@@ -55,6 +55,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateEnvVarConfig,
 			v3migrations.MigrateSessionConfig,
 			v3migrations.MigrateReqHeaderParser,
+			MigrateGoVersion("1.24"),
 		},
 	},
 }
