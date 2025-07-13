@@ -1,4 +1,4 @@
-package v3
+package migrations
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// MigrateGoVersion ensures that all go.mod files referencing Fiber
-// declare at least the provided Go version. Vendor directories are skipped.
+// MigrateGoVersion ensures that all go.mod files referencing Fiber declare at
+// least the provided Go version. Vendor directories are skipped.
 func MigrateGoVersion(minVersion string) func(*cobra.Command, string, *semver.Version, *semver.Version) error {
 	minVer := semver.MustParse(minVersion)
 	return func(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {

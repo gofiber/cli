@@ -1,4 +1,4 @@
-package v3
+package v3_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	migrations "github.com/gofiber/cli/cmd/internal/migrations"
+	v3 "github.com/gofiber/cli/cmd/internal/migrations/v3"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +50,7 @@ func handler(c *fiber.Ctx) error { return nil }
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateHandlerSignatures(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateHandlerSignatures(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "*fiber.Ctx")
@@ -77,7 +79,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateParserMethods(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateParserMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Bind().Body(&v)")
@@ -106,7 +108,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateRedirectMethods(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateRedirectMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Redirect().To(\"/foo\")")
@@ -135,7 +137,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateGenericHelpers(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateGenericHelpers(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "fiber.Params[int](c, \"id\"")
@@ -165,7 +167,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateContextMethods(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".RequestCtx()")
@@ -189,7 +191,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateViewBind(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateViewBind(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".ViewBind(")
@@ -214,7 +216,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateAllParams(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateAllParams(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Bind().URI(&p)")
@@ -238,7 +240,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateMount(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateMount(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Use(\"/api\", api)")
@@ -262,7 +264,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateAddMethod(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `Add([]string{fiber.MethodGet}, "/foo"`)
@@ -283,7 +285,7 @@ const mime = fiber.MIMEApplicationJavaScript
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateMimeConstants(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateMimeConstants(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "MIMEApplicationJavaScript")
@@ -307,7 +309,7 @@ var _ = logger.TagHeader
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateLoggerTags(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateLoggerTags(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "TagHeader")
@@ -332,7 +334,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateStaticRoutes(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateStaticRoutes(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `.Get("/*", static.New("./public"))`)
@@ -359,7 +361,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateTrustedProxyConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateTrustedProxyConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "TrustProxy: true")
@@ -385,7 +387,7 @@ var _ = cors.New(cors.Config{
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateCORSConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateCORSConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `AllowOrigins: []string{"https://a.com", "https://b.com"}`)
@@ -414,7 +416,7 @@ var _ = csrf.New(csrf.Config{
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateCSRFConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateCSRFConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "IdleTimeout:")
@@ -436,7 +438,7 @@ var _ = monitor.New()`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateMonitorImport(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateMonitorImport(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "github.com/gofiber/contrib/monitor")
@@ -462,7 +464,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateProxyTLSConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateProxyTLSConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "proxy.WithClient(&fasthttp.Client{TLSConfig: &tls.Config{InsecureSkipVerify: true}})")
@@ -488,7 +490,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateConfigListenerFields(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "EnablePrefork: true")
@@ -522,7 +524,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateListenerCallbacks(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateListenerCallbacks(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "OnShutdownError")
@@ -553,7 +555,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateListenMethods(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateListenMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "ListenTLS(")
@@ -585,7 +587,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateFilesystemMiddleware(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateFilesystemMiddleware(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `static.New("", static.Config{`)
@@ -609,7 +611,7 @@ var _ = envvar.New(envvar.Config{
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateEnvVarConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateEnvVarConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "ExcludeVars")
@@ -636,7 +638,7 @@ var _ = limiter.New(limiter.Config{
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateLimiterConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateLimiterConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "Expiration:")
@@ -663,7 +665,7 @@ var _ = healthcheck.New(healthcheck.Config{
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateHealthcheckConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateHealthcheckConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "Probe:")
@@ -695,7 +697,7 @@ func main() {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateAppTestConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `app.Test(req, fiber.TestConfig{Timeout: 2*time.Second})`)
@@ -719,7 +721,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateMiddlewareLocals(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `requestid.FromContext(c)`)
@@ -743,7 +745,7 @@ func handler(c fiber.Ctx) error {
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateReqHeaderParser(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateReqHeaderParser(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `.Bind().Header(&v)`)
@@ -768,7 +770,7 @@ var _ = session.New(session.Config{
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	require.NoError(t, MigrateSessionConfig(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateSessionConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "IdleTimeout:")
@@ -796,7 +798,7 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	fn := MigrateGoVersion("1.23")
+	fn := migrations.MigrateGoVersion("1.23")
 	require.NoError(t, fn(cmd, dir, nil, nil))
 
 	content := readFile(t, filepath.Join(dir, "go.mod"))
