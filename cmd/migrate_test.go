@@ -9,15 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func readFileTB(t testing.TB, path string) string {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	require.NoError(t, err)
+func readFileTB(tb testing.TB, path string) string {
+	tb.Helper()
+	b, err := os.ReadFile(filepath.Clean(path))
+	require.NoError(tb, err)
 	return string(b)
 }
 
 func Test_Migrate_V2_to_V3(t *testing.T) {
-
 	dir, err := os.MkdirTemp("", "migrate_v2_v3")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
