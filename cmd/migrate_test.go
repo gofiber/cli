@@ -70,6 +70,8 @@ func main() {
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
 	cmd := newMigrateCmd("go.mod")
+	setupCmd()
+	defer teardownCmd()
 	out, err := runCobraCmd(cmd, "-t=3.0.0")
 	require.NoError(t, err)
 
@@ -96,44 +98,43 @@ func main() {
 	at.Contains(out, "Migrating handler signatures")
 }
 
-
 func Test_RunGoMod(t *testing.T) {
-    dir := t.TempDir()
+	dir := t.TempDir()
 
-    modContent := `module example
+	modContent := `module example
 
 require github.com/gofiber/fiber/v2 v2.0.0`
-    require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
 
-    vendor := filepath.Join(dir, "vendor")
-    require.NoError(t, os.Mkdir(vendor, 0o750))
-    require.NoError(t, os.WriteFile(filepath.Join(vendor, "go.mod"), []byte("module vendor"), 0o600))
+	vendor := filepath.Join(dir, "vendor")
+	require.NoError(t, os.Mkdir(vendor, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(vendor, "go.mod"), []byte("module vendor"), 0o600))
 
-    origExec := execCommand
-    var cmds []*exec.Cmd
-    execCommand = func(name string, args ...string) *exec.Cmd {
-        cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
-        cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
-        env := []string{"GO_WANT_HELPER_PROCESS=1"}
-        if needError {
-            env = append(env, "GO_WANT_HELPER_NEED_ERR=1")
-        }
-        cmd.Env = env
-        cmds = append(cmds, cmd)
-        return cmd
-    }
-    defer func() {
-        execCommand = origExec
-        needError = false
-    }()
+	origExec := execCommand
+	var cmds []*exec.Cmd
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+		cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
+		env := []string{"GO_WANT_HELPER_PROCESS=1"}
+		if needError {
+			env = append(env, "GO_WANT_HELPER_NEED_ERR=1")
+		}
+		cmd.Env = env
+		cmds = append(cmds, cmd)
+		return cmd
+	}
+	defer func() {
+		execCommand = origExec
+		needError = false
+	}()
 
-    require.NoError(t, runGoMod(dir))
-    assert.Len(t, cmds, 3)
-    for _, c := range cmds {
-        assert.Equal(t, dir, c.Dir)
-    }
+	require.NoError(t, runGoMod(dir))
+	assert.Len(t, cmds, 3)
+	for _, c := range cmds {
+		assert.Equal(t, dir, c.Dir)
+	}
 
-    cmds = nil
-    needError = true
-    assert.Error(t, runGoMod(dir))
+	cmds = nil
+	needError = true
+	assert.Error(t, runGoMod(dir))
 }

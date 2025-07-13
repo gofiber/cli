@@ -1,12 +1,13 @@
 package migrations
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -66,12 +67,19 @@ func fiberModuleDirs(root string) ([]string, error) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && d.Name() == "go.mod" {
-			b, err := os.ReadFile(path) // #nosec G304
+			b, err := os.ReadFile(path) // #nosec G304 -- reading module file
 			if err != nil {
 				return fmt.Errorf("read %s: %w", path, err)
 			}
-			if bytes.Contains(b, []byte("github.com/gofiber/fiber")) {
-				dirs = append(dirs, filepath.Dir(path))
+			mf, err := modfile.Parse(path, b, nil)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", path, err)
+			}
+			for _, r := range mf.Require {
+				if strings.HasPrefix(r.Mod.Path, "github.com/gofiber/fiber") {
+					dirs = append(dirs, filepath.Dir(path))
+					break
+				}
 			}
 		}
 		return nil

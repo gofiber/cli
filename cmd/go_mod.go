@@ -1,11 +1,13 @@
 package cmd
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 // runGoMod executes `go mod tidy`, `go mod download` and `go mod vendor`
@@ -16,17 +18,17 @@ func runGoMod(root string) error {
 	if err != nil {
 		return fmt.Errorf("find modules: %w", err)
 	}
+	commands := [][]string{
+		{"go", "mod", "tidy"},
+		{"go", "mod", "download"},
+		{"go", "mod", "vendor"},
+	}
 	for _, dir := range dirs {
-		commands := [][]string{
-			{"go", "mod", "tidy"},
-			{"go", "mod", "download"},
-			{"go", "mod", "vendor"},
-		}
 		for _, args := range commands {
 			cmd := execCommand(args[0], args[1:]...) // #nosec G204 -- commands are controlled
 			cmd.Dir = dir
 			if err := runCmd(cmd); err != nil {
-				return err
+				return fmt.Errorf("in %s: %w", dir, err)
 			}
 		}
 	}
@@ -45,12 +47,19 @@ func fiberModuleDirs(root string) ([]string, error) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && d.Name() == "go.mod" {
-			b, err := os.ReadFile(path) // #nosec G304
+			b, err := os.ReadFile(path) // #nosec G304 -- reading module file
 			if err != nil {
 				return fmt.Errorf("read %s: %w", path, err)
 			}
-			if bytes.Contains(b, []byte("github.com/gofiber/fiber")) {
-				dirs = append(dirs, filepath.Dir(path))
+			mf, err := modfile.Parse(path, b, nil)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", path, err)
+			}
+			for _, r := range mf.Require {
+				if strings.HasPrefix(r.Mod.Path, "github.com/gofiber/fiber") {
+					dirs = append(dirs, filepath.Dir(path))
+					break
+				}
 			}
 		}
 		return nil
