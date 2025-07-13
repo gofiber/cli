@@ -37,11 +37,6 @@ func runCmd(cmd *exec.Cmd) (err error) {
 	if stderr, err = cmd.StderrPipe(); err != nil {
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
-	defer func() {
-		if cerr := stderr.Close(); cerr != nil {
-			fmt.Fprintf(os.Stderr, "close stderr pipe: %v", cerr)
-		}
-	}()
 	go func() {
 		if _, cErr := io.Copy(os.Stderr, stderr); cErr != nil {
 			fmt.Fprintf(os.Stderr, "copy stderr: %v", cErr)
@@ -51,11 +46,6 @@ func runCmd(cmd *exec.Cmd) (err error) {
 	if stdout, err = cmd.StdoutPipe(); err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	defer func() {
-		if cerr := stdout.Close(); cerr != nil {
-			fmt.Fprintf(os.Stderr, "close stdout pipe: %v", cerr)
-		}
-	}()
 	go func() {
 		if _, cErr := io.Copy(os.Stdout, stdout); cErr != nil {
 			fmt.Fprintf(os.Stderr, "copy stdout: %v", cErr)

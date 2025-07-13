@@ -296,19 +296,6 @@ func (e *escort) runBin() {
 }
 
 func (e *escort) cleanOldBin() {
-	defer func() {
-		if e.stdoutPipe != nil {
-			if err := e.stdoutPipe.Close(); err != nil {
-				log.Printf("Failed to close stdout pipe: %v", err)
-			}
-		}
-		if e.stderrPipe != nil {
-			if err := e.stderrPipe.Close(); err != nil {
-				log.Printf("Failed to close stderr pipe: %v", err)
-			}
-		}
-	}()
-
 	pid := e.bin.Process.Pid
 	log.Println("Killing old pid", pid)
 
