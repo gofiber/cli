@@ -68,15 +68,8 @@ func main() {
 	require.NoError(t, os.Chdir(dir))
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
-	origFile := currentVersionFile
-	currentVersionFile = "go.mod"
-	defer func() { currentVersionFile = origFile }()
-
-	origTarget := targetVersionS
-	targetVersionS = ""
-	defer func() { targetVersionS = origTarget }()
-
-	out, err := runCobraCmd(migrateCmd, "-t=3.0.0")
+	cmd := newMigrateCmd("go.mod")
+	out, err := runCobraCmd(cmd, "-t=3.0.0")
 	require.NoError(t, err)
 
 	content := readFileTB(t, filepath.Join(dir, "main.go"))
