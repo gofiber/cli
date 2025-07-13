@@ -6,33 +6,41 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/gofiber/cli/cmd/internal/migrations"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+
+	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
-var targetVersionS string
+func newMigrateCmd(currentVersionFile string) *cobra.Command {
+	var targetVersionS string
 
-func init() {
+	cmd := &cobra.Command{
+		Use:   "migrate",
+		Short: "Migrate Fiber project version to a newer version",
+	}
+
 	latestFiberVersion, err := LatestFiberVersion()
 	if err != nil {
 		latestFiberVersion = ""
 	}
 
-	migrateCmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version e.g:"+latestFiberVersion+" Format: X.Y.Z")
-	if err := migrateCmd.MarkFlagRequired("to"); err != nil {
+	cmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version e.g:"+latestFiberVersion+" Format: X.Y.Z")
+	if err := cmd.MarkFlagRequired("to"); err != nil {
 		panic(err)
 	}
+
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		return migrateRunE(cmd, currentVersionFile, targetVersionS)
+	}
+
+	return cmd
 }
 
-var migrateCmd = &cobra.Command{
-	Use:   "migrate",
-	Short: "Migrate Fiber project version to a newer version",
-	RunE:  migrateRunE,
-}
+var migrateCmd = newMigrateCmd("go.mod")
 
-func migrateRunE(cmd *cobra.Command, _ []string) error {
-	currentVersionS, err := currentVersion()
+func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string) error {
+	currentVersionS, err := currentVersionFromFile(currentVersionFile)
 	if err != nil {
 		return fmt.Errorf("current fiber project version not found: %w", err)
 	}

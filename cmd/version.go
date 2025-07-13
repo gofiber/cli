@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -43,8 +44,8 @@ var (
 	currentVersionFile   = "go.mod"
 )
 
-func currentVersion() (string, error) {
-	b, err := os.ReadFile(currentVersionFile)
+func currentVersionFromFile(path string) (string, error) {
+	b, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", fmt.Errorf("read current version file: %w", err)
 	}
@@ -54,6 +55,10 @@ func currentVersion() (string, error) {
 	}
 
 	return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
+}
+
+func currentVersion() (string, error) {
+	return currentVersionFromFile(currentVersionFile)
 }
 
 var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"v(.*?)"`)

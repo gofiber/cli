@@ -72,6 +72,7 @@ func handler(c fiber.Ctx) error {
     c.CookieParser(&v)
     c.ParamsParser(&v)
     c.QueryParser(&v)
+    c.AllParams(&p)
     return nil
 }
 `)
@@ -185,7 +186,7 @@ func Test_MigrateViewBind(t *testing.T) {
 	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c fiber.Ctx) error {
-    return c.Bind("index", fiber.Map{})
+    return c.Bind(fiber.Map{})
 }`)
 
 	var buf bytes.Buffer
@@ -196,30 +197,6 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, ".ViewBind(")
 	assert.NotContains(t, content, "c.Bind(")
 	assert.Contains(t, buf.String(), "Migrating view binding helpers")
-}
-
-func Test_MigrateAllParams(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("", "maptest")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/fiber/v2"
-func handler(c fiber.Ctx) error {
-    var p any
-    c.AllParams(&p)
-    return nil
-}`)
-
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAllParams(cmd, dir, nil, nil))
-
-	content := readFile(t, file)
-	assert.Contains(t, content, ".Bind().URI(&p)")
-	assert.Contains(t, buf.String(), "Migrating AllParams")
 }
 
 func Test_MigrateMount(t *testing.T) {
