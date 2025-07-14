@@ -114,8 +114,10 @@ fiber migrate --to 3.0.0
 ### Options
 
 ```text
-  -t, --to string   Migrate to a specific version e.g:3.0.0 Format: X.Y.Z
-  -h, --help        help for migrate
+  -t, --to string        Migrate to a specific version e.g:3.0.0 Format: X.Y.Z
+  -f, --force            Force migration even if already on the version
+  -s, --skip_go_mod      Skip running go mod tidy, download and vendor
+  -h, --help             help for migrate
 ```
 
 ## fiber upgrade

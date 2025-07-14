@@ -138,3 +138,65 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 	needError = true
 	assert.Error(t, runGoMod(dir))
 }
+
+func Test_Migrate_ForceAndSkip(t *testing.T) {
+	dir := t.TempDir()
+	gomod := `module example
+
+go 1.20
+
+require github.com/gofiber/fiber/v3 v3.0.0
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o600))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	t.Run("without force", func(t *testing.T) {
+		cmd := newMigrateCmd("go.mod")
+		out, err := runCobraCmd(cmd, "-t=3.0.0")
+		require.Error(t, err)
+		assert.Contains(t, out, "not greater")
+	})
+
+	t.Run("force", func(t *testing.T) {
+		origExec := execCommand
+		var cmds []*exec.Cmd
+		execCommand = func(name string, args ...string) *exec.Cmd {
+			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
+			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+			cmds = append(cmds, cmd)
+			return cmd
+		}
+		defer func() { execCommand = origExec }()
+
+		cmd := newMigrateCmd("go.mod")
+		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Migration from Fiber 3.0.0 to 3.0.0")
+		assert.Len(t, cmds, 3)
+	})
+
+	t.Run("force skip go mod", func(t *testing.T) {
+		origExec := execCommand
+		var cmds []*exec.Cmd
+		execCommand = func(name string, args ...string) *exec.Cmd {
+			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
+			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+			cmds = append(cmds, cmd)
+			return cmd
+		}
+		defer func() { execCommand = origExec }()
+
+		cmd := newMigrateCmd("go.mod")
+		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f", "-s")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Migration from Fiber 3.0.0 to 3.0.0")
+		assert.Len(t, cmds, 0)
+	})
+}

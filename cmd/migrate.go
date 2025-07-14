@@ -14,6 +14,8 @@ import (
 
 func newMigrateCmd(currentVersionFile string) *cobra.Command {
 	var targetVersionS string
+	var force bool
+	var skipGoMod bool
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
@@ -29,9 +31,11 @@ func newMigrateCmd(currentVersionFile string) *cobra.Command {
 	if err := cmd.MarkFlagRequired("to"); err != nil {
 		panic(err)
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force migration even if already on version")
+	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return migrateRunE(cmd, currentVersionFile, targetVersionS)
+		return migrateRunE(cmd, currentVersionFile, targetVersionS, force, skipGoMod)
 	}
 
 	return cmd
@@ -39,7 +43,7 @@ func newMigrateCmd(currentVersionFile string) *cobra.Command {
 
 var migrateCmd = newMigrateCmd("go.mod")
 
-func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string) error {
+func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string, force, skipGoMod bool) error {
 	currentVersionS, err := currentVersionFromFile(currentVersionFile)
 	if err != nil {
 		return fmt.Errorf("current fiber project version not found: %w", err)
@@ -54,7 +58,9 @@ func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string) 
 	}
 
 	if !targetVersion.GreaterThan(currentVersion) {
-		return fmt.Errorf("target version v%s is not greater than current version v%s", targetVersionS, currentVersionS)
+		if !(force && targetVersion.Equal(currentVersion)) {
+			return fmt.Errorf("target version v%s is not greater than current version v%s", targetVersionS, currentVersionS)
+		}
 	}
 
 	wd, err := os.Getwd()
@@ -67,8 +73,10 @@ func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string) 
 		return fmt.Errorf("migration failed %w", err)
 	}
 
-	if err := runGoMod(wd); err != nil {
-		return fmt.Errorf("go mod: %w", err)
+	if !skipGoMod {
+		if err := runGoMod(wd); err != nil {
+			return fmt.Errorf("go mod: %w", err)
+		}
 	}
 
 	msg := fmt.Sprintf("Migration from Fiber %s to %s", currentVersionS, targetVersionS)
