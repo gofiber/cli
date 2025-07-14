@@ -69,7 +69,7 @@ func main() {
 	require.NoError(t, os.Chdir(dir))
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
-	cmd := newMigrateCmd("go.mod")
+	cmd := newMigrateCmd()
 	setupCmd()
 	defer teardownCmd()
 	out, err := runCobraCmd(cmd, "-t=3.0.0")
@@ -156,7 +156,7 @@ require github.com/gofiber/fiber/v3 v3.0.0
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
 	t.Run("without force", func(t *testing.T) {
-		cmd := newMigrateCmd("go.mod")
+		cmd := newMigrateCmd()
 		out, err := runCobraCmd(cmd, "-t=3.0.0")
 		require.Error(t, err)
 		assert.Contains(t, out, "not greater")
@@ -174,7 +174,7 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		}
 		defer func() { execCommand = origExec }()
 
-		cmd := newMigrateCmd("go.mod")
+		cmd := newMigrateCmd()
 		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
 		require.NoError(t, err)
 		assert.Contains(t, out, "Migration from Fiber 3.0.0 to 3.0.0")
@@ -193,10 +193,10 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		}
 		defer func() { execCommand = origExec }()
 
-		cmd := newMigrateCmd("go.mod")
+		cmd := newMigrateCmd()
 		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f", "-s")
 		require.NoError(t, err)
 		assert.Contains(t, out, "Migration from Fiber 3.0.0 to 3.0.0")
-		assert.Len(t, cmds, 0)
+		assert.Empty(t, cmds)
 	})
 }
