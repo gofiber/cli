@@ -12,8 +12,10 @@ import (
 	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
-func newMigrateCmd(currentVersionFile string) *cobra.Command {
+func newMigrateCmd() *cobra.Command {
 	var targetVersionS string
+	var force bool
+	var skipGoMod bool
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
@@ -29,32 +31,46 @@ func newMigrateCmd(currentVersionFile string) *cobra.Command {
 	if err := cmd.MarkFlagRequired("to"); err != nil {
 		panic(err)
 	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force migration even if already on version")
+	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		return migrateRunE(cmd, currentVersionFile, targetVersionS)
+		return migrateRunE(cmd, MigrateOptions{
+			CurrentVersionFile: currentVersionFile,
+			TargetVersionS:     targetVersionS,
+			Force:              force,
+			SkipGoMod:          skipGoMod,
+		})
 	}
 
 	return cmd
 }
 
-var migrateCmd = newMigrateCmd("go.mod")
+var migrateCmd = newMigrateCmd()
 
-func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string) error {
-	currentVersionS, err := currentVersionFromFile(currentVersionFile)
+type MigrateOptions struct {
+	CurrentVersionFile string
+	TargetVersionS     string
+	Force              bool
+	SkipGoMod          bool
+}
+
+func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
+	currentVersionS, err := currentVersionFromFile(opts.CurrentVersionFile)
 	if err != nil {
 		return fmt.Errorf("current fiber project version not found: %w", err)
 	}
 	currentVersionS = strings.TrimPrefix(currentVersionS, "v")
 	currentVersion := semver.MustParse(currentVersionS)
 
-	targetVersionS = strings.TrimPrefix(targetVersionS, "v")
-	targetVersion, err := semver.NewVersion(targetVersionS)
+	opts.TargetVersionS = strings.TrimPrefix(opts.TargetVersionS, "v")
+	targetVersion, err := semver.NewVersion(opts.TargetVersionS)
 	if err != nil {
-		return fmt.Errorf("invalid version for \"%s\": %w", targetVersionS, err)
+		return fmt.Errorf("invalid version for \"%s\": %w", opts.TargetVersionS, err)
 	}
 
-	if !targetVersion.GreaterThan(currentVersion) {
-		return fmt.Errorf("target version v%s is not greater than current version v%s", targetVersionS, currentVersionS)
+	if !targetVersion.GreaterThan(currentVersion) && !(opts.Force && targetVersion.Equal(currentVersion)) {
+		return fmt.Errorf("target version v%s is not greater than current version v%s", opts.TargetVersionS, currentVersionS)
 	}
 
 	wd, err := os.Getwd()
@@ -67,11 +83,13 @@ func migrateRunE(cmd *cobra.Command, currentVersionFile, targetVersionS string) 
 		return fmt.Errorf("migration failed %w", err)
 	}
 
-	if err := runGoMod(wd); err != nil {
-		return fmt.Errorf("go mod: %w", err)
+	if !opts.SkipGoMod {
+		if err := runGoMod(wd); err != nil {
+			return fmt.Errorf("go mod: %w", err)
+		}
 	}
 
-	msg := fmt.Sprintf("Migration from Fiber %s to %s", currentVersionS, targetVersionS)
+	msg := fmt.Sprintf("Migration from Fiber %s to %s", currentVersionS, opts.TargetVersionS)
 	cmd.Println(termenv.String(msg).
 		Foreground(termenv.ANSIBrightBlue))
 
