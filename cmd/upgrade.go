@@ -35,7 +35,7 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func upgrade(cmd *cobra.Command, cliLatestVersion string) {
-	module := "github.com/gofiber/cli/fiber@" + cliLatestVersion
+	module := "github.com/gofiber/cli/fiber@v" + cliLatestVersion
 	upgrader := execCommand("go", "install", module)
 	upgrader.Env = append(upgrader.Env, os.Environ()...)
 
