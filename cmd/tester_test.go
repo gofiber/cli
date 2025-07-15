@@ -102,12 +102,26 @@ func teardownOsExit() {
 func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
 	b := new(bytes.Buffer)
 
-	cmd.ResetCommands()
 	cmd.SetErr(b)
 	cmd.SetOut(b)
-	cmd.SetArgs(args)
-	err := cmd.Execute()
 
+	if parent := cmd.Parent(); parent != nil {
+		origArgs := parent.Flags().Args() // not used but placeholder
+		_ = origArgs
+		parent.SetErr(b)
+		parent.SetOut(b)
+		origSilence := parent.SilenceErrors
+		parent.SilenceErrors = false
+		parent.SetArgs(append([]string{cmd.Name()}, args...))
+		defer func() {
+			parent.SetArgs(nil)
+			parent.SilenceErrors = origSilence
+		}()
+	} else {
+		cmd.SetArgs(args)
+	}
+
+	err := cmd.Execute()
 	return b.String(), err
 }
 

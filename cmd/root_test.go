@@ -123,6 +123,7 @@ func setupRootCmd(t *testing.T) (*assert.Assertions, *bytes.Buffer) {
 	b := &bytes.Buffer{}
 	rootCmd.SetErr(b)
 	rootCmd.SetOut(b)
+	rootCmd.SetArgs([]string{})
 
 	return at, b
 }
