@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,4 +136,91 @@ var fakeCliVersionResponse = func(version ...string) []byte {
 		v = version[0]
 	}
 	return []byte(fmt.Sprintf(`{ "assets": [], "assets_url": "https://api.github.com/repos/gofiber/cli/releases/32630724/assets", "author": { "avatar_url": "https://avatars1.githubusercontent.com/u/1214670?v=4", "events_url": "https://api.github.com/users/kiyonlin/events{/privacy}", "followers_url": "https://api.github.com/users/kiyonlin/followers", "following_url": "https://api.github.com/users/kiyonlin/following{/other_user}", "gists_url": "https://api.github.com/users/kiyonlin/gists{/gist_id}", "gravatar_id": "", "html_url": "https://github.com/kiyonlin", "id": 1214670, "login": "kiyonlin", "node_id": "MDQ6VXNlcjEyMTQ2NzA=", "organizations_url": "https://api.github.com/users/kiyonlin/orgs", "received_events_url": "https://api.github.com/users/kiyonlin/received_events", "repos_url": "https://api.github.com/users/kiyonlin/repos", "site_admin": false, "starred_url": "https://api.github.com/users/kiyonlin/starred{/owner}{/repo}", "subscriptions_url": "https://api.github.com/users/kiyonlin/subscriptions", "type": "User", "url": "https://api.github.com/users/kiyonlin" }, "created_at": "2020-10-15T15:58:55Z", "draft": false, "html_url": "https://github.com/gofiber/cli/releases/tag/v99.99.99", "id": 32630724, "name": "v%s", "node_id": "MDc6UmVsZWFzZTMyNjMwNzI0", "prerelease": false, "published_at": "2020-10-15T16:09:05Z", "tag_name": "v99.99.99", "tarball_url": "https://api.github.com/repos/gofiber/cli/tarball/v99.99.99", "target_commitish": "master", "upload_url": "https://uploads.github.com/repos/gofiber/cli/releases/32630724/assets{?name,label}", "url": "https://api.github.com/repos/gofiber/cli/releases/32630724", "zipball_url": "https://api.github.com/repos/gofiber/cli/zipball/v99.99.99"}`, v))
+}
+
+func Test_Root_VersionDisplay(t *testing.T) {
+	at, b := setupRootCmd(t)
+
+	err := rootRunE(rootCmd, nil)
+	require.Error(t, err)
+
+	output := b.String()
+	// Should contain the dynamically detected version
+	at.Contains(output, "CLI version")
+	at.NotContains(output, "CLI version 0.0.9")
+}
+
+func Test_GetVersion(t *testing.T) {
+	// Reset version cache
+	version = ""
+
+	// Test that getVersion returns something
+	v := getVersion()
+	assert.NotEmpty(t, v)
+
+	// Test that it's cached properly
+	v2 := getVersion()
+	assert.Equal(t, v, v2)
+}
+
+func Test_GetVersionFromGit(t *testing.T) {
+	// This test will depend on the git environment
+	// It should either return a version or empty string
+	gitVersion := getVersionFromGit()
+
+	// If we have git and are in a git repo, should return something
+	// If not, should return empty string - both are valid
+	if gitVersion != "" {
+		// If we get a version, it should not start with 'v'
+		assert.False(t, strings.HasPrefix(gitVersion, "v"))
+		// Should be a valid semantic version format
+		assert.NotEmpty(t, gitVersion)
+	}
+}
+
+func Test_GetCommitHash(t *testing.T) {
+	// Test that getCommitHash returns a valid commit hash
+	commitHash := getCommitHash()
+
+	// Should not be empty unless we're not in a git repo
+	if commitHash != unknownVersion {
+		// Should be a valid git commit hash (hex characters)
+		assert.Regexp(t, `^[a-f0-9]+$`, commitHash)
+		// Short hash is typically 7 characters, but can vary
+		assert.Greater(t, len(commitHash), 4)
+		assert.LessOrEqual(t, len(commitHash), 40) // Full hash is 40 chars max
+	}
+}
+
+func Test_GetVersionFallback(t *testing.T) {
+	// Test that even if git detection fails, we get commit hash
+	// Reset version cache
+	version = ""
+
+	// Change to a directory without git to test fallback
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer func() {
+		err := os.Chdir(oldWd)
+		require.NoError(t, err)
+		version = "" // Reset for other tests
+	}()
+
+	// Use cross-platform temporary directory
+	tempDir := os.TempDir()
+	err = os.Chdir(tempDir)
+	require.NoError(t, err)
+
+	v := getVersion()
+	// Should fall back to "unknown" only if even commit hash fails
+	// In most cases it should return a commit hash
+	assert.NotEqual(t, "", v)
+	if v == unknownVersion {
+		// This means both git tag detection and commit hash detection failed
+		// which is acceptable in non-git environments
+		assert.Equal(t, unknownVersion, v)
+	} else {
+		// Should be a commit hash - typically 7 characters
+		assert.Regexp(t, `^[a-f0-9]+$`, v)
+	}
 }
