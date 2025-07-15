@@ -22,7 +22,7 @@ go install github.com/gofiber/cli/fiber@latest
 
 Learn more on [gofiber.io](https://gofiber.io)
 
-CLI version v0.0.x
+CLI version detected using Go build info
 
 ### Options
 

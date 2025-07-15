@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -19,53 +19,43 @@ const (
 
 var version string // dynamically determined version
 
-// getVersion returns the current version, detected dynamically from git tags
-// Falls back to commit hash if git tag detection fails
+// getVersion returns the current version using build info
+// Falls back to VCS info if available, then to "unknown"
 func getVersion() string {
 	if version != "" {
 		return version
 	}
 
-	// Try to get version from git describe
-	if gitVersion := getVersionFromGit(); gitVersion != "" {
-		version = gitVersion
+	buildInfo, ok := debug.ReadBuildInfo()
+	if !ok {
+		version = unknownVersion
 		return version
 	}
 
-	// Fall back to commit hash
-	version = getCommitHash()
-	return version
-}
+	// First try to get version from module version (when built with go install)
+	if buildInfo.Main.Version != "" && buildInfo.Main.Version != "(devel)" {
+		version = strings.TrimPrefix(buildInfo.Main.Version, "v")
+		return version
+	}
 
-// getVersionFromGit attempts to get the version using git describe --tags
-func getVersionFromGit() string {
-	cmd := exec.Command("git", "describe", "--tags", "--exact-match", "HEAD")
-	output, err := cmd.Output()
-	if err != nil {
-		// If exact match fails, try getting the latest tag
-		cmd = exec.Command("git", "describe", "--tags", "--abbrev=0")
-		output, err = cmd.Output()
-		if err != nil {
-			return ""
+	// Fallback to VCS info if available
+	for _, setting := range buildInfo.Settings {
+		switch setting.Key {
+		case "vcs.tag":
+			if setting.Value != "" {
+				version = strings.TrimPrefix(setting.Value, "v")
+				return version
+			}
+		case "vcs.revision":
+			if setting.Value != "" && len(setting.Value) >= 7 {
+				version = setting.Value[:7] // short commit hash
+				return version
+			}
 		}
 	}
 
-	gitVersion := strings.TrimSpace(string(output))
-	// Remove 'v' prefix if present
-	gitVersion = strings.TrimPrefix(gitVersion, "v")
-
-	return gitVersion
-}
-
-// getCommitHash returns the short commit hash of the current HEAD
-func getCommitHash() string {
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
-	output, err := cmd.Output()
-	if err != nil {
-		return unknownVersion
-	}
-
-	return strings.TrimSpace(string(output))
+	version = unknownVersion
+	return version
 }
 
 var rc = rootConfig{
