@@ -191,7 +191,8 @@ func Test_GetVersionFallback(t *testing.T) {
 		version = "" // Reset for other tests
 	}()
 
-	tempDir := "/tmp"
+	// Use cross-platform temporary directory
+	tempDir := os.TempDir()
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
