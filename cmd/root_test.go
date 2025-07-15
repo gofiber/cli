@@ -224,3 +224,53 @@ func Test_GetVersionFallback(t *testing.T) {
 		assert.Regexp(t, `^[a-f0-9]+$`, v)
 	}
 }
+
+func Test_GetVersionBuildTime(t *testing.T) {
+	// Test build-time version injection
+	// Reset version cache and save original Version
+	version = ""
+	originalVersion := Version
+
+	defer func() {
+		Version = originalVersion
+		version = "" // Reset for other tests
+	}()
+
+	// Test with build-time version set
+	Version = "2.0.0"
+	v := getVersion()
+	assert.Equal(t, "2.0.0", v)
+
+	// Test that it's cached properly
+	v2 := getVersion()
+	assert.Equal(t, "2.0.0", v2)
+
+	// Reset and test without build-time version
+	version = ""
+	Version = ""
+	v3 := getVersion()
+	// Should fall back to git or commit hash
+	assert.NotEqual(t, "2.0.0", v3)
+	assert.NotEmpty(t, v3)
+}
+
+func Test_GetVersionPriority(t *testing.T) {
+	// Test version detection priority order
+	// Reset version cache and save original Version
+	version = ""
+	originalVersion := Version
+
+	defer func() {
+		Version = originalVersion
+		version = "" // Reset for other tests
+	}()
+
+	// Test priority: build-time version should override git version
+	Version = "build-time-version"
+	v := getVersion()
+	assert.Equal(t, "build-time-version", v)
+
+	// Even if we're in a git repo, build-time version should take precedence
+	// (This test runs in a git environment so git version would be available)
+	assert.Equal(t, "build-time-version", v)
+}

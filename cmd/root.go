@@ -17,7 +17,12 @@ const (
 	unknownVersion = "unknown"
 )
 
-var version string // dynamically determined version
+var (
+	// Version can be set at build time using ldflags: go build -ldflags "-X github.com/gofiber/cli/cmd.Version=x.y.z"
+	Version string
+	// version is the cached dynamically determined version
+	version string
+)
 
 // getVersion returns the current version, detected dynamically from git tags
 // Falls back to commit hash if git tag detection fails
@@ -26,7 +31,13 @@ func getVersion() string {
 		return version
 	}
 
-	// Try to get version from git describe
+	// First priority: build-time injected version via ldflags
+	if Version != "" {
+		version = Version
+		return version
+	}
+
+	// Second priority: try to get version from git describe
 	if gitVersion := getVersionFromGit(); gitVersion != "" {
 		version = gitVersion
 		return version

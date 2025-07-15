@@ -12,6 +12,24 @@ Requires Go 1.24 or later.
 go install github.com/gofiber/cli/fiber@latest
 ```
 
+## Building from Source
+
+### Development Build
+For development builds, the version is automatically detected from git tags:
+
+```bash
+go build -o fiber ./fiber
+```
+
+### Release Build
+For release builds, inject the version at build time:
+
+```bash
+go build -ldflags "-X github.com/gofiber/cli/cmd.Version=1.0.0" -o fiber ./fiber
+```
+
+This ensures that the CLI displays the correct version even when built outside of a git repository.
+
 ## Commands
 
 ## fiber
@@ -22,7 +40,7 @@ go install github.com/gofiber/cli/fiber@latest
 
 Learn more on [gofiber.io](https://gofiber.io)
 
-CLI version v0.0.x
+CLI version dynamically detected
 
 ### Options
 
