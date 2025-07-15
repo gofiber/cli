@@ -13,16 +13,13 @@ import (
 )
 
 const (
-	defaultVersion = "0.1.1" // fallback version when git detection fails
-	configName     = ".fiberconfig"
+	configName = ".fiberconfig"
 )
 
-var (
-	version string // dynamically determined version
-)
+var version string // dynamically determined version
 
 // getVersion returns the current version, detected dynamically from git tags
-// Falls back to defaultVersion if git detection fails
+// Falls back to "unknown" if git detection fails
 func getVersion() string {
 	if version != "" {
 		return version
@@ -34,8 +31,8 @@ func getVersion() string {
 		return version
 	}
 
-	// Fall back to default version
-	version = defaultVersion
+	// Fall back to unknown version
+	version = "unknown"
 	return version
 }
 
@@ -54,9 +51,7 @@ func getVersionFromGit() string {
 
 	gitVersion := strings.TrimSpace(string(output))
 	// Remove 'v' prefix if present
-	if strings.HasPrefix(gitVersion, "v") {
-		gitVersion = gitVersion[1:]
-	}
+	gitVersion = strings.TrimPrefix(gitVersion, "v")
 
 	return gitVersion
 }
@@ -73,7 +68,7 @@ type rootConfig struct {
 func init() {
 	// Set the long description dynamically with the current version
 	rootCmd.Long = getLongDescription()
-	
+
 	rootCmd.AddCommand(
 		versionCmd, newCmd, devCmd, upgradeCmd, migrateCmd,
 	)
