@@ -23,7 +23,7 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if version != cliLatestVersion {
+	if getVersion() != cliLatestVersion {
 		upgrade(cmd, cliLatestVersion)
 	} else {
 		msg := fmt.Sprintf("Currently Fiber cli is the latest version %s.", cliLatestVersion)

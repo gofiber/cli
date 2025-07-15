@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gofiber/cli/cmd/internal"
@@ -11,9 +13,53 @@ import (
 )
 
 const (
-	version    = "0.1.1"
-	configName = ".fiberconfig"
+	defaultVersion = "0.1.1" // fallback version when git detection fails
+	configName     = ".fiberconfig"
 )
+
+var (
+	version string // dynamically determined version
+)
+
+// getVersion returns the current version, detected dynamically from git tags
+// Falls back to defaultVersion if git detection fails
+func getVersion() string {
+	if version != "" {
+		return version
+	}
+
+	// Try to get version from git describe
+	if gitVersion := getVersionFromGit(); gitVersion != "" {
+		version = gitVersion
+		return version
+	}
+
+	// Fall back to default version
+	version = defaultVersion
+	return version
+}
+
+// getVersionFromGit attempts to get the version using git describe --tags
+func getVersionFromGit() string {
+	cmd := exec.Command("git", "describe", "--tags", "--exact-match", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		// If exact match fails, try getting the latest tag
+		cmd = exec.Command("git", "describe", "--tags", "--abbrev=0")
+		output, err = cmd.Output()
+		if err != nil {
+			return ""
+		}
+	}
+
+	gitVersion := strings.TrimSpace(string(output))
+	// Remove 'v' prefix if present
+	if strings.HasPrefix(gitVersion, "v") {
+		gitVersion = gitVersion[1:]
+	}
+
+	return gitVersion
+}
 
 var rc = rootConfig{
 	CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
@@ -25,6 +71,9 @@ type rootConfig struct {
 }
 
 func init() {
+	// Set the long description dynamically with the current version
+	rootCmd.Long = getLongDescription()
+	
 	rootCmd.AddCommand(
 		versionCmd, newCmd, devCmd, upgradeCmd, migrateCmd,
 	)
@@ -33,7 +82,7 @@ func init() {
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:               "fiber",
-	Long:              longDescription,
+	Long:              "", // will be set dynamically in init()
 	RunE:              rootRunE,
 	PersistentPreRun:  rootPersistentPreRun,
 	PersistentPostRun: rootPersistentPostRun,
@@ -74,8 +123,8 @@ func checkCliVersion(cmd *cobra.Command) {
 		return
 	}
 
-	if version != cliLatestVersion {
-		title := termenv.String(fmt.Sprintf(versionUpgradeTitleFormat, version, cliLatestVersion)).
+	if getVersion() != cliLatestVersion {
+		title := termenv.String(fmt.Sprintf(versionUpgradeTitleFormat, getVersion(), cliLatestVersion)).
 			Foreground(termenv.ANSIBrightYellow)
 
 		prompt := internal.NewPrompt(title.String())
@@ -107,12 +156,15 @@ func needCheckCliVersion() bool {
 	return !upgraded && rc.CliVersionCheckedAt+rc.CliVersionCheckInterval < time.Now().Unix()
 }
 
-const (
-	longDescription = `🚀 Fiber is an Express inspired web framework written in Go with 💖
+// getLongDescription returns the long description with the current version
+func getLongDescription() string {
+	return `🚀 Fiber is an Express inspired web framework written in Go with 💖
 Learn more on https://gofiber.io
 
-CLI version ` + version
+CLI version ` + getVersion()
+}
 
+const (
 	versionUpgradeTitleFormat = `
 You are using fiber cli version %s; however, version %s is available.
 Would you like to upgrade now? (y/N)`

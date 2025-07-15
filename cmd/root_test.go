@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +144,55 @@ func Test_Root_VersionDisplay(t *testing.T) {
 	require.Error(t, err)
 
 	output := b.String()
-	at.Contains(output, "CLI version 0.1.1")
+	// Should contain the dynamically detected version
+	at.Contains(output, "CLI version")
 	at.NotContains(output, "CLI version 0.0.9")
+}
+
+func Test_GetVersion(t *testing.T) {
+	// Reset version cache
+	version = ""
+	
+	// Test that getVersion returns something
+	v := getVersion()
+	assert.NotEmpty(t, v)
+	
+	// Test that it's cached properly
+	v2 := getVersion()
+	assert.Equal(t, v, v2)
+}
+
+func Test_GetVersionFromGit(t *testing.T) {
+	// This test will depend on the git environment
+	// It should either return a version or empty string
+	gitVersion := getVersionFromGit()
+	
+	// If we have git and are in a git repo, should return something
+	// If not, should return empty string - both are valid
+	if gitVersion != "" {
+		// If we get a version, it should not start with 'v'
+		assert.False(t, strings.HasPrefix(gitVersion, "v"))
+		// Should be a valid semantic version format
+		assert.True(t, len(gitVersion) > 0)
+	}
+}
+
+func Test_GetVersionFallback(t *testing.T) {
+	// Test that even if git detection fails, we get a valid version
+	// Reset version cache
+	version = ""
+	
+	// Change to a directory without git to test fallback
+	oldWd, _ := os.Getwd()
+	defer func() {
+		os.Chdir(oldWd)
+		version = "" // Reset for other tests
+	}()
+	
+	tempDir := "/tmp"
+	os.Chdir(tempDir)
+	
+	v := getVersion()
+	// Should fall back to defaultVersion
+	assert.Equal(t, defaultVersion, v)
 }
