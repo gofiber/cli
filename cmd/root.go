@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	configName = ".fiberconfig"
+	configName     = ".fiberconfig"
+	unknownVersion = "unknown"
 )
 
 var version string // dynamically determined version
 
 // getVersion returns the current version, detected dynamically from git tags
-// Falls back to "unknown" if git detection fails
+// Falls back to commit hash if git tag detection fails
 func getVersion() string {
 	if version != "" {
 		return version
@@ -31,8 +32,8 @@ func getVersion() string {
 		return version
 	}
 
-	// Fall back to unknown version
-	version = "unknown"
+	// Fall back to commit hash
+	version = getCommitHash()
 	return version
 }
 
@@ -54,6 +55,17 @@ func getVersionFromGit() string {
 	gitVersion = strings.TrimPrefix(gitVersion, "v")
 
 	return gitVersion
+}
+
+// getCommitHash returns the short commit hash of the current HEAD
+func getCommitHash() string {
+	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return unknownVersion
+	}
+
+	return strings.TrimSpace(string(output))
 }
 
 var rc = rootConfig{

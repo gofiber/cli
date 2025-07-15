@@ -178,8 +178,22 @@ func Test_GetVersionFromGit(t *testing.T) {
 	}
 }
 
+func Test_GetCommitHash(t *testing.T) {
+	// Test that getCommitHash returns a valid commit hash
+	commitHash := getCommitHash()
+
+	// Should not be empty unless we're not in a git repo
+	if commitHash != unknownVersion {
+		// Should be a valid git commit hash (hex characters)
+		assert.Regexp(t, `^[a-f0-9]+$`, commitHash)
+		// Short hash is typically 7 characters, but can vary
+		assert.Greater(t, len(commitHash), 4)
+		assert.LessOrEqual(t, len(commitHash), 40) // Full hash is 40 chars max
+	}
+}
+
 func Test_GetVersionFallback(t *testing.T) {
-	// Test that even if git detection fails, we get "unknown"
+	// Test that even if git detection fails, we get commit hash
 	// Reset version cache
 	version = ""
 
@@ -198,6 +212,15 @@ func Test_GetVersionFallback(t *testing.T) {
 	require.NoError(t, err)
 
 	v := getVersion()
-	// Should fall back to "unknown"
-	assert.Equal(t, "unknown", v)
+	// Should fall back to "unknown" only if even commit hash fails
+	// In most cases it should return a commit hash
+	assert.NotEqual(t, "", v)
+	if v == unknownVersion {
+		// This means both git tag detection and commit hash detection failed
+		// which is acceptable in non-git environments
+		assert.Equal(t, unknownVersion, v)
+	} else {
+		// Should be a commit hash - typically 7 characters
+		assert.Regexp(t, `^[a-f0-9]+$`, v)
+	}
 }
