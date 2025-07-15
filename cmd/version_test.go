@@ -107,6 +107,7 @@ func teardownCurrentVersionFile() {
 	if err := os.Remove(currentVersionFile); err != nil && !os.IsNotExist(err) {
 		panic(err)
 	}
+	currentVersionFile = "go.mod"
 }
 
 func Test_Version_Latest(t *testing.T) {
