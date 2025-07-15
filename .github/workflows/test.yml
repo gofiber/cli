@@ -1,11 +1,21 @@
-on: [push, pull_request]
 name: Test
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
 jobs:
   Build:
     strategy:
       matrix:
         go-version: [1.24.x]
-        platform: [ubuntu-latest, windows-latest]
+        platform: [ubuntu-latest, windows-latest, macos-latest, macos-13]
     runs-on: ${{ matrix.platform }}
     steps:
     - name: Check out repository
@@ -16,8 +26,6 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache: true
         cache-dependency-path: '**/go.sum'
-    - name: Install gotestsum
-      run: go install gotest.tools/gotestsum@latest
     - name: Run Test
       run: |
-        gotestsum --format standard-verbose -- -race ./...
+        go run gotest.tools/gotestsum@latest -f testname -- ./... -race -count=1 -coverprofile=coverage.txt -covermode=atomic -shuffle=on
