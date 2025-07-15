@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -163,114 +161,21 @@ func Test_GetVersion(t *testing.T) {
 	assert.Equal(t, v, v2)
 }
 
-func Test_GetVersionFromGit(t *testing.T) {
-	// This test will depend on the git environment
-	// It should either return a version or empty string
-	gitVersion := getVersionFromGit()
-
-	// If we have git and are in a git repo, should return something
-	// If not, should return empty string - both are valid
-	if gitVersion != "" {
-		// If we get a version, it should not start with 'v'
-		assert.False(t, strings.HasPrefix(gitVersion, "v"))
-		// Should be a valid semantic version format
-		assert.NotEmpty(t, gitVersion)
-	}
-}
-
-func Test_GetCommitHash(t *testing.T) {
-	// Test that getCommitHash returns a valid commit hash
-	commitHash := getCommitHash()
-
-	// Should not be empty unless we're not in a git repo
-	if commitHash != unknownVersion {
-		// Should be a valid git commit hash (hex characters)
-		assert.Regexp(t, `^[a-f0-9]+$`, commitHash)
-		// Short hash is typically 7 characters, but can vary
-		assert.Greater(t, len(commitHash), 4)
-		assert.LessOrEqual(t, len(commitHash), 40) // Full hash is 40 chars max
-	}
-}
-
 func Test_GetVersionFallback(t *testing.T) {
-	// Test that even if git detection fails, we get commit hash
+	// Test that the new runtime/debug.ReadBuildInfo() approach works
 	// Reset version cache
 	version = ""
-
-	// Change to a directory without git to test fallback
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
 	defer func() {
-		err := os.Chdir(oldWd)
-		require.NoError(t, err)
 		version = "" // Reset for other tests
 	}()
 
-	// Use cross-platform temporary directory
-	tempDir := os.TempDir()
-	err = os.Chdir(tempDir)
-	require.NoError(t, err)
-
 	v := getVersion()
-	// Should fall back to "unknown" only if even commit hash fails
-	// In most cases it should return a commit hash
+	// With runtime/debug.ReadBuildInfo(), the result depends on how the test is built
+	// It could be module version, VCS tag, VCS revision, or "unknown"
 	assert.NotEqual(t, "", v)
-	if v == unknownVersion {
-		// This means both git tag detection and commit hash detection failed
-		// which is acceptable in non-git environments
-		assert.Equal(t, unknownVersion, v)
-	} else {
-		// Should be a commit hash - typically 7 characters
-		assert.Regexp(t, `^[a-f0-9]+$`, v)
-	}
-}
 
-func Test_GetVersionBuildTime(t *testing.T) {
-	// Test build-time version injection
-	// Reset version cache and save original Version
-	version = ""
-	originalVersion := Version
-
-	defer func() {
-		Version = originalVersion
-		version = "" // Reset for other tests
-	}()
-
-	// Test with build-time version set
-	Version = "2.0.0"
-	v := getVersion()
-	assert.Equal(t, "2.0.0", v)
-
-	// Test that it's cached properly
+	// Test that caching works
+	version = "cached-version"
 	v2 := getVersion()
-	assert.Equal(t, "2.0.0", v2)
-
-	// Reset and test without build-time version
-	version = ""
-	Version = ""
-	v3 := getVersion()
-	// Should fall back to git or commit hash
-	assert.NotEqual(t, "2.0.0", v3)
-	assert.NotEmpty(t, v3)
-}
-
-func Test_GetVersionPriority(t *testing.T) {
-	// Test version detection priority order
-	// Reset version cache and save original Version
-	version = ""
-	originalVersion := Version
-
-	defer func() {
-		Version = originalVersion
-		version = "" // Reset for other tests
-	}()
-
-	// Test priority: build-time version should override git version
-	Version = "build-time-version"
-	v := getVersion()
-	assert.Equal(t, "build-time-version", v)
-
-	// Even if we're in a git repo, build-time version should take precedence
-	// (This test runs in a git environment so git version would be available)
-	assert.Equal(t, "build-time-version", v)
+	assert.Equal(t, "cached-version", v2)
 }
