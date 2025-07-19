@@ -401,6 +401,31 @@ var _ = csrf.New(csrf.Config{
 	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
 }
 
+func Test_MigrateCSRFConfig_KeyLookup(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcsrfkl")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+var _ = csrf.New(csrf.Config{
+    KeyLookup: "header:X-CSRF-Token",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateCSRFConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, content, `Extractor: csrf.FromHeader("X-CSRF-Token")`)
+	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
+}
+
 func Test_MigrateMonitorImport(t *testing.T) {
 	t.Parallel()
 
