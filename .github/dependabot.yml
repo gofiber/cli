@@ -29,6 +29,9 @@ updates:
           - "github.com/jarcoal/httpmock"
           - "github.com/stretchr/testify"
           - "gopkg.in/check.v1"
+      gofiber:
+        patterns:
+          - "github.com/gofiber/*"
   - package-ecosystem: "github-actions"
     directory: "/" # Location of package manifests
     default_labels:
