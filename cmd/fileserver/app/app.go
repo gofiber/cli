@@ -16,15 +16,15 @@ import (
 type Options struct {
 	Dir       string
 	Path      string
+	Index     string
+	Cache     time.Duration
+	MaxAge    int
 	Logger    bool
 	Cors      bool
 	Health    bool
 	Browse    bool
 	Download  bool
 	Compress  bool
-	Cache     time.Duration
-	MaxAge    int
-	Index     string
 	ByteRange bool
 }
 

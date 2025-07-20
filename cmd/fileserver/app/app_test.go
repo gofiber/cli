@@ -21,7 +21,7 @@ func TestNewAppHealthEndpoints(t *testing.T) {
 
 	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, healthcheck.DefaultLivenessEndpoint, nil))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
@@ -41,7 +41,7 @@ func TestNewAppServeIndex(t *testing.T) {
 
 	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/", nil))
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
