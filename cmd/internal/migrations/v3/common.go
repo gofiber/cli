@@ -506,6 +506,20 @@ func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
+// MigrateTimeoutConfig updates timeout middleware usage to the new Config parameter
+func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`timeout\.New\(\s*([^,\n]+)\s*,\s*([^\n)]+)\)`)
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return re.ReplaceAllString(content, `timeout.New($1, timeout.Config{Timeout: $2})`)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate timeout middleware configs: %w", err)
+	}
+
+	cmd.Println("Migrating timeout middleware configs")
+	return nil
+}
+
 // MigrateAppTestConfig updates app.Test calls to use the new TestConfig parameter
 func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
