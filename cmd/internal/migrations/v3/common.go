@@ -515,6 +515,41 @@ func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 		reConfig := regexp.MustCompile(`session\.Config{[^}]*}`)
 		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
 			s = strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
+
+			// Handle KeyLookup to Extractor migration
+			reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*"([^"]+)"(,?)(\n?)`)
+			s = reKeyLookup.ReplaceAllStringFunc(s, func(match string) string {
+				sub := reKeyLookup.FindStringSubmatch(match)
+				indent := sub[1]
+				keyLookup := sub[2]
+				comma := sub[3]
+				newline := sub[4]
+
+				parts := strings.Split(keyLookup, ":")
+				if len(parts) != 2 {
+					// Invalid format, remove
+					return ""
+				}
+
+				source := parts[0]
+				name := parts[1]
+
+				var extractor string
+				switch source {
+				case "cookie":
+					extractor = fmt.Sprintf("Extractor: session.FromCookie(%q)", name)
+				case "header":
+					extractor = fmt.Sprintf("Extractor: session.FromHeader(%q)", name)
+				case "query":
+					extractor = fmt.Sprintf("Extractor: session.FromQuery(%q)", name)
+				default:
+					// Unsupported source, remove
+					return ""
+				}
+
+				return fmt.Sprintf("%s%s%s%s", indent, extractor, comma, newline)
+			})
+
 			return s
 		})
 	})
