@@ -398,6 +398,26 @@ func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	return nil
 }
 
+// MigrateShutdownHook updates the deprecated OnShutdown hook to OnPostShutdown
+// and adapts inline hook functions to accept the error parameter.
+func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reName := regexp.MustCompile(`\.Hooks\(\)\.OnShutdown\(`)
+		content = reName.ReplaceAllString(content, ".Hooks().OnPostShutdown(")
+
+		reInline := regexp.MustCompile(`\.OnPostShutdown\(func\(\s*\)`)
+		content = reInline.ReplaceAllString(content, ".OnPostShutdown(func(err error)")
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate shutdown hooks: %w", err)
+	}
+
+	cmd.Println("Migrating shutdown hooks")
+	return nil
+}
+
 // MigrateFilesystemMiddleware replaces deprecated filesystem middleware with static middleware
 func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
