@@ -598,3 +598,18 @@ func MigrateReqHeaderParser(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	cmd.Println("Migrating request header parser helper")
 	return nil
 }
+
+// MigrateBasicauthAuthorizer updates inline basicauth authorizer functions to include the context parameter
+func MigrateBasicauthAuthorizer(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`Authorizer:\s*func\(([^)]*)\)`)
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return re.ReplaceAllString(content, `Authorizer: func($1, _ fiber.Ctx)`)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate basicauth authorizer: %w", err)
+	}
+
+	cmd.Println("Migrating basicauth authorizer")
+	return nil
+}
