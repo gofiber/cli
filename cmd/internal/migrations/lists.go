@@ -41,6 +41,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateMount,
 			v3migrations.MigrateConfigListenerFields,
 			v3migrations.MigrateListenerCallbacks,
+			v3migrations.MigrateShutdownHook,
 			v3migrations.MigrateListenMethods,
 			v3migrations.MigrateContextMethods,
 			v3migrations.MigrateCORSConfig,

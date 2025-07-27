@@ -827,3 +827,26 @@ var _ = basicauth.New(basicauth.Config{
 	assert.Contains(t, content, `Authorizer: func(u, p string, _ fiber.Ctx) bool`)
 	assert.Contains(t, buf.String(), "Migrating basicauth authorizer")
 }
+
+func Test_MigrateShutdownHook(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mhooks")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    app.Hooks().OnShutdown(func() error { return nil })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateShutdownHook(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `.Hooks().OnPostShutdown(func(err error) error {`)
+	assert.Contains(t, buf.String(), "Migrating shutdown hooks")
+}
