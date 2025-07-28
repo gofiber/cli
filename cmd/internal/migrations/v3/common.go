@@ -633,3 +633,72 @@ func MigrateBasicauthAuthorizer(cmd *cobra.Command, cwd string, _, _ *semver.Ver
 	cmd.Println("Migrating basicauth authorizer")
 	return nil
 }
+
+// MigrateCacheConfig updates cache middleware configuration fields
+func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reConfig := regexp.MustCompile(`cache\.Config{[^}]*}`)
+		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
+			s = strings.ReplaceAll(s, "Store:", "Storage:")
+			s = strings.ReplaceAll(s, "Key:", "KeyGenerator:")
+			return s
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate cache configs: %w", err)
+	}
+
+	cmd.Println("Migrating cache middleware configs")
+	return nil
+}
+
+// MigrateSessionExtractor updates session KeyLookup to the new Extractor pattern
+func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*([^,\n]+)(,?)(\n?)`)
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return reKeyLookup.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reKeyLookup.FindStringSubmatch(s)
+			indent := sub[1]
+			val := strings.TrimSpace(sub[2])
+			comma := sub[3]
+			newline := sub[4]
+
+			if uq, err := strconv.Unquote(val); err == nil {
+				val = uq
+			}
+
+			parts := strings.Split(val, ",")
+			var extractors []string
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				switch {
+				case strings.HasPrefix(p, "cookie:"):
+					extractors = append(extractors, fmt.Sprintf("session.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
+				case strings.HasPrefix(p, "header:"):
+					extractors = append(extractors, fmt.Sprintf("session.FromHeader(%q)", strings.TrimPrefix(p, "header:")))
+				case strings.HasPrefix(p, "query:"):
+					extractors = append(extractors, fmt.Sprintf("session.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
+				default:
+					return ""
+				}
+			}
+
+			if len(extractors) == 0 {
+				return ""
+			}
+
+			extractor := extractors[0]
+			if len(extractors) > 1 {
+				extractor = fmt.Sprintf("session.Chain(%s)", strings.Join(extractors, ", "))
+			}
+
+			return fmt.Sprintf("%sExtractor: %s%s%s", indent, extractor, comma, newline)
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate session extractor config: %w", err)
+	}
+
+	cmd.Println("Migrating session KeyLookup config")
+	return nil
+}

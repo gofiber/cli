@@ -850,3 +850,57 @@ func main() {
 	assert.Contains(t, content, `.Hooks().OnPostShutdown(func(err error) error {`)
 	assert.Contains(t, buf.String(), "Migrating shutdown hooks")
 }
+
+func Test_MigrateCacheConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcache")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/cache"
+    "github.com/gofiber/fiber/v2"
+)
+var _ = cache.New(cache.Config{
+    Store: nil,
+    Key: func(c fiber.Ctx) string { return "a" },
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateCacheConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Storage:")
+	assert.Contains(t, content, "KeyGenerator:")
+	assert.NotContains(t, content, "Store:")
+	assert.NotContains(t, content, "Key:")
+	assert.Contains(t, buf.String(), "Migrating cache middleware configs")
+}
+
+func Test_MigrateSessionExtractor(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionex")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/session"
+)
+var _ = session.New(session.Config{
+    KeyLookup: "cookie:session_id",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateSessionExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `Extractor: session.FromCookie("session_id")`)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
+}
