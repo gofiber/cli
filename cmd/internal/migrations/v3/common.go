@@ -365,11 +365,40 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 // listener configuration fields.
 func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		replacer := strings.NewReplacer(
-			"Prefork:", "EnablePrefork:",
-			"Network:", "ListenerNetwork:",
-		)
-		return replacer.Replace(content)
+		// collect fields that were moved from Config to ListenConfig
+		moved := []string{}
+		reMoved := regexp.MustCompile(`(?m)^\s*(Prefork|Network|DisableStartupMessage|EnablePrintRoutes):\s*([^,]+),?\n`)
+		content = reMoved.ReplaceAllStringFunc(content, func(m string) string {
+			sub := reMoved.FindStringSubmatch(m)
+			if len(sub) == 3 {
+				name := sub[1]
+				val := strings.TrimSpace(sub[2])
+				switch name {
+				case "Prefork":
+					name = "EnablePrefork"
+				case "Network":
+					name = "ListenerNetwork"
+				}
+				moved = append(moved, fmt.Sprintf("%s: %s", name, val))
+			}
+			return ""
+		})
+
+		if len(moved) == 0 {
+			return content
+		}
+
+		// inject ListenConfig with the moved fields if Listen is used without config
+		reListen := regexp.MustCompile(`\.Listen\(([^,\n]+)\)`)
+		content = reListen.ReplaceAllStringFunc(content, func(m string) string {
+			if strings.Contains(m, "ListenConfig{") {
+				return m
+			}
+			addr := reListen.FindStringSubmatch(m)[1]
+			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, strings.Join(moved, ", "))
+		})
+
+		return content
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related config fields: %w", err)

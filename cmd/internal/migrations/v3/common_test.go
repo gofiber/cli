@@ -485,8 +485,10 @@ func main() {
     app := fiber.New(fiber.Config{
         Prefork: true,
         Network: "tcp",
+        DisableStartupMessage: true,
+        EnablePrintRoutes: true,
     })
-    _ = app
+    app.Listen(":3000")
 }`)
 
 	var buf bytes.Buffer
@@ -494,8 +496,7 @@ func main() {
 	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "EnablePrefork: true")
-	assert.Contains(t, content, "ListenerNetwork: \"tcp\"")
+	assert.Contains(t, content, "fiber.ListenConfig{EnablePrefork: true, ListenerNetwork: \"tcp\", DisableStartupMessage: true, EnablePrintRoutes: true}")
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
 
