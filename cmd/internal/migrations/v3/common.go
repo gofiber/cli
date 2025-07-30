@@ -16,7 +16,7 @@ import (
 
 var (
 	hexRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
-	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$|^[A-Za-z0-9+/]{44}$`)
+	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
 
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
