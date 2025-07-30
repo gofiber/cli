@@ -364,15 +364,96 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 // in Fiber v3. It renames Prefork and Network fields and adapts them to the new
 // listener configuration fields.
 func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	var disableStartup string
+	var enablePrint string
+
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		replacer := strings.NewReplacer(
 			"Prefork:", "EnablePrefork:",
 			"Network:", "ListenerNetwork:",
 		)
-		return replacer.Replace(content)
+		content = replacer.Replace(content)
+
+		reStartup := regexp.MustCompile(`(?m)^\s*DisableStartupMessage:\s*([^,]+),?\n`)
+		content = reStartup.ReplaceAllStringFunc(content, func(s string) string {
+			if disableStartup == "" {
+				sub := reStartup.FindStringSubmatch(s)
+				if len(sub) > 1 {
+					disableStartup = strings.TrimSpace(sub[1])
+				}
+			}
+			return ""
+		})
+
+		rePrint := regexp.MustCompile(`(?m)^\s*EnablePrintRoutes:\s*([^,]+),?\n`)
+		content = rePrint.ReplaceAllStringFunc(content, func(s string) string {
+			if enablePrint == "" {
+				sub := rePrint.FindStringSubmatch(s)
+				if len(sub) > 1 {
+					enablePrint = strings.TrimSpace(sub[1])
+				}
+			}
+			return ""
+		})
+
+		return content
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related config fields: %w", err)
+	}
+
+	err = internal.ChangeFileContent(cwd, func(content string) string {
+		if disableStartup == "" && enablePrint == "" {
+			return content
+		}
+
+		reWithCfg := regexp.MustCompile(`\.Listen\(([^,]+),\s*fiber.ListenConfig\{([^}]*)\}\)`)
+		content = reWithCfg.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reWithCfg.FindStringSubmatch(s)
+			addr := sub[1]
+			cfg := strings.TrimSpace(sub[2])
+
+			if disableStartup != "" && !strings.Contains(cfg, "DisableStartupMessage:") {
+				if len(cfg) > 0 && !strings.HasSuffix(cfg, ",") {
+					cfg += ","
+				}
+				cfg += " DisableStartupMessage: " + disableStartup + ","
+			}
+			if enablePrint != "" && !strings.Contains(cfg, "EnablePrintRoutes:") {
+				if len(cfg) > 0 && !strings.HasSuffix(cfg, ",") {
+					cfg += ","
+				}
+				cfg += " EnablePrintRoutes: " + enablePrint + ","
+			}
+
+			cfg = strings.TrimSuffix(cfg, ",")
+			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, cfg)
+		})
+
+		rePlain := regexp.MustCompile(`\.Listen\(([^,\n)]+)\)`)
+		content = rePlain.ReplaceAllStringFunc(content, func(s string) string {
+			if strings.Contains(s, "fiber.ListenConfig") {
+				return s
+			}
+
+			addr := rePlain.FindStringSubmatch(s)[1]
+			fields := ""
+			if disableStartup != "" {
+				fields += "DisableStartupMessage: " + disableStartup + ", "
+			}
+			if enablePrint != "" {
+				fields += "EnablePrintRoutes: " + enablePrint + ", "
+			}
+			fields = strings.TrimSpace(fields)
+			fields = strings.TrimSuffix(fields, ",")
+
+			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, fields)
+		})
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate listener related listen calls: %w", err)
 	}
 
 	cmd.Println("Migrating listener related config fields")
