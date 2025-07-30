@@ -59,6 +59,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateSessionExtractor,
 			v3migrations.MigrateTimeoutConfig,
 			v3migrations.MigrateBasicauthAuthorizer,
+			v3migrations.MigrateBasicauthConfig,
 			v3migrations.MigrateReqHeaderParser,
 			MigrateGoVersion("1.24"),
 		},

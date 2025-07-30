@@ -883,6 +883,35 @@ var _ = basicauth.New(basicauth.Config{
 	assert.Contains(t, buf.String(), "Migrating basicauth authorizer")
 }
 
+func Test_MigrateBasicauthConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mbasiccfg")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/basicauth"
+)
+var _ = basicauth.New(basicauth.Config{
+    Users: map[string]string{"john": "doe"},
+    ContextUsername: "u",
+    ContextPassword: "p",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateBasicauthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ContextUsername")
+	assert.NotContains(t, content, "ContextPassword")
+	assert.Contains(t, content, "{SHA256}eZ75KhGvkY4/t0HfQpNPO1aO0tk6wd908bjUGieTKm8=")
+	assert.Contains(t, buf.String(), "Migrating basicauth configs")
+}
+
 func Test_MigrateShutdownHook(t *testing.T) {
 	t.Parallel()
 

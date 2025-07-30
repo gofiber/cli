@@ -1,6 +1,8 @@
 package v3
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -10,6 +12,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gofiber/cli/cmd/internal"
+)
+
+var (
+	hexRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$|^[A-Za-z0-9+/]{44}$`)
 )
 
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -712,6 +719,50 @@ func MigrateBasicauthAuthorizer(cmd *cobra.Command, cwd string, _, _ *semver.Ver
 	}
 
 	cmd.Println("Migrating basicauth authorizer")
+	return nil
+}
+
+// MigrateBasicauthConfig adapts basicauth configuration to the new API
+// * removes ContextUsername and ContextPassword fields
+// * hashes plaintext Users entries using SHA-256
+func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reCtxUser := regexp.MustCompile(`\s*ContextUsername:\s*[^,]+,?\n`)
+	reCtxPass := regexp.MustCompile(`\s*ContextPassword:\s*[^,]+,?\n`)
+	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
+	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"([^"]*)"`)
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		content = reCtxUser.ReplaceAllString(content, "")
+		content = reCtxPass.ReplaceAllString(content, "")
+
+		content = reUsers.ReplaceAllStringFunc(content, func(m string) string {
+			sub := reUsers.FindStringSubmatch(m)
+			if len(sub) < 2 {
+				return m
+			}
+			body := reEntry.ReplaceAllStringFunc(sub[1], func(s string) string {
+				es := reEntry.FindStringSubmatch(s)
+				if len(es) < 3 {
+					return s
+				}
+				pwd := es[2]
+				if strings.HasPrefix(pwd, "{") || strings.HasPrefix(pwd, "$2") || hexRe.MatchString(pwd) || b64Re.MatchString(pwd) {
+					return s
+				}
+				sum := sha256.Sum256([]byte(pwd))
+				hashed := base64.StdEncoding.EncodeToString(sum[:])
+				return fmt.Sprintf("%s: \"{SHA256}%s\"", es[1], hashed)
+			})
+			return "Users: map[string]string{" + body + "}"
+		})
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate basicauth config: %w", err)
+	}
+
+	cmd.Println("Migrating basicauth configs")
 	return nil
 }
 
