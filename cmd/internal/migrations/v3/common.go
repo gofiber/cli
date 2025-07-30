@@ -602,8 +602,7 @@ func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		reConfig := regexp.MustCompile(`session\.Config{[^}]*}`)
 		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
-			s = strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
-			return s
+			return strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
 		})
 	})
 	if err != nil {
