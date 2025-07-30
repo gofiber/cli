@@ -479,23 +479,78 @@ func Test_MigrateConfigListenerFields(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	file := writeTempFile(t, dir, `package main
+	file1 := filepath.Join(dir, "app.go")
+	require.NoError(t, os.WriteFile(file1, []byte(`package main
 import "github.com/gofiber/fiber/v2"
-func main() {
-    app := fiber.New(fiber.Config{
+func newApp() *fiber.App {
+    return fiber.New(fiber.Config{
         Prefork: true,
         Network: "tcp",
+        DisableStartupMessage: true,
+        EnablePrintRoutes: true,
     })
-    _ = app
-}`)
+}`), 0o600))
+
+	file2 := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(file2, []byte(`package main
+func main() {
+    app := newApp()
+    app.Listen(":3000")
+}`), 0o600))
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
+	content := readFile(t, file1)
 	assert.Contains(t, content, "EnablePrefork: true")
 	assert.Contains(t, content, "ListenerNetwork: \"tcp\"")
+	assert.NotContains(t, content, "DisableStartupMessage")
+	assert.NotContains(t, content, "EnablePrintRoutes")
+	content2 := readFile(t, file2)
+	assert.Contains(t, content2, "fiber.ListenConfig{")
+	assert.Contains(t, content2, "DisableStartupMessage: true")
+	assert.Contains(t, content2, "EnablePrintRoutes: true")
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}
+
+func Test_MigrateConfigListenerFields_ExistingListenConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf2")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file1 := filepath.Join(dir, "app.go")
+	require.NoError(t, os.WriteFile(file1, []byte(`package main
+import "github.com/gofiber/fiber/v2"
+func newApp() *fiber.App {
+    return fiber.New(fiber.Config{
+        DisableStartupMessage: true,
+        EnablePrintRoutes: true,
+    })
+}`), 0o600))
+
+	file2 := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(file2, []byte(`package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := newApp()
+    app.Listen(":3000", fiber.ListenConfig{EnablePrefork: true})
+}`), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content1 := readFile(t, file1)
+	assert.NotContains(t, content1, "DisableStartupMessage")
+	assert.NotContains(t, content1, "EnablePrintRoutes")
+
+	content2 := readFile(t, file2)
+	assert.Contains(t, content2, "EnablePrefork: true")
+	assert.Contains(t, content2, "DisableStartupMessage: true")
+	assert.Contains(t, content2, "EnablePrintRoutes: true")
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
 
@@ -920,6 +975,35 @@ var _ = basicauth.New(basicauth.Config{
 	assert.Contains(t, buf.String(), "Migrating basicauth authorizer")
 }
 
+func Test_MigrateBasicauthConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mbasiccfg")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/basicauth"
+)
+var _ = basicauth.New(basicauth.Config{
+    Users: map[string]string{"john": "doe"},
+    ContextUsername: "u",
+    ContextPassword: "p",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateBasicauthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ContextUsername")
+	assert.NotContains(t, content, "ContextPassword")
+	assert.Contains(t, content, "{SHA256}eZ75KhGvkY4/t0HfQpNPO1aO0tk6wd908bjUGieTKm8=")
+	assert.Contains(t, buf.String(), "Migrating basicauth configs")
+}
+
 func Test_MigrateShutdownHook(t *testing.T) {
 	t.Parallel()
 
@@ -941,4 +1025,58 @@ func main() {
 	content := readFile(t, file)
 	assert.Contains(t, content, `.Hooks().OnPostShutdown(func(err error) error {`)
 	assert.Contains(t, buf.String(), "Migrating shutdown hooks")
+}
+
+func Test_MigrateCacheConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcache")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/cache"
+    "github.com/gofiber/fiber/v2"
+)
+var _ = cache.New(cache.Config{
+    Store: nil,
+    Key: func(c fiber.Ctx) string { return "a" },
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateCacheConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Storage:")
+	assert.Contains(t, content, "KeyGenerator:")
+	assert.NotContains(t, content, "Store:")
+	assert.NotContains(t, content, "Key:")
+	assert.Contains(t, buf.String(), "Migrating cache middleware configs")
+}
+
+func Test_MigrateSessionExtractor(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionex")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/session"
+)
+var _ = session.New(session.Config{
+    KeyLookup: "cookie:session_id",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateSessionExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `Extractor: session.FromCookie("session_id")`)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }

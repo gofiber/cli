@@ -1,6 +1,8 @@
 package v3
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -10,6 +12,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gofiber/cli/cmd/internal"
+)
+
+var (
+	hexRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
 
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -364,15 +371,96 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 // in Fiber v3. It renames Prefork and Network fields and adapts them to the new
 // listener configuration fields.
 func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	var disableStartup string
+	var enablePrint string
+
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		replacer := strings.NewReplacer(
 			"Prefork:", "EnablePrefork:",
 			"Network:", "ListenerNetwork:",
 		)
-		return replacer.Replace(content)
+		content = replacer.Replace(content)
+
+		reStartup := regexp.MustCompile(`(?m)^\s*DisableStartupMessage:\s*([^,]+),?\n`)
+		content = reStartup.ReplaceAllStringFunc(content, func(s string) string {
+			if disableStartup == "" {
+				sub := reStartup.FindStringSubmatch(s)
+				if len(sub) > 1 {
+					disableStartup = strings.TrimSpace(sub[1])
+				}
+			}
+			return ""
+		})
+
+		rePrint := regexp.MustCompile(`(?m)^\s*EnablePrintRoutes:\s*([^,]+),?\n`)
+		content = rePrint.ReplaceAllStringFunc(content, func(s string) string {
+			if enablePrint == "" {
+				sub := rePrint.FindStringSubmatch(s)
+				if len(sub) > 1 {
+					enablePrint = strings.TrimSpace(sub[1])
+				}
+			}
+			return ""
+		})
+
+		return content
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related config fields: %w", err)
+	}
+
+	err = internal.ChangeFileContent(cwd, func(content string) string {
+		if disableStartup == "" && enablePrint == "" {
+			return content
+		}
+
+		reWithCfg := regexp.MustCompile(`\.Listen\(([^,]+),\s*fiber.ListenConfig\{([^}]*)\}\)`)
+		content = reWithCfg.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reWithCfg.FindStringSubmatch(s)
+			addr := sub[1]
+			cfg := strings.TrimSpace(sub[2])
+
+			if disableStartup != "" && !strings.Contains(cfg, "DisableStartupMessage:") {
+				if len(cfg) > 0 && !strings.HasSuffix(cfg, ",") {
+					cfg += ","
+				}
+				cfg += " DisableStartupMessage: " + disableStartup + ","
+			}
+			if enablePrint != "" && !strings.Contains(cfg, "EnablePrintRoutes:") {
+				if len(cfg) > 0 && !strings.HasSuffix(cfg, ",") {
+					cfg += ","
+				}
+				cfg += " EnablePrintRoutes: " + enablePrint + ","
+			}
+
+			cfg = strings.TrimSuffix(cfg, ",")
+			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, cfg)
+		})
+
+		rePlain := regexp.MustCompile(`\.Listen\(([^,\n)]+)\)`)
+		content = rePlain.ReplaceAllStringFunc(content, func(s string) string {
+			if strings.Contains(s, "fiber.ListenConfig") {
+				return s
+			}
+
+			addr := rePlain.FindStringSubmatch(s)[1]
+			fields := ""
+			if disableStartup != "" {
+				fields += "DisableStartupMessage: " + disableStartup + ", "
+			}
+			if enablePrint != "" {
+				fields += "EnablePrintRoutes: " + enablePrint + ", "
+			}
+			fields = strings.TrimSpace(fields)
+			fields = strings.TrimSuffix(fields, ",")
+
+			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, fields)
+		})
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate listener related listen calls: %w", err)
 	}
 
 	cmd.Println("Migrating listener related config fields")
@@ -666,5 +754,118 @@ func MigrateBasicauthAuthorizer(cmd *cobra.Command, cwd string, _, _ *semver.Ver
 	}
 
 	cmd.Println("Migrating basicauth authorizer")
+	return nil
+}
+
+// MigrateBasicauthConfig adapts basicauth configuration to the new API
+// * removes ContextUsername and ContextPassword fields
+// * hashes plaintext Users entries using SHA-256
+func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reCtxUser := regexp.MustCompile(`\s*ContextUsername:\s*[^,]+,?\n`)
+	reCtxPass := regexp.MustCompile(`\s*ContextPassword:\s*[^,]+,?\n`)
+	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
+	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`)
+
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		content = reCtxUser.ReplaceAllString(content, "")
+		content = reCtxPass.ReplaceAllString(content, "")
+
+		content = reUsers.ReplaceAllStringFunc(content, func(m string) string {
+			sub := reUsers.FindStringSubmatch(m)
+			if len(sub) < 2 {
+				return m
+			}
+			body := reEntry.ReplaceAllStringFunc(sub[1], func(s string) string {
+				es := reEntry.FindStringSubmatch(s)
+				if len(es) < 3 {
+					return s
+				}
+				pwd := es[2]
+				if strings.HasPrefix(pwd, "{") || strings.HasPrefix(pwd, "$2") || hexRe.MatchString(pwd) || b64Re.MatchString(pwd) {
+					return s
+				}
+				sum := sha256.Sum256([]byte(pwd))
+				hashed := base64.StdEncoding.EncodeToString(sum[:])
+				return fmt.Sprintf("%s: \"{SHA256}%s\"", es[1], hashed)
+			})
+			return "Users: map[string]string{" + body + "}"
+		})
+
+		return content
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate basicauth config: %w", err)
+	}
+
+	cmd.Println("Migrating basicauth configs")
+	return nil
+}
+
+// MigrateCacheConfig updates cache middleware configuration fields
+func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		reConfig := regexp.MustCompile(`cache\.Config{[^}]*}`)
+		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
+			s = strings.ReplaceAll(s, "Store:", "Storage:")
+			s = strings.ReplaceAll(s, "Key:", "KeyGenerator:")
+			return s
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate cache configs: %w", err)
+	}
+
+	cmd.Println("Migrating cache middleware configs")
+	return nil
+}
+
+// MigrateSessionExtractor updates session KeyLookup to the new Extractor pattern
+func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*([^,\n]+)(,?)(\n?)`)
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return reKeyLookup.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reKeyLookup.FindStringSubmatch(s)
+			indent := sub[1]
+			val := strings.TrimSpace(sub[2])
+			comma := sub[3]
+			newline := sub[4]
+
+			if uq, err := strconv.Unquote(val); err == nil {
+				val = uq
+			}
+
+			parts := strings.Split(val, ",")
+			var extractors []string
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				switch {
+				case strings.HasPrefix(p, "cookie:"):
+					extractors = append(extractors, fmt.Sprintf("session.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
+				case strings.HasPrefix(p, "header:"):
+					extractors = append(extractors, fmt.Sprintf("session.FromHeader(%q)", strings.TrimPrefix(p, "header:")))
+				case strings.HasPrefix(p, "query:"):
+					extractors = append(extractors, fmt.Sprintf("session.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
+				default:
+					return ""
+				}
+			}
+
+			if len(extractors) == 0 {
+				return ""
+			}
+
+			extractor := extractors[0]
+			if len(extractors) > 1 {
+				extractor = fmt.Sprintf("session.Chain(%s)", strings.Join(extractors, ", "))
+			}
+
+			return fmt.Sprintf("%sExtractor: %s%s%s", indent, extractor, comma, newline)
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate session extractor config: %w", err)
+	}
+
+	cmd.Println("Migrating session KeyLookup config")
 	return nil
 }
