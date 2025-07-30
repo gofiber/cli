@@ -729,7 +729,7 @@ func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	reCtxUser := regexp.MustCompile(`\s*ContextUsername:\s*[^,]+,?\n`)
 	reCtxPass := regexp.MustCompile(`\s*ContextPassword:\s*[^,]+,?\n`)
 	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
-	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`) 
+	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`)
 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reCtxUser.ReplaceAllString(content, "")
