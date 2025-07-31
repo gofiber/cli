@@ -760,6 +760,33 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating app.Test usages")
 }
 
+func Test_MigrateAppTestConfig_DisableTimeout(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtestcfg")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "net/http/httptest"
+)
+func main() {
+    app := fiber.New()
+    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+    _ = app.Test(req, -1)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `app.Test(req, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})`)
+	assert.Contains(t, buf.String(), "Migrating app.Test usages")
+}
+
 func Test_MigrateMiddlewareLocals(t *testing.T) {
 	t.Parallel()
 

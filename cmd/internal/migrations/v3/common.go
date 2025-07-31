@@ -631,7 +631,17 @@ func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		re := regexp.MustCompile(`\.Test\(([^,\n]+),\s*([^\n)]+)\)`)
-		return re.ReplaceAllString(content, `.Test($1, fiber.TestConfig{Timeout: $2})`)
+		return re.ReplaceAllStringFunc(content, func(m string) string {
+			sub := re.FindStringSubmatch(m)
+			if len(sub) < 3 {
+				return m
+			}
+			arg := strings.TrimSpace(sub[2])
+			if arg == "-1" {
+				return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})", sub[1])
+			}
+			return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: %s})", sub[1], arg)
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate app.Test calls: %w", err)
