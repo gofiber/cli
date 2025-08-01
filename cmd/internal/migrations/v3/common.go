@@ -775,6 +775,21 @@ func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
+// MigrateBasicauthStorePassword comments usages of the removed StorePassword option
+// in basicauth middleware configuration.
+func MigrateBasicauthStorePassword(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	re := regexp.MustCompile(`(\s*)StorePassword:\s*([^,\n]+)(,?)`)
+	err := internal.ChangeFileContent(cwd, func(content string) string {
+		return re.ReplaceAllString(content, `$1// TODO: StorePassword removed ($2)$3`)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to migrate basicauth StorePassword: %w", err)
+	}
+
+	cmd.Println("Migrating basicauth StorePassword option")
+	return nil
+}
+
 // MigrateCacheConfig updates cache middleware configuration fields
 func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
