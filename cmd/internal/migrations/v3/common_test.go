@@ -171,8 +171,34 @@ func handler(c fiber.Ctx) error {
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".RequestCtx()")
-	assert.Contains(t, content, ".Context()")
-	assert.Contains(t, content, ".SetContext(")
+	assert.NotContains(t, content, ".Context()")
+	assert.Contains(t, content, `// TODO: SetUserContext was removed, please migrate manually: c.SetUserContext(ctx)`)
+	assert.Contains(t, content, "uc := c")
+	assert.Contains(t, buf.String(), "Migrating context methods")
+}
+
+func Test_MigrateContextMethods_SetUserContextAssignment(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtest2")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(ctx fiber.Ctx) error {
+    res := ctx.SetUserContext(ctx.Context())
+    _ = res
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `// TODO: SetUserContext was removed, please migrate manually: res := ctx.SetUserContext(ctx.RequestCtx())`)
+	assert.NotContains(t, content, `.UserContext()`)
 	assert.Contains(t, buf.String(), "Migrating context methods")
 }
 

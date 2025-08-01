@@ -98,14 +98,23 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 // MigrateContextMethods updates context related methods to the new names
 func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	replacer := strings.NewReplacer(
-		".Context()", ".RequestCtx()",
-		".UserContext()", ".Context()",
-		".SetUserContext(", ".SetContext(", // TODO: check if this is correct
-	)
-
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return replacer.Replace(content)
+		// UserContext() removed - Ctx implements context.Context
+		reUserCtx := regexp.MustCompile(`(\w+)\.UserContext\(\)`)
+		content = reUserCtx.ReplaceAllString(content, `$1`)
+
+		// SetUserContext removed - comment out the call
+		reSetUserCtx := regexp.MustCompile(`(?m)^(\s*)(.*\.SetUserContext\([^\n]*\).*)$`)
+		content = reSetUserCtx.ReplaceAllString(content, `$1// TODO: SetUserContext was removed, please migrate manually: $2`)
+
+		// old Context() returned fasthttp.RequestCtx
+		reReqCtx := regexp.MustCompile(`(\w+)\.Context\(\)`)
+		content = reReqCtx.ReplaceAllString(content, `$1.RequestCtx()`)
+
+		// remaining Context() usages return context.Context -> remove call
+		content = strings.ReplaceAll(content, ".Context()", "")
+
+		return content
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate context methods: %w", err)
