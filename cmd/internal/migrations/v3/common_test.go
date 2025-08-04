@@ -861,6 +861,44 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating healthcheck middleware configs")
 }
 
+func Test_MigrateHealthcheckConfig_StandaloneConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mhealthcfg")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/healthcheck"
+)
+func check(a, b int) bool { return a > b }
+var cfg = healthcheck.Config{
+    LivenessProbe: func(c fiber.Ctx) bool {
+        return true
+    },
+    ReadinessProbe: func(c fiber.Ctx) bool {
+        return check(1, 2)
+    },
+    LivenessEndpoint: "/live",
+    ReadinessEndpoint: "/ready",
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateHealthcheckConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "healthcheck.Config{")
+	assert.Contains(t, content, "Probe: func(c fiber.Ctx) bool {")
+	assert.NotContains(t, content, "ReadinessProbe")
+	assert.NotContains(t, content, "LivenessEndpoint")
+	assert.NotContains(t, content, "ReadinessEndpoint")
+	assert.Contains(t, buf.String(), "Migrating healthcheck middleware configs")
+}
+
 func Test_MigrateAppTestConfig(t *testing.T) {
 	t.Parallel()
 

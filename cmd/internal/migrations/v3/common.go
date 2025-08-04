@@ -19,6 +19,69 @@ var (
 	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
 
+// removeConfigField deletes a field assignment from a struct literal. It
+// handles nested parentheses and braces so it can process complex values like
+// multi-line function literals or function calls with arguments that contain
+// commas.
+func removeConfigField(src, field string) string {
+	re := regexp.MustCompile(`(?m)^\s*` + field + `:\s*`)
+	for {
+		loc := re.FindStringIndex(src)
+		if loc == nil {
+			break
+		}
+		start := loc[0]
+		i := loc[1]
+		depth := 0
+		inString := false
+		for i < len(src) {
+			ch := src[i]
+			if inString {
+				if ch == '\\' && i+1 < len(src) {
+					i += 2
+					continue
+				}
+				if ch == '"' {
+					inString = false
+				}
+			} else {
+				switch ch {
+				case '"':
+					inString = true
+				case '(', '{', '[':
+					depth++
+				case ')', '}', ']':
+					if depth > 0 {
+						depth--
+					}
+				case ',':
+					if depth == 0 {
+						i++
+						for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+							i++
+						}
+						if i < len(src) && src[i] == '\n' {
+							i++
+						}
+						src = src[:start] + src[i:]
+						goto nextField
+					}
+				case '\n':
+					if depth == 0 {
+						i++
+						src = src[:start] + src[i:]
+						goto nextField
+					}
+				}
+			}
+			i++
+		}
+		src = src[:start]
+	nextField:
+	}
+	return src
+}
+
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	sigReplacer := strings.NewReplacer("*fiber.Ctx", "fiber.Ctx")
 
@@ -606,21 +669,15 @@ func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 				body = reRE.ReplaceAllString(body, "")
 
 				// Liveness config
-				bodyL := body
-				reRP := regexp.MustCompile(`(?m)\s*ReadinessProbe:\s*[^,\n}]+,?`)
-				bodyL = reRP.ReplaceAllString(bodyL, "")
-				reLP := regexp.MustCompile(`LivenessProbe:\s*([^,\n}]+)`) // rename to Probe
-				bodyL = reLP.ReplaceAllString(bodyL, "Probe: $1")
+				bodyL := removeConfigField(body, "ReadinessProbe")
+				bodyL = strings.ReplaceAll(bodyL, "LivenessProbe:", "Probe:")
 				bodyL = strings.TrimSpace(bodyL)
 				bodyL = strings.TrimSuffix(bodyL, ",")
 				lCfg = strings.TrimSpace("healthcheck.Config{" + bodyL + "}")
 
 				// Readiness config
-				bodyR := body
-				reLP2 := regexp.MustCompile(`(?m)\s*LivenessProbe:\s*[^,\n}]+,?`)
-				bodyR = reLP2.ReplaceAllString(bodyR, "")
-				reRP2 := regexp.MustCompile(`ReadinessProbe:\s*([^,\n}]+)`)
-				bodyR = reRP2.ReplaceAllString(bodyR, "Probe: $1")
+				bodyR := removeConfigField(body, "LivenessProbe")
+				bodyR = strings.ReplaceAll(bodyR, "ReadinessProbe:", "Probe:")
 				bodyR = strings.TrimSpace(bodyR)
 				bodyR = strings.TrimSuffix(bodyR, ",")
 				rCfg = strings.TrimSpace("healthcheck.Config{" + bodyR + "}")
@@ -643,12 +700,9 @@ func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 
 		// Adapt remaining config structures outside of app.Use replacements
 		content = strings.ReplaceAll(content, "LivenessProbe:", "Probe:")
-		re := regexp.MustCompile(`\s*ReadinessProbe:\s*[^,]+,?\n?`)
-		content = re.ReplaceAllString(content, "")
-		re = regexp.MustCompile(`\s*LivenessEndpoint:\s*[^,]+,?\n?`)
-		content = re.ReplaceAllString(content, "")
-		re = regexp.MustCompile(`\s*ReadinessEndpoint:\s*[^,]+,?\n?`)
-		content = re.ReplaceAllString(content, "")
+		content = removeConfigField(content, "ReadinessProbe")
+		content = removeConfigField(content, "LivenessEndpoint")
+		content = removeConfigField(content, "ReadinessEndpoint")
 		return content
 	})
 	if err != nil {
