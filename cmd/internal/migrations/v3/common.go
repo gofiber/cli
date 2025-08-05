@@ -19,6 +19,80 @@ var (
 	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
 
+// skipCommaSuffix advances the index past a comma and any trailing
+// whitespace or newline characters.
+func skipCommaSuffix(src string, i int) int {
+	i++
+	for i < len(src) {
+		switch src[i] {
+		case ' ', '\t':
+			i++
+		case '\n':
+			return i + 1
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// removeConfigField deletes a field assignment from a struct literal. It
+// handles nested parentheses and braces so it can process complex values like
+// multi-line function literals or function calls with arguments that contain
+// commas.
+func removeConfigField(src, field string) string {
+	re := regexp.MustCompile(`(?m)^\s*` + field + `:\s*`)
+	for {
+		loc := re.FindStringIndex(src)
+		if loc == nil {
+			break
+		}
+		start := loc[0]
+		i := loc[1]
+		depth := 0
+		inString := false
+		for i < len(src) {
+			ch := src[i]
+			if inString {
+				if ch == '\\' && i+1 < len(src) {
+					i += 2
+					continue
+				}
+				if ch == '"' {
+					inString = false
+				}
+			} else {
+				switch ch {
+				case '"':
+					inString = true
+				case '(', '{', '[':
+					depth++
+				case ')', '}', ']':
+					if depth > 0 {
+						depth--
+					}
+				case ',':
+					if depth == 0 {
+						i = skipCommaSuffix(src, i)
+						src = src[:start] + src[i:]
+						goto nextField
+					}
+				case '\n':
+					if depth == 0 {
+						i++
+						src = src[:start] + src[i:]
+						goto nextField
+					}
+				}
+			}
+			i++
+		}
+		src = src[:start]
+	nextField:
+	}
+	return src
+}
+
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	sigReplacer := strings.NewReplacer("*fiber.Ctx", "fiber.Ctx")
 
@@ -563,20 +637,83 @@ func MigrateEnvVarConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 	return nil
 }
 
-// MigrateHealthcheckConfig updates healthcheck middleware configuration fields
+// MigrateHealthcheckConfig updates healthcheck middleware configuration and usage
+// to the new Fiber v3 handler based API. It replaces the old middleware usage
+//
+//	app.Use(healthcheck.New(...))
+//
+// with explicit registrations using `app.Get` on the liveness and readiness
+// endpoints and adapts the configuration structure.
 func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
+		// Replace app.Use(healthcheck.New(...)) with app.Get registrations
+		reUse := regexp.MustCompile(`(?m)^(\s*)(\w+)\.Use\(\s*healthcheck\.New\((?s:(.*))\)\s*\)`)
+		content = reUse.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reUse.FindStringSubmatch(s)
+			indent := sub[1]
+			appVar := sub[2]
+			args := strings.TrimSpace(sub[3])
+
+			lEndpoint := "healthcheck.LivenessEndpoint"
+			rEndpoint := "healthcheck.ReadinessEndpoint"
+			lCfg := args
+			rCfg := args
+
+			if strings.HasPrefix(args, "healthcheck.Config") {
+				reBody := regexp.MustCompile(`healthcheck\.Config\{(?s:(.*))\}`)
+				bodyMatch := reBody.FindStringSubmatch(args)
+				body := ""
+				if len(bodyMatch) > 1 {
+					body = bodyMatch[1]
+				}
+
+				reLE := regexp.MustCompile(`(?m)\s*LivenessEndpoint:\s*([^,\n}]+),?`)
+				if m := reLE.FindStringSubmatch(body); len(m) > 1 {
+					lEndpoint = strings.TrimSpace(m[1])
+				}
+				body = reLE.ReplaceAllString(body, "")
+
+				reRE := regexp.MustCompile(`(?m)\s*ReadinessEndpoint:\s*([^,\n}]+),?`)
+				if m := reRE.FindStringSubmatch(body); len(m) > 1 {
+					rEndpoint = strings.TrimSpace(m[1])
+				}
+				body = reRE.ReplaceAllString(body, "")
+
+				// Liveness config
+				bodyL := removeConfigField(body, "ReadinessProbe")
+				bodyL = strings.ReplaceAll(bodyL, "LivenessProbe:", "Probe:")
+				bodyL = strings.TrimSpace(bodyL)
+				bodyL = strings.TrimSuffix(bodyL, ",")
+				lCfg = strings.TrimSpace("healthcheck.Config{" + bodyL + "}")
+
+				// Readiness config
+				bodyR := removeConfigField(body, "LivenessProbe")
+				bodyR = strings.ReplaceAll(bodyR, "ReadinessProbe:", "Probe:")
+				bodyR = strings.TrimSpace(bodyR)
+				bodyR = strings.TrimSuffix(bodyR, ",")
+				rCfg = strings.TrimSpace("healthcheck.Config{" + bodyR + "}")
+			}
+
+			makeCall := func(cfg string) string {
+				cfg = strings.TrimSpace(cfg)
+				cfg = strings.TrimSuffix(cfg, ",")
+				cfg = strings.TrimSpace(cfg)
+				if cfg == "" || cfg == "healthcheck.Config{}" {
+					return "healthcheck.New()"
+				}
+				return fmt.Sprintf("healthcheck.New(%s)", cfg)
+			}
+
+			lLine := fmt.Sprintf("%s%s.Get(%s, %s)", indent, appVar, lEndpoint, makeCall(lCfg))
+			rLine := fmt.Sprintf("%s%s.Get(%s, %s)", indent, appVar, rEndpoint, makeCall(rCfg))
+			return lLine + "\n" + rLine
+		})
+
+		// Adapt remaining config structures outside of app.Use replacements
 		content = strings.ReplaceAll(content, "LivenessProbe:", "Probe:")
-
-		re := regexp.MustCompile(`\s*ReadinessProbe:\s*[^,]+,?\n`)
-		content = re.ReplaceAllString(content, "")
-
-		re = regexp.MustCompile(`\s*LivenessEndpoint:\s*[^,]+,?\n?`)
-		content = re.ReplaceAllString(content, "")
-
-		re = regexp.MustCompile(`\s*ReadinessEndpoint:\s*[^,]+,?\n?`)
-		content = re.ReplaceAllString(content, "")
-
+		content = removeConfigField(content, "ReadinessProbe")
+		content = removeConfigField(content, "LivenessEndpoint")
+		content = removeConfigField(content, "ReadinessEndpoint")
 		return content
 	})
 	if err != nil {
