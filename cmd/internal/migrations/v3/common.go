@@ -19,6 +19,23 @@ var (
 	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
 
+// skipCommaSuffix advances the index past a comma and any trailing
+// whitespace or newline characters.
+func skipCommaSuffix(src string, i int) int {
+	i++
+	for i < len(src) {
+		switch src[i] {
+		case ' ', '\t':
+			i++
+		case '\n':
+			return i + 1
+		default:
+			return i
+		}
+	}
+	return i
+}
+
 // removeConfigField deletes a field assignment from a struct literal. It
 // handles nested parentheses and braces so it can process complex values like
 // multi-line function literals or function calls with arguments that contain
@@ -56,13 +73,7 @@ func removeConfigField(src, field string) string {
 					}
 				case ',':
 					if depth == 0 {
-						i++
-						for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
-							i++
-						}
-						if i < len(src) && src[i] == '\n' {
-							i++
-						}
+						i = skipCommaSuffix(src, i)
 						src = src[:start] + src[i:]
 						goto nextField
 					}
