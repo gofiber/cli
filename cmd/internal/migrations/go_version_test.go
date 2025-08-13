@@ -46,12 +46,12 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
-	fn := migrations.MigrateGoVersion("1.23")
+	fn := migrations.MigrateGoVersion("1.25")
 	require.NoError(t, fn(cmd, dir, nil, nil))
 
 	content := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, content, "go 1.23")
-	assert.Contains(t, buf.String(), "1.23")
+	assert.Contains(t, content, "go 1.25")
+	assert.Contains(t, buf.String(), "1.25")
 
 	vendorContent := readFile(t, filepath.Join(vendor, "go.mod"))
 	assert.Contains(t, vendorContent, "go 1.10")
