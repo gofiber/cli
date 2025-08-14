@@ -6,7 +6,7 @@ Fiber Command Line Interface
 
 ## Installation
 
-Requires Go 1.24 or later.
+Requires Go 1.25 or later.
 
 ```bash
 go install github.com/gofiber/cli/fiber@latest
