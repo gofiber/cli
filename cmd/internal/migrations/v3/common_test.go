@@ -1300,3 +1300,99 @@ var _ = session.New(session.Config{
 	assert.NotContains(t, content, "KeyLookup")
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
+
+func Test_MigrateKeyAuthConfig_HeaderAuth(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mkeyauth_header")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/keyauth"
+var _ = keyauth.New(keyauth.Config{
+    KeyLookup: "header:Authorization",
+    AuthScheme: "Bearer",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateKeyAuthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.NotContains(t, content, "AuthScheme")
+	assert.Contains(t, content, `Extractor: keyauth.FromAuthHeader("Authorization", "Bearer")`)
+	assert.Contains(t, buf.String(), "Migrating keyauth middleware configs")
+}
+
+func Test_MigrateKeyAuthConfig_Cookie(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mkeyauth_cookie")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/keyauth"
+var _ = keyauth.New(keyauth.Config{
+    KeyLookup: "cookie:token",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateKeyAuthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, content, `Extractor: keyauth.FromCookie("token")`)
+	assert.Contains(t, buf.String(), "Migrating keyauth middleware configs")
+}
+
+func Test_MigrateKeyAuthConfig_Chain(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mkeyauth_chain")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/keyauth"
+var _ = keyauth.New(keyauth.Config{
+    KeyLookup: "query:token,header:X-API-Key",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateKeyAuthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, content, `Extractor: keyauth.Chain(keyauth.FromQuery("token"), keyauth.FromHeader("X-API-Key"))`)
+	assert.Contains(t, buf.String(), "Migrating keyauth middleware configs")
+}
+
+func Test_MigrateKeyAuthConfig_Unknown(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mkeyauth_unknown")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/keyauth"
+var _ = keyauth.New(keyauth.Config{
+    KeyLookup: "unknown:token",
+    AuthScheme: "Bearer",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateKeyAuthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.NotContains(t, content, "AuthScheme")
+	assert.NotContains(t, content, "Extractor")
+	assert.Contains(t, buf.String(), "Migrating keyauth middleware configs")
+}
