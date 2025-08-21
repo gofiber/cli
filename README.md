@@ -61,6 +61,41 @@ fiber dev [flags]
   -t, --target string           target path for go build (default ".")
 ```
 
+## fiber serve
+
+### Synopsis
+
+Serve static files
+
+See the [File server guide](docs/guide/fileserver.md) for more details.
+
+```bash
+fiber serve [flags]
+```
+
+### Options
+
+```text
+      --addr string      address to listen on (default ":3000")
+      --browse           enable directory browsing
+      --cache duration   cache duration (default 10s)
+      --cert string      TLS certificate file
+      --compress         enable compression
+      --cors             enable CORS middleware
+      --dir string       directory to serve (default ".")
+      --download         force file downloads
+      --health           enable health check endpoints (default true)
+      --index string     comma-separated list of index files (default "index.html")
+      --key string       TLS private key file
+      --logger           enable logger middleware (default true)
+      --maxage int       Cache-Control max-age header in seconds
+      --path string      request path to serve (default "/")
+      --prefork          enable prefork mode
+      --quiet            disable startup message
+      --range            enable byte range requests
+  -h, --help             help for serve
+```
+
 ## fiber new
 
 ### Synopsis

@@ -72,7 +72,7 @@ func init() {
 	rootCmd.Long = getLongDescription()
 
 	rootCmd.AddCommand(
-		versionCmd, newCmd, devCmd, upgradeCmd, migrateCmd,
+		versionCmd, newCmd, devCmd, serveCmd, upgradeCmd, migrateCmd,
 	)
 }
 
