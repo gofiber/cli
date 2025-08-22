@@ -78,7 +78,18 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		return fmt.Errorf("cannot get current working directory: %w", err)
 	}
 
-	err = migrations.DoMigration(cmd, wd, currentVersion, targetVersion)
+	migrateFrom := currentVersion
+	migrateFromS := currentVersionS
+	if opts.Force && !targetVersion.GreaterThan(currentVersion) {
+		prevMajor := targetVersion.Major() - 1
+		migrateFrom, err = semver.NewVersion(fmt.Sprintf("%d.0.0", prevMajor))
+		if err != nil {
+			return fmt.Errorf("invalid previous major version %d: %w", prevMajor, err)
+		}
+		migrateFromS = migrateFrom.String()
+	}
+
+	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion)
 	if err != nil {
 		return fmt.Errorf("migration failed %w", err)
 	}
@@ -89,7 +100,7 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 
-	msg := fmt.Sprintf("Migration from Fiber %s to %s", currentVersionS, opts.TargetVersionS)
+	msg := fmt.Sprintf("Migration from Fiber %s to %s", migrateFromS, opts.TargetVersionS)
 	cmd.Println(termenv.String(msg).
 		Foreground(termenv.ANSIBrightBlue))
 
