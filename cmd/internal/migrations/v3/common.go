@@ -93,6 +93,133 @@ func removeConfigField(src, field string) string {
 	return src
 }
 
+// splitArgs splits a comma-separated argument list into its individual arguments
+// while respecting nested parentheses, brackets, and braces as well as quoted
+// strings. It returns the trimmed arguments without altering inner spacing.
+func splitArgs(src string) []string {
+	var args []string
+	depthPar, depthBrk, depthBrc := 0, 0, 0
+	inStr := false
+	var quote byte
+	start := 0
+
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		if inStr {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quote {
+				inStr = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"', '\'', '`':
+			inStr = true
+			quote = ch
+		case '(':
+			depthPar++
+		case ')':
+			if depthPar > 0 {
+				depthPar--
+			}
+		case '[':
+			depthBrk++
+		case ']':
+			if depthBrk > 0 {
+				depthBrk--
+			}
+		case '{':
+			depthBrc++
+		case '}':
+			if depthBrc > 0 {
+				depthBrc--
+			}
+		case ',':
+			if depthPar == 0 && depthBrk == 0 && depthBrc == 0 {
+				args = append(args, strings.TrimSpace(src[start:i]))
+				start = i + 1
+			}
+		}
+	}
+
+	args = append(args, strings.TrimSpace(src[start:]))
+	return args
+}
+
+// extractCall returns the index just after the closing parenthesis of the call
+// that starts at start and the argument substring within the parentheses. It
+// assumes that start points to the first character after the opening
+// parenthesis.
+func extractCall(src string, start int) (int, string) {
+	depth := 1
+	inStr := false
+	var quote byte
+
+	for i := start; i < len(src); i++ {
+		ch := src[i]
+		if inStr {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quote {
+				inStr = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"', '\'', '`':
+			inStr = true
+			quote = ch
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i + 1, src[start:i]
+			}
+		}
+	}
+	return len(src), src[start:]
+}
+
+// replaceCall finds invocations of name within src and allows custom
+// replacement based on the parsed arguments. The repl function receives the
+// original call substring and the slice of parsed arguments and must return the
+// replacement text (which may be the original call if no change is needed).
+func replaceCall(src, name string, repl func(call string, args []string) string) string {
+	re := regexp.MustCompile(regexp.QuoteMeta(name) + `\(`)
+	matches := re.FindAllStringIndex(src, -1)
+	if len(matches) == 0 {
+		return src
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		if _, err := b.WriteString(src[last:m[0]]); err != nil {
+			return src
+		}
+		start := m[1]
+		end, inner := extractCall(src, start)
+		call := src[m[0]:end]
+		args := splitArgs(inner)
+		if _, err := b.WriteString(repl(call, args)); err != nil {
+			return src
+		}
+		last = end
+	}
+	if _, err := b.WriteString(src[last:]); err != nil {
+		return src
+	}
+	return b.String()
+}
+
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	sigReplacer := strings.NewReplacer("*fiber.Ctx", "fiber.Ctx")
 
@@ -231,10 +358,14 @@ func MigrateMount(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 
 // MigrateAddMethod adapts the Add method signature
 func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	re := regexp.MustCompile(`\.Add\(\s*([^,\n]+)\s*,`)
-
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return re.ReplaceAllString(content, ".Add([]string{$1},")
+		return replaceCall(content, ".Add", func(call string, args []string) string {
+			if len(args) < 2 {
+				return call
+			}
+			args[0] = fmt.Sprintf("[]string{%s}", args[0])
+			return fmt.Sprintf(".Add(%s)", strings.Join(args, ", "))
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Add method calls: %w", err)
@@ -497,50 +628,43 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 			return content
 		}
 
-		reWithCfg := regexp.MustCompile(`\.Listen\(([^,]+),\s*fiber.ListenConfig\{([^}]*)\}\)`)
-		content = reWithCfg.ReplaceAllStringFunc(content, func(s string) string {
-			sub := reWithCfg.FindStringSubmatch(s)
-			addr := sub[1]
-			cfg := strings.TrimSpace(sub[2])
-
-			if disableStartup != "" && !strings.Contains(cfg, "DisableStartupMessage:") {
-				if len(cfg) > 0 && !strings.HasSuffix(cfg, ",") {
-					cfg += ","
+		return replaceCall(content, ".Listen", func(call string, args []string) string {
+			if len(args) == 0 {
+				return call
+			}
+			if len(args) == 2 && strings.Contains(args[1], "fiber.ListenConfig") {
+				cfg := strings.TrimPrefix(args[1], "fiber.ListenConfig{")
+				cfg = strings.TrimSuffix(cfg, "}")
+				if disableStartup != "" && !strings.Contains(cfg, "DisableStartupMessage:") {
+					if len(strings.TrimSpace(cfg)) > 0 {
+						cfg += ","
+					}
+					cfg += " DisableStartupMessage: " + disableStartup
 				}
-				cfg += " DisableStartupMessage: " + disableStartup + ","
-			}
-			if enablePrint != "" && !strings.Contains(cfg, "EnablePrintRoutes:") {
-				if len(cfg) > 0 && !strings.HasSuffix(cfg, ",") {
-					cfg += ","
+				if enablePrint != "" && !strings.Contains(cfg, "EnablePrintRoutes:") {
+					if len(strings.TrimSpace(cfg)) > 0 {
+						cfg += ","
+					}
+					cfg += " EnablePrintRoutes: " + enablePrint
 				}
-				cfg += " EnablePrintRoutes: " + enablePrint + ","
+				cfg = strings.TrimSuffix(strings.TrimSpace(cfg), ",")
+				return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", args[0], cfg)
 			}
 
-			cfg = strings.TrimSuffix(cfg, ",")
-			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, cfg)
+			if len(args) == 1 {
+				fields := ""
+				if disableStartup != "" {
+					fields += "DisableStartupMessage: " + disableStartup + ", "
+				}
+				if enablePrint != "" {
+					fields += "EnablePrintRoutes: " + enablePrint + ", "
+				}
+				fields = strings.TrimSuffix(strings.TrimSpace(fields), ",")
+				return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", args[0], fields)
+			}
+
+			return call
 		})
-
-		rePlain := regexp.MustCompile(`\.Listen\(([^,\n)]+)\)`)
-		content = rePlain.ReplaceAllStringFunc(content, func(s string) string {
-			if strings.Contains(s, "fiber.ListenConfig") {
-				return s
-			}
-
-			addr := rePlain.FindStringSubmatch(s)[1]
-			fields := ""
-			if disableStartup != "" {
-				fields += "DisableStartupMessage: " + disableStartup + ", "
-			}
-			if enablePrint != "" {
-				fields += "EnablePrintRoutes: " + enablePrint + ", "
-			}
-			fields = strings.TrimSpace(fields)
-			fields = strings.TrimSuffix(fields, ",")
-
-			return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", addr, fields)
-		})
-
-		return content
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related listen calls: %w", err)
@@ -761,9 +885,13 @@ func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 
 // MigrateTimeoutConfig updates timeout middleware usage to the new Config parameter
 func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	re := regexp.MustCompile(`timeout\.New\(\s*([^,\n]+)\s*,\s*([^\n)]+)\)`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return re.ReplaceAllString(content, `timeout.New($1, timeout.Config{Timeout: $2})`)
+		return replaceCall(content, "timeout.New", func(call string, args []string) string {
+			if len(args) != 2 {
+				return call
+			}
+			return fmt.Sprintf("timeout.New(%s, timeout.Config{Timeout: %s})", args[0], args[1])
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate timeout middleware configs: %w", err)
@@ -776,17 +904,15 @@ func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 // MigrateAppTestConfig updates app.Test calls to use the new TestConfig parameter
 func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`\.Test\(([^,\n]+),\s*([^\n)]+)\)`)
-		return re.ReplaceAllStringFunc(content, func(m string) string {
-			sub := re.FindStringSubmatch(m)
-			if len(sub) < 3 {
-				return m
+		return replaceCall(content, ".Test", func(call string, args []string) string {
+			if len(args) != 2 {
+				return call
 			}
-			arg := strings.TrimSpace(sub[2])
+			arg := strings.TrimSpace(args[1])
 			if arg == "-1" {
-				return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})", sub[1])
+				return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})", args[0])
 			}
-			return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: %s})", sub[1], arg)
+			return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: %s})", args[0], arg)
 		})
 	})
 	if err != nil {
