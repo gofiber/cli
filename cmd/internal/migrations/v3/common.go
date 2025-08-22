@@ -220,6 +220,34 @@ func replaceCall(src, name string, repl func(call string, args []string) string)
 	return b.String()
 }
 
+func addImport(content, path string) string {
+	imp := fmt.Sprintf("%q", path)
+	if strings.Contains(content, imp) {
+		return content
+	}
+
+	if idx := strings.Index(content, "import (\n"); idx != -1 {
+		idx += len("import (\n")
+		return content[:idx] + "\t" + imp + "\n" + content[idx:]
+	}
+
+	re := regexp.MustCompile(`(?m)^import\s+[^\(\n]+`)
+	if loc := re.FindStringIndex(content); loc != nil {
+		existing := strings.TrimSpace(content[loc[0]:loc[1]])
+		existing = strings.TrimPrefix(existing, "import")
+		block := "import (\n\t" + existing + "\n\t" + imp + "\n)"
+		return content[:loc[0]] + block + content[loc[1]:]
+	}
+
+	rePkg := regexp.MustCompile(`(?m)^package\s+\w+`)
+	if loc := rePkg.FindStringIndex(content); loc != nil {
+		insert := loc[1]
+		return content[:insert] + "\n\nimport " + imp + "\n" + content[insert:]
+	}
+
+	return content
+}
+
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	sigReplacer := strings.NewReplacer("*fiber.Ctx", "fiber.Ctx")
 
@@ -552,7 +580,11 @@ func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 		content = strings.ReplaceAll(content, "utils.GetString", "utils.ToString")
 		content = strings.ReplaceAll(content, "utils.GetBytes", "utils.CopyBytes")
 		content = strings.ReplaceAll(content, "utils.ImmutableString", "string")
-		content = strings.ReplaceAll(content, "utils.AssertEqual", "assert.Equal")
+
+		if strings.Contains(content, "utils.AssertEqual") {
+			content = strings.ReplaceAll(content, "utils.AssertEqual", "assert.Equal")
+			content = addImport(content, "github.com/stretchr/testify/assert")
+		}
 
 		return content
 	})
