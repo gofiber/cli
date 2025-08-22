@@ -273,6 +273,31 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating Add method calls")
 }
 
+func Test_MigrateAddMethod_NestedCall(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maddnested")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func merge(a, b string) string { return a + b }
+func main() {
+    app := fiber.New()
+    app.Add(merge("GE", "T"), "/foo", func(c fiber.Ctx) error { return nil })
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `Add([]string{merge("GE", "T")}, "/foo"`)
+	assert.Contains(t, buf.String(), "Migrating Add method calls")
+}
+
 func Test_MigrateMimeConstants(t *testing.T) {
 	t.Parallel()
 
@@ -577,6 +602,44 @@ func main() {
 	assert.Contains(t, content2, "EnablePrefork: true")
 	assert.Contains(t, content2, "DisableStartupMessage: true")
 	assert.Contains(t, content2, "EnablePrintRoutes: true")
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}
+
+func Test_MigrateConfigListenerFields_NestedAddr(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf3")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file1 := filepath.Join(dir, "app.go")
+	require.NoError(t, os.WriteFile(file1, []byte(`package main
+import "github.com/gofiber/fiber/v2"
+func newApp() *fiber.App {
+    return fiber.New(fiber.Config{
+        DisableStartupMessage: true,
+    })
+}`), 0o600))
+
+	file2 := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(file2, []byte(`package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "net"
+)
+func main() {
+    app := newApp()
+    app.Listen(net.JoinHostPort("localhost", "3000"))
+}`), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content := readFile(t, file1)
+	assert.NotContains(t, content, "DisableStartupMessage")
+	content2 := readFile(t, file2)
+	assert.Contains(t, content2, `app.Listen(net.JoinHostPort("localhost", "3000"), fiber.ListenConfig{DisableStartupMessage: true})`)
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
 
@@ -954,6 +1017,33 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating app.Test usages")
 }
 
+func Test_MigrateAppTestConfig_NoSecondArg(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtestcfgsingle")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "net/http/httptest"
+)
+func main() {
+    app := fiber.New()
+    _, _ = app.Test(httptest.NewRequest("GET", "/", nil))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `app.Test(httptest.NewRequest("GET", "/", nil))`)
+	assert.NotContains(t, content, "fiber.TestConfig")
+	assert.Contains(t, buf.String(), "Migrating app.Test usages")
+}
+
 func Test_MigrateMiddlewareLocals(t *testing.T) {
 	t.Parallel()
 
@@ -1141,6 +1231,31 @@ var _ = timeout.New(func(c fiber.Ctx) error { return nil }, 2*time.Second)`)
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `timeout.New(func(c fiber.Ctx) error { return nil }, timeout.Config{Timeout: 2*time.Second})`)
+	assert.Contains(t, buf.String(), "Migrating timeout middleware configs")
+}
+
+func Test_MigrateTimeoutConfig_NestedHandler(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtimeoutnested")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/timeout"
+    "time"
+)
+func wrap(a, b string) fiber.Handler { return func(c fiber.Ctx) error { return nil } }
+var _ = timeout.New(wrap("a", "b"), 2*time.Second)`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateTimeoutConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `timeout.New(wrap("a", "b"), timeout.Config{Timeout: 2*time.Second})`)
 	assert.Contains(t, buf.String(), "Migrating timeout middleware configs")
 }
 
