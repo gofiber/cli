@@ -47,6 +47,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateCORSConfig,
 			v3migrations.MigrateCSRFConfig,
 			v3migrations.MigrateMonitorImport,
+			v3migrations.MigrateUtilsImport,
 			v3migrations.MigrateHealthcheckConfig,
 			v3migrations.MigrateProxyTLSConfig,
 			v3migrations.MigrateAppTestConfig,
