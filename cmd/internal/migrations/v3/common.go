@@ -202,15 +202,21 @@ func replaceCall(src, name string, repl func(call string, args []string) string)
 	var b strings.Builder
 	last := 0
 	for _, m := range matches {
-		b.WriteString(src[last:m[0]])
+		if _, err := b.WriteString(src[last:m[0]]); err != nil {
+			return src
+		}
 		start := m[1]
 		end, inner := extractCall(src, start)
 		call := src[m[0]:end]
 		args := splitArgs(inner)
-		b.WriteString(repl(call, args))
+		if _, err := b.WriteString(repl(call, args)); err != nil {
+			return src
+		}
 		last = end
 	}
-	b.WriteString(src[last:])
+	if _, err := b.WriteString(src[last:]); err != nil {
+		return src
+	}
 	return b.String()
 }
 
