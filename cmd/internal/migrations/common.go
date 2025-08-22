@@ -5,7 +5,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -13,16 +12,14 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-var pkgRegex = regexp.MustCompile(`(github\.com\/gofiber\/fiber\/)(v\d+)( *?)(v[\w.-]+)`)
+var (
+	pkgRegex       = regexp.MustCompile(`(github\.com\/gofiber\/fiber\/)(v\d+)( *?)(v[\w.-]+)`)
+	pkgImportRegex = regexp.MustCompile(`github\.com/gofiber/fiber/v\d+`)
+)
 
-func MigrateGoPkgs(cmd *cobra.Command, cwd string, curr, target *semver.Version) error {
-	pkgReplacer := strings.NewReplacer(
-		"github.com/gofiber/fiber/v"+strconv.FormatUint(curr.Major(), 10),
-		"github.com/gofiber/fiber/v"+strconv.FormatUint(target.Major(), 10),
-	)
-
+func MigrateGoPkgs(cmd *cobra.Command, cwd string, _ *semver.Version, target *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return pkgReplacer.Replace(content)
+		return pkgImportRegex.ReplaceAllString(content, "github.com/gofiber/fiber/v"+strconv.FormatUint(target.Major(), 10))
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Go packages: %w", err)
