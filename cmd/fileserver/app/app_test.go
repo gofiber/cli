@@ -19,7 +19,7 @@ func TestNewAppHealthEndpoints(t *testing.T) {
 	opts := Options{Dir: t.TempDir(), Path: "/", Health: true}
 	app := NewApp(opts)
 
-	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, healthcheck.DefaultLivenessEndpoint, nil))
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, healthcheck.LivenessEndpoint, nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)

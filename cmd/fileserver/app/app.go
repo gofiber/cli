@@ -43,9 +43,9 @@ func NewApp(o Options) *fiber.App {
 	}
 
 	if o.Health {
-		app.Get(healthcheck.DefaultLivenessEndpoint, healthcheck.NewHealthChecker())
-		app.Get(healthcheck.DefaultReadinessEndpoint, healthcheck.NewHealthChecker())
-		app.Get(healthcheck.DefaultStartupEndpoint, healthcheck.NewHealthChecker())
+		app.Get(healthcheck.LivenessEndpoint, healthcheck.New())
+		app.Get(healthcheck.ReadinessEndpoint, healthcheck.New())
+		app.Get(healthcheck.StartupEndpoint, healthcheck.New())
 	}
 
 	cfgStatic := static.Config{
