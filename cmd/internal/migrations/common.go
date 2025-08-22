@@ -15,12 +15,12 @@ import (
 
 var (
 	pkgRegex         = regexp.MustCompile(`(github\.com/gofiber/fiber/)(v\d+)( *?)(v[\w.-]+)`)
-	fiberImportRegex = regexp.MustCompile(`github\.com/gofiber/fiber/v\d+`)
+	fiberImportRegex = regexp.MustCompile(`(^|")github\.com/gofiber/fiber/v\d+`)
 )
 
 func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		replacement := fmt.Sprintf("github.com/gofiber/fiber/v%d", target.Major())
+		replacement := fmt.Sprintf("${1}github.com/gofiber/fiber/v%d", target.Major())
 		return fiberImportRegex.ReplaceAllString(content, replacement)
 	})
 	if err != nil {
