@@ -359,13 +359,60 @@ func MigrateMount(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 // MigrateAddMethod adapts the Add method signature
 func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		return replaceCall(content, ".Add", func(call string, args []string) string {
-			if len(args) < 2 {
-				return call
+		re := regexp.MustCompile(`\.Add\(`)
+		matches := re.FindAllStringIndex(content, -1)
+		if len(matches) == 0 {
+			return content
+		}
+
+		var b strings.Builder
+		last := 0
+		for _, m := range matches {
+			if m[0] < last {
+				continue
 			}
-			args[0] = fmt.Sprintf("[]string{%s}", args[0])
-			return fmt.Sprintf(".Add(%s)", strings.Join(args, ", "))
-		})
+
+			startCall := m[0]
+			if startCall > 0 {
+				if _, err := b.WriteString(content[last:startCall]); err != nil {
+					return content
+				}
+			}
+
+			end, inner := extractCall(content, m[1])
+			identStart := startCall - 1
+			for identStart >= 0 {
+				ch := content[identStart]
+				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+					break
+				}
+				identStart--
+			}
+			ident := content[identStart+1 : startCall]
+
+			switch ident {
+			case "Header", "httpServerActiveRequests":
+				if _, err := b.WriteString(content[startCall:end]); err != nil {
+					return content
+				}
+			default:
+				args := splitArgs(inner)
+				if len(args) >= 2 {
+					args[0] = fmt.Sprintf("[]string{%s}", args[0])
+				}
+				if _, err := b.WriteString(".Add(" + strings.Join(args, ", ") + ")"); err != nil {
+					return content
+				}
+			}
+
+			last = end
+		}
+
+		if _, err := b.WriteString(content[last:]); err != nil {
+			return content
+		}
+
+		return b.String()
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Add method calls: %w", err)
@@ -414,11 +461,13 @@ func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 
 // MigrateCSRFConfig updates csrf middleware configuration fields
 func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	replacer := strings.NewReplacer("Expiration:", "IdleTimeout:")
+	reConfig := regexp.MustCompile(`csrf\.Config{[^}]*}`)
 	reSession := regexp.MustCompile(`\s*SessionKey:\s*[^,]+,?\n`)
 	reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*([^,\n]+)(,?)(\n?)`)
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		content = replacer.Replace(content)
+		content = reConfig.ReplaceAllStringFunc(content, func(s string) string {
+			return strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
+		})
 		content = reSession.ReplaceAllString(content, "")
 
 		content = reKeyLookup.ReplaceAllStringFunc(content, func(s string) string {

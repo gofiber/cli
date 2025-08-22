@@ -298,6 +298,32 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating Add method calls")
 }
 
+func Test_MigrateAddMethod_SkipUnrelated(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maddskip")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+func main() {
+    req.Header.Add("Authorization", "Bearer "+test.Token)
+    c.Response().Header.Add("X-Key", "Value")
+    httpServerActiveRequests.Add(1)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `req.Header.Add("Authorization", "Bearer "+test.Token)`)
+	assert.Contains(t, content, `c.Response().Header.Add("X-Key", "Value")`)
+	assert.Contains(t, content, `httpServerActiveRequests.Add(1)`)
+	assert.NotContains(t, content, "[]string{")
+	assert.Contains(t, buf.String(), "Migrating Add method calls")
+}
+
 func Test_MigrateMimeConstants(t *testing.T) {
 	t.Parallel()
 
@@ -475,6 +501,36 @@ var _ = csrf.New(csrf.Config{
 	assert.NotContains(t, content, "KeyLookup")
 	assert.Contains(t, content, `Extractor: csrf.FromHeader("X-CSRF-Token")`)
 	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
+}
+
+func Test_MigrateCSRFConfig_IgnoresPaseto(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcsrfpaseto")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/o1egl/paseto"
+func main() {
+    payload := &paseto.JSONToken{
+        Audience: pasetoTokenAudience,
+        Jti: tokenID.String(),
+        Subject: pasetoTokenSubject,
+        IssuedAt: timeNow,
+        Expiration: timeNow.Add(duration),
+        NotBefore: timeNow,
+    }
+    _ = payload
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateCSRFConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Expiration:")
+	assert.NotContains(t, content, "IdleTimeout:")
 }
 
 func Test_MigrateMonitorImport(t *testing.T) {

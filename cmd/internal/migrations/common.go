@@ -3,6 +3,7 @@ package migrations
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 
@@ -13,21 +14,21 @@ import (
 )
 
 var (
-	pkgRegex       = regexp.MustCompile(`(github\.com/gofiber/fiber/)(v\d+)( *?)(v[\w.-]+)`)
-	pkgImportRegex = regexp.MustCompile(`(?m)^(\s*(?:[\w.]+\s+)?")github\.com/gofiber/fiber/v\d+("$)`)
+	pkgRegex         = regexp.MustCompile(`(github\.com/gofiber/fiber/)(v\d+)( *?)(v[\w.-]+)`)
+	fiberImportRegex = regexp.MustCompile(`github\.com/gofiber/fiber/v\d+`)
 )
 
 func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		replacement := fmt.Sprintf("${1}github.com/gofiber/fiber/v%d${2}", target.Major())
-		return pkgImportRegex.ReplaceAllString(content, replacement)
+		replacement := fmt.Sprintf("github.com/gofiber/fiber/v%d", target.Major())
+		return fiberImportRegex.ReplaceAllString(content, replacement)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Go packages: %w", err)
 	}
 
 	// get go.mod file
-	modFile := "go.mod"
+	modFile := filepath.Join(cwd, "go.mod")
 	fileContent, err := os.ReadFile(modFile)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", modFile, err)
