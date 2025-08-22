@@ -521,6 +521,26 @@ func MigrateMonitorImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
+func addImport(content, pkg string) string {
+	importStmt := fmt.Sprintf("\"%s\"", pkg)
+	if strings.Contains(content, importStmt) {
+		return content
+	}
+
+	reBlock := regexp.MustCompile(`(?m)^import\s*\(([^)]*)\)`)
+	if reBlock.MatchString(content) {
+		return reBlock.ReplaceAllString(content, fmt.Sprintf("import (\n$1\t%s\n)", importStmt))
+	}
+
+	reSingle := regexp.MustCompile(`(?m)^import\s+([^\n]+)`) // matches single import line
+	if reSingle.MatchString(content) {
+		return reSingle.ReplaceAllString(content, fmt.Sprintf("import (\n\t$1\n\t%s\n)", importStmt))
+	}
+
+	rePkg := regexp.MustCompile(`(?m)^package\s+\w+`)
+	return rePkg.ReplaceAllString(content, fmt.Sprintf("$0\n\nimport (\n\t%s\n)", importStmt))
+}
+
 // MigrateUtilsImport replaces old Fiber utils imports and updates removed helpers
 func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reImport := regexp.MustCompile(`(?m)^(\s*(?:\w+\s+)?)"github\.com/gofiber/fiber/v\d+/utils"$`)
@@ -553,6 +573,9 @@ func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 		content = strings.ReplaceAll(content, "utils.GetBytes", "utils.CopyBytes")
 		content = strings.ReplaceAll(content, "utils.ImmutableString", "string")
 		content = strings.ReplaceAll(content, "utils.AssertEqual", "assert.Equal")
+		if strings.Contains(content, "assert.Equal") {
+			content = addImport(content, "github.com/stretchr/testify/assert")
+		}
 
 		return content
 	})

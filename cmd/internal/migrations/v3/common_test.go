@@ -575,6 +575,7 @@ var (
     _ = utils.GetString([]byte("a"))
     _ = utils.GetBytes("a")
     _ = utils.ImmutableString([]byte("b"))
+    _ = utils.AssertEqual("a", "a")
 )`)
 
 	var buf bytes.Buffer
@@ -583,6 +584,7 @@ var (
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "github.com/gofiber/utils/v2\"")
+	assert.Contains(t, content, "github.com/stretchr/testify/assert")
 	assert.NotContains(t, content, "fiber/v3/utils")
 	assert.NotContains(t, content, "TrimBytes(")
 	assert.NotContains(t, content, "TrimRightBytes(")
@@ -591,6 +593,7 @@ var (
 	assert.NotContains(t, content, "GetString(")
 	assert.NotContains(t, content, "GetBytes(")
 	assert.NotContains(t, content, "ImmutableString(")
+	assert.NotContains(t, content, "utils.AssertEqual")
 	assert.Contains(t, content, "utils.Trim(")
 	assert.Contains(t, content, "utils.TrimRight(")
 	assert.Contains(t, content, "utils.TrimLeft(")
@@ -602,6 +605,7 @@ var (
 	assert.Contains(t, content, "utils.ToString(")
 	assert.Contains(t, content, "utils.CopyBytes(")
 	assert.Contains(t, content, "string([]byte(\"b\"))")
+	assert.Contains(t, content, "assert.Equal")
 	assert.Contains(t, buf.String(), "Migrating utils imports")
 }
 
