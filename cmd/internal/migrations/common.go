@@ -17,7 +17,7 @@ var (
 	pkgImportRegex = regexp.MustCompile(`(?m)^(\s*(?:[\w.]+\s+)?")github\.com/gofiber/fiber/v\d+("$)`)
 )
 
-func MigrateGoPkgs(cmd *cobra.Command, cwd string, _ *semver.Version, target *semver.Version) error {
+func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		replacement := fmt.Sprintf("${1}github.com/gofiber/fiber/v%d${2}", target.Major())
 		return pkgImportRegex.ReplaceAllString(content, replacement)
