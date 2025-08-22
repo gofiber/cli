@@ -162,9 +162,9 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		assert.Contains(t, out, "not greater")
 	})
 
-        t.Run("force", func(t *testing.T) {
-                origExec := execCommand
-                var cmds []*exec.Cmd
+	t.Run("force", func(t *testing.T) {
+		origExec := execCommand
+		var cmds []*exec.Cmd
 		execCommand = func(name string, args ...string) *exec.Cmd {
 			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
 			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
@@ -174,13 +174,13 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		}
 		defer func() { execCommand = origExec }()
 
-                cmd := newMigrateCmd()
-                out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
-                require.NoError(t, err)
-                assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
-                assert.Contains(t, out, "Migrating Go packages")
-                assert.Len(t, cmds, 3)
-        })
+		cmd := newMigrateCmd()
+		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
+		assert.Contains(t, out, "Migrating Go packages")
+		assert.Len(t, cmds, 3)
+	})
 
 	t.Run("force skip go mod", func(t *testing.T) {
 		origExec := execCommand
@@ -194,13 +194,13 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		}
 		defer func() { execCommand = origExec }()
 
-                cmd := newMigrateCmd()
-                out, err := runCobraCmd(cmd, "-t=3.0.0", "-f", "-s")
-                require.NoError(t, err)
-                assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
-                assert.Contains(t, out, "Migrating Go packages")
-                assert.Empty(t, cmds)
-        })
+		cmd := newMigrateCmd()
+		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f", "-s")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
+		assert.Contains(t, out, "Migrating Go packages")
+		assert.Empty(t, cmds)
+	})
 }
 
 func Test_Migrate_ForcePartialV3(t *testing.T) {
@@ -224,13 +224,13 @@ func main() {}`
 	require.NoError(t, os.Chdir(dir))
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
-        cmd := newMigrateCmd()
-        setupCmd()
-        defer teardownCmd()
-        out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
-        require.NoError(t, err)
-        assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
-        assert.Contains(t, out, "Migrating Go packages")
+	cmd := newMigrateCmd()
+	setupCmd()
+	defer teardownCmd()
+	out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
+	assert.Contains(t, out, "Migrating Go packages")
 
 	content := readFileTB(t, filepath.Join(dir, "main.go"))
 	assert.Contains(t, content, "github.com/gofiber/fiber/v3")

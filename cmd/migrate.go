@@ -69,40 +69,40 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		return fmt.Errorf("invalid version for \"%s\": %w", opts.TargetVersionS, err)
 	}
 
-        if !targetVersion.GreaterThan(currentVersion) && !(opts.Force && targetVersion.Equal(currentVersion)) {
-                return fmt.Errorf("target version v%s is not greater than current version v%s", opts.TargetVersionS, currentVersionS)
-        }
+	if !targetVersion.GreaterThan(currentVersion) && !(opts.Force && targetVersion.Equal(currentVersion)) {
+		return fmt.Errorf("target version v%s is not greater than current version v%s", opts.TargetVersionS, currentVersionS)
+	}
 
-        wd, err := os.Getwd()
-        if err != nil {
-                return fmt.Errorf("cannot get current working directory: %w", err)
-        }
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot get current working directory: %w", err)
+	}
 
-        migrateFrom := currentVersion
-        migrateFromS := currentVersionS
-        if opts.Force && !targetVersion.GreaterThan(currentVersion) {
-                prevMajor := targetVersion.Major() - 1
-                migrateFrom, err = semver.NewVersion(fmt.Sprintf("%d.0.0", prevMajor))
-                if err != nil {
-                        return fmt.Errorf("invalid previous major version %d: %w", prevMajor, err)
-                }
-                migrateFromS = migrateFrom.String()
-        }
+	migrateFrom := currentVersion
+	migrateFromS := currentVersionS
+	if opts.Force && !targetVersion.GreaterThan(currentVersion) {
+		prevMajor := targetVersion.Major() - 1
+		migrateFrom, err = semver.NewVersion(fmt.Sprintf("%d.0.0", prevMajor))
+		if err != nil {
+			return fmt.Errorf("invalid previous major version %d: %w", prevMajor, err)
+		}
+		migrateFromS = migrateFrom.String()
+	}
 
-        err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion)
-        if err != nil {
-                return fmt.Errorf("migration failed %w", err)
-        }
+	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion)
+	if err != nil {
+		return fmt.Errorf("migration failed %w", err)
+	}
 
-        if !opts.SkipGoMod {
-                if err := runGoMod(wd); err != nil {
-                        return fmt.Errorf("go mod: %w", err)
-                }
-        }
+	if !opts.SkipGoMod {
+		if err := runGoMod(wd); err != nil {
+			return fmt.Errorf("go mod: %w", err)
+		}
+	}
 
-        msg := fmt.Sprintf("Migration from Fiber %s to %s", migrateFromS, opts.TargetVersionS)
-        cmd.Println(termenv.String(msg).
-                Foreground(termenv.ANSIBrightBlue))
+	msg := fmt.Sprintf("Migration from Fiber %s to %s", migrateFromS, opts.TargetVersionS)
+	cmd.Println(termenv.String(msg).
+		Foreground(termenv.ANSIBrightBlue))
 
 	return nil
 }
