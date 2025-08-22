@@ -29,7 +29,7 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) er
 
 	// get go.mod file
 	modFile := filepath.Join(cwd, "go.mod")
-	fileContent, err := os.ReadFile(modFile)
+	fileContent, err := os.ReadFile(modFile) // #nosec G304 -- reading module file
 	if err != nil {
 		return fmt.Errorf("read %s: %w", modFile, err)
 	}
