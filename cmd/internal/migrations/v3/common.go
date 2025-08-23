@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -83,6 +84,51 @@ func removeConfigField(src, field string) string {
 	nextField:
 	}
 	return src
+}
+
+// replaceKeyLookup searches a struct literal for a KeyLookup field and invokes
+// fn with the parsed components. If fn returns an empty string, the field is
+// removed entirely.
+func replaceKeyLookup(src string, fn func(indent, val, comma, comment, newline string) string) string {
+	re := regexp.MustCompile(`(?m)(\s*)KeyLookup:\s*([^\n]+)(\n?)`)
+	return re.ReplaceAllStringFunc(src, func(s string) string {
+		sub := re.FindStringSubmatch(s)
+		indent := sub[1]
+		val := strings.TrimSpace(sub[2])
+		newline := sub[3]
+
+		comment := ""
+		if idx := strings.Index(val, "//"); idx >= 0 {
+			comment = strings.TrimSpace(val[idx:])
+			val = strings.TrimSpace(val[:idx])
+		} else if idx := strings.Index(val, "/*"); idx >= 0 {
+			comment = strings.TrimSpace(val[idx:])
+			val = strings.TrimSpace(val[:idx])
+		}
+
+		comma := ""
+		if strings.HasSuffix(val, ",") {
+			comma = ","
+			val = strings.TrimSpace(strings.TrimSuffix(val, ","))
+		}
+
+		if uq, err := strconv.Unquote(val); err == nil {
+			val = uq
+			repl := fn(indent, val, comma, comment, newline)
+			if repl == "" {
+				if comment != "" {
+					return fmt.Sprintf("%s%s%s", indent, comment, newline)
+				}
+				return newline
+			}
+			return repl
+		}
+
+		if comment != "" {
+			return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s %s%s", indent, val, comment, newline)
+		}
+		return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s", indent, val, newline)
+	})
 }
 
 // splitArgs splits a comma-separated argument list into its individual arguments
@@ -178,6 +224,44 @@ func extractCall(src string, start int) (int, string) {
 		}
 	}
 	return len(src), src[start:]
+}
+
+// extractBlock returns the index just after the closing delimiter that matches
+// the opening delimiter at the start position. Start must point to the first
+// character after the opening delimiter. It handles nested delimiters and
+// quoted strings.
+func extractBlock(src string, start int, open, closeDelim byte) int {
+	depth := 1
+	inStr := false
+	var quote byte
+
+	for i := start; i < len(src); i++ {
+		ch := src[i]
+		if inStr {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quote {
+				inStr = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"', '\'', '`':
+			inStr = true
+			quote = ch
+		case open:
+			depth++
+		case closeDelim:
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return len(src)
 }
 
 // replaceCall finds invocations of name within src and allows custom

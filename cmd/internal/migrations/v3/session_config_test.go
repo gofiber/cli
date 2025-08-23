@@ -47,7 +47,7 @@ func Test_MigrateSessionConfig_KeyLookup_Cookie(t *testing.T) {
 	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2/middleware/session"
 var _ = session.New(session.Config{
-    KeyLookup: "cookie:session_id",
+    KeyLookup: "cookie:__Host-session", // comment
 })`)
 
 	var buf bytes.Buffer
@@ -56,7 +56,31 @@ var _ = session.New(session.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: session.FromCookie("session_id")`)
+	assert.Contains(t, content, `Extractor: session.FromCookie("__Host-session"), // comment`)
+	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
+}
+
+func Test_MigrateSessionConfig_KeyLookup_CookieNested(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionkl_cookie_nested")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/session"
+var _ = session.New(session.Config{
+    Store: storage.New(storage.Config{M: map[string]string{"a": "b"}}),
+    KeyLookup: "cookie:__Host-session",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateSessionExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, content, `Extractor: session.FromCookie("__Host-session")`)
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
 
@@ -124,7 +148,56 @@ var _ = session.New(session.Config{
 	require.NoError(t, v3.MigrateSessionExtractor(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.NotContains(t, content, "KeyLookup")
+	assert.Contains(t, content, "// TODO: migrate KeyLookup: unknown:session_id")
 	assert.NotContains(t, content, "Extractor")
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
+}
+
+func Test_MigrateSessionConfig_KeyLookup_Func(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionkl_func")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/session"
+    "strings"
+)
+var _ = session.New(session.Config{
+    KeyLookup: strings.Join([]string{"cookie", "session_id"}, ":"),
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateSessionExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "// TODO: migrate KeyLookup: strings.Join([]string{\"cookie\", \"session_id\"}, \":\")")
+	assert.NotContains(t, content, "Extractor")
+	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
+}
+
+func Test_MigrateSessionExtractor_IgnoresOtherConfigs(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msession_ignore")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/keyauth"
+var _ = keyauth.New(keyauth.Config{
+    KeyLookup: "header:Authorization",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateSessionExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `KeyLookup: "header:Authorization"`)
+	assert.NotContains(t, content, "Extractor")
+	assert.NotContains(t, buf.String(), "Migrating session KeyLookup config")
 }

@@ -103,9 +103,9 @@ func Test_Dev_Escort_WatchingBin(t *testing.T) {
 
 	e.hitCh <- struct{}{}
 	e.hitCh <- struct{}{}
-	time.Sleep(time.Millisecond * 75)
+	time.Sleep(e.delay * 2)
 	e.hitCh <- struct{}{}
-	time.Sleep(time.Millisecond * 75)
+	time.Sleep(e.delay * 2)
 
 	assert.Equal(t, int32(2), atomic.LoadInt32(&count))
 }
