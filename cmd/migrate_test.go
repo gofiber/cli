@@ -41,7 +41,7 @@ require github.com/valyala/fasthttp v1.0.0`
 	}
 
 	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, fiberGoMod)) // #nosec G204 -- testing stub
+		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
 	}
 
 	code := m.Run()

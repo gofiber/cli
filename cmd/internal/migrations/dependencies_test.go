@@ -44,7 +44,7 @@ require (
 
 	origExec := migrations.ExecCommand
 	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, fiberGoMod)) // #nosec G204 -- testing stub
+		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
 	}
 	defer func() { migrations.ExecCommand = origExec }()
 
@@ -88,7 +88,7 @@ require (
 
 	origExec := migrations.ExecCommand
 	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, fiberGoMod)) // #nosec G204 -- testing stub
+		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
 	}
 	defer func() { migrations.ExecCommand = origExec }()
 
