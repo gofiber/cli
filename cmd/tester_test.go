@@ -121,7 +121,11 @@ func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
 			parent.SilenceErrors = origSilence
 		}()
 	} else {
-		cmd.SetArgs(args)
+		if len(args) == 0 {
+			cmd.SetArgs([]string{})
+		} else {
+			cmd.SetArgs(args)
+		}
 	}
 
 	err := cmd.Execute()

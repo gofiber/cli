@@ -1,3 +1,5 @@
+TOOLCHAIN ?= go1.25.0
+
 ## help: 💡 Display available commands
 .PHONY: help
 help:
@@ -37,7 +39,7 @@ markdown:
 ## lint: 🚨 Run lint checks
 .PHONY: lint
 lint:
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run ./...
 
 ## test: 🚦 Execute all tests
 .PHONY: test

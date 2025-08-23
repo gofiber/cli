@@ -73,7 +73,7 @@ var Migrations = []Migration{
 
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
-func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod bool) error {
+func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool) error {
 	for _, m := range Migrations {
 		toC, err := semver.NewConstraint(m.To)
 		if err != nil {
@@ -90,7 +90,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 					return err
 				}
 			}
-		} else {
+		} else if verbose {
 			cmd.Printf("Skipping migration from %s to %s\n", m.From, m.To)
 		}
 	}
