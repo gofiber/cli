@@ -12,12 +12,15 @@ import (
 
 func MigrateProxyTLSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	re := regexp.MustCompile(`proxy\.WithTlsConfig\(([^)]+)\)`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return re.ReplaceAllString(content,
 			"proxy.WithClient(&fasthttp.Client{TLSConfig: $1})")
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate proxy TLS config: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating proxy TLS config")

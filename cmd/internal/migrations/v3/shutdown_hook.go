@@ -11,7 +11,7 @@ import (
 )
 
 func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		reName := regexp.MustCompile(`\.Hooks\(\)\.OnShutdown\(`)
 		content = reName.ReplaceAllString(content, ".Hooks().OnPostShutdown(")
 
@@ -22,6 +22,9 @@ func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate shutdown hooks: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating shutdown hooks")

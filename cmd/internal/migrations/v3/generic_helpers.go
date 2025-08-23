@@ -15,7 +15,7 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	reQueryInt := regexp.MustCompile(`(\w+)\.QueryInt\(`)
 	reQueryFloat := regexp.MustCompile(`(\w+)\.QueryFloat\(`)
 	reQueryBool := regexp.MustCompile(`(\w+)\.QueryBool\(`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reParamsInt.ReplaceAllString(content, "fiber.Params[int]($1, ")
 		content = reQueryInt.ReplaceAllString(content, "fiber.Query[int]($1, ")
 		content = reQueryFloat.ReplaceAllString(content, "fiber.Query[float64]($1, ")
@@ -25,6 +25,9 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate generic helpers: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating generic helpers")

@@ -13,7 +13,7 @@ import (
 func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reEnable := regexp.MustCompile(`EnableTrustedProxyCheck`)
 	reProxies := regexp.MustCompile(`TrustedProxies:\s*([^,\n]+),`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reEnable.ReplaceAllString(content, "TrustProxy")
 		content = reProxies.ReplaceAllString(content, "TrustProxyConfig: fiber.TrustProxyConfig{Proxies: $1},")
 
@@ -21,6 +21,9 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate trusted proxy config: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating trusted proxy config")

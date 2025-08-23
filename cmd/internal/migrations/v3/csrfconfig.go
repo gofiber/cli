@@ -16,7 +16,7 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	reConfig := regexp.MustCompile(`csrf\.Config{[^}]*}`)
 	reSession := regexp.MustCompile(`\s*SessionKey:\s*[^,]+,?\n`)
 	reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*([^,\n]+)(,?)(\n?)`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reConfig.ReplaceAllStringFunc(content, func(s string) string {
 			return strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
 		})
@@ -53,6 +53,9 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate CSRF configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating CSRF middleware configs")

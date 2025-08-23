@@ -13,11 +13,14 @@ import (
 // MigrateSessionStore updates session.New assignments to session.NewStore.
 func MigrateSessionStore(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reStore := regexp.MustCompile(`(?m)(:=|=)([\t ]*)session\.New\(`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return reStore.ReplaceAllString(content, `${1}${2}session.NewStore(`)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate session store: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating session store")

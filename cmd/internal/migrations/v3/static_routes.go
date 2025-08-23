@@ -13,7 +13,7 @@ import (
 )
 
 func MigrateStaticRoutes(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		re := regexp.MustCompile(`\.Static\(\s*("[^"]*")\s*,\s*("[^"]*")(?:,\s*([^)]*))?\)`)
 		content = re.ReplaceAllStringFunc(content, func(m string) string {
 			sub := re.FindStringSubmatch(m)
@@ -56,6 +56,9 @@ func MigrateStaticRoutes(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate static usages: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating app.Static usage")

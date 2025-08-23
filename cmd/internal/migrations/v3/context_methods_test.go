@@ -90,3 +90,32 @@ func handler(c fiber.Ctx) error {
 	assert.Equal(t, first, second)
 	assert.Equal(t, 1, strings.Count(second, "TODO: SetUserContext was removed"))
 }
+
+func Test_MigrateContextMethods_SkipNonFiber(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtestskip")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+type ctx struct{}
+func (ctx) UserContext() {}
+func (ctx) SetUserContext(any) {}
+func (ctx) Context() {}
+func handler(c ctx) {
+    c.UserContext()
+    c.SetUserContext(nil)
+    c.Context()
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "c.UserContext()")
+	assert.Contains(t, content, "c.SetUserContext(nil)")
+	assert.Contains(t, content, "c.Context()")
+	assert.NotContains(t, buf.String(), "Migrating context methods")
+}

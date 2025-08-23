@@ -33,8 +33,10 @@ func checkConsole() (size console.WinSize, err error) {
 type FileProcessor func(content string) string
 
 // ChangeFileContent walks through cwd and applies the processorFn to every Go
-// file found. Files in a vendor directory are skipped.
-func ChangeFileContent(cwd string, processorFn FileProcessor) error {
+// file found. Files in a vendor directory are skipped. It returns true if any
+// file content was modified.
+func ChangeFileContent(cwd string, processorFn FileProcessor) (bool, error) {
+	changed := false
 	err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -61,17 +63,17 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) error {
 				return fmt.Errorf("fix imports for %s: %w", path, err)
 			}
 			processed = string(fixed)
-		}
-
-		if err2 := os.WriteFile(path, []byte(processed), 0o600); err2 != nil {
-			return fmt.Errorf("write file %s: %w", path, err2)
+			if err2 := os.WriteFile(path, []byte(processed), 0o600); err2 != nil {
+				return fmt.Errorf("write file %s: %w", path, err2)
+			}
+			changed = true
 		}
 
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("error while traversing the directory tree: %w", err)
+		return false, fmt.Errorf("error while traversing the directory tree: %w", err)
 	}
 
-	return nil
+	return changed, nil
 }

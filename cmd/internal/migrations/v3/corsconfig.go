@@ -17,7 +17,7 @@ func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	reHeaders := regexp.MustCompile(`AllowHeaders:\s*"([^"]*)"`)
 	reExpose := regexp.MustCompile(`ExposeHeaders:\s*"([^"]*)"`)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		conv := func(src string, re *regexp.Regexp, field string) string {
 			return re.ReplaceAllStringFunc(src, func(s string) string {
 				matches := re.FindStringSubmatch(s)
@@ -41,6 +41,9 @@ func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate CORS configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating CORS middleware configs")

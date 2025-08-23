@@ -12,7 +12,7 @@ import (
 )
 
 func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		// Replace app.Use(healthcheck.New(...)) with app.Get registrations
 		reUse := regexp.MustCompile(`(?m)^(\s*)(\w+)\.Use\(\s*healthcheck\.New\((?s:(.*))\)\s*\)`)
 		content = reUse.ReplaceAllStringFunc(content, func(s string) string {
@@ -85,6 +85,9 @@ func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate healthcheck configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating healthcheck middleware configs")

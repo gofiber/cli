@@ -13,7 +13,7 @@ import (
 func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reErr := regexp.MustCompile(`\s*OnShutdownError:\s*[^,]+,?\n`)
 	reSuccess := regexp.MustCompile(`\s*OnShutdownSuccess:\s*[^,]+,?\n`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reErr.ReplaceAllString(content, "")
 		content = reSuccess.ReplaceAllString(content, "")
 
@@ -21,6 +21,9 @@ func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener callbacks: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating listener callbacks")

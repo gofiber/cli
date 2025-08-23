@@ -109,7 +109,7 @@ func main() {
 	assert.Contains(t, content, `c.Response().Header.Add("X-Key", "Value")`)
 	assert.Contains(t, content, `httpServerActiveRequests.Add(1)`)
 	assert.NotContains(t, content, "[]string{")
-	assert.Contains(t, buf.String(), "Migrating Add method calls")
+	assert.NotContains(t, buf.String(), "Migrating Add method calls")
 }
 
 func Test_MigrateAddMethod_Idempotent(t *testing.T) {

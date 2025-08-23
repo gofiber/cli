@@ -12,11 +12,14 @@ import (
 
 func MigrateMonitorImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	re := regexp.MustCompile(`github\.com/gofiber/fiber/([^/]+)/middleware/monitor`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return re.ReplaceAllString(content, "github.com/gofiber/contrib/monitor")
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate monitor import: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating monitor middleware import")

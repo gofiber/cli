@@ -13,11 +13,14 @@ import (
 func MigrateBasicauthAuthorizer(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	re := regexp.MustCompile(`Authorizer:\s*func\(([^)]*)\)`)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return re.ReplaceAllString(content, `Authorizer: func($1, _ fiber.Ctx)`)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate basicauth authorizer: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating basicauth authorizer")

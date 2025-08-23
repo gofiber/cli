@@ -12,7 +12,7 @@ import (
 )
 
 func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		re := regexp.MustCompile(`\.Add\(`)
 		matches := re.FindAllStringIndex(content, -1)
 		if len(matches) == 0 {
@@ -72,6 +72,9 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Add method calls: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating Add method calls")

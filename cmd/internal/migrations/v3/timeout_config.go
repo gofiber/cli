@@ -11,7 +11,7 @@ import (
 )
 
 func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return replaceCall(content, "timeout.New", func(call string, args []string) string {
 			if len(args) != 2 || strings.Contains(args[1], "timeout.Config{") {
 				return call
@@ -21,6 +21,9 @@ func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate timeout middleware configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating timeout middleware configs")

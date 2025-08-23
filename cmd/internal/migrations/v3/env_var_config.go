@@ -12,11 +12,14 @@ import (
 
 func MigrateEnvVarConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	re := regexp.MustCompile(`\s*ExcludeVars:\s*[^,]+,?\n`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return re.ReplaceAllString(content, "")
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate EnvVar configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating EnvVar middleware configs")

@@ -19,7 +19,7 @@ func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
 	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reCtxUser.ReplaceAllString(content, "")
 		content = reCtxPass.ReplaceAllString(content, "")
 
@@ -48,6 +48,9 @@ func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate basicauth config: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating basicauth configs")

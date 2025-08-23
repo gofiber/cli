@@ -12,7 +12,7 @@ import (
 )
 
 func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = strings.ReplaceAll(content,
 			"github.com/gofiber/fiber/v2/middleware/filesystem",
 			"github.com/gofiber/fiber/v3/middleware/static")
@@ -38,6 +38,9 @@ func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate filesystem middleware: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating filesystem middleware")

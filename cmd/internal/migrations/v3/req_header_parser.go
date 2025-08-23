@@ -15,11 +15,14 @@ func MigrateReqHeaderParser(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		".ReqHeaderParser(", ".Bind().Header(",
 	)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return replacer.Replace(content)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate ReqHeaderParser: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating request header parser helper")

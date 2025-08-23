@@ -11,7 +11,7 @@ import (
 )
 
 func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		replacements := []struct {
 			re   *regexp.Regexp
 			repl string
@@ -31,6 +31,9 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate middleware locals: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating middleware locals")

@@ -14,7 +14,7 @@ import (
 
 func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*([^,\n]+)(,?)(\n?)`)
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return reKeyLookup.ReplaceAllStringFunc(content, func(s string) string {
 			sub := reKeyLookup.FindStringSubmatch(s)
 			indent := sub[1]
@@ -56,6 +56,9 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate session extractor config: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating session KeyLookup config")

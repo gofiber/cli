@@ -14,7 +14,7 @@ import (
 func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reImport := regexp.MustCompile(`(?m)^(\s*(?:\w+\s+)?)"github\.com/gofiber/fiber/v\d+/utils"$`)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		// update import path
 		content = reImport.ReplaceAllString(content, `$1"github.com/gofiber/utils/v2"`)
 
@@ -51,6 +51,9 @@ func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate utils imports: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating utils imports")

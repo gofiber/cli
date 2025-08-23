@@ -12,7 +12,7 @@ import (
 )
 
 func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		reConfig := regexp.MustCompile(`cache\.Config{[^}]*}`)
 		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
 			s = strings.ReplaceAll(s, "Store:", "Storage:")
@@ -22,6 +22,9 @@ func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate cache configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating cache middleware configs")

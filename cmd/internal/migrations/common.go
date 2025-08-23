@@ -19,7 +19,7 @@ var (
 )
 
 func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		replacement := fmt.Sprintf("${1}github.com/gofiber/fiber/v%d", target.Major())
 		return fiberImportRegex.ReplaceAllString(content, replacement)
 	})
@@ -40,9 +40,16 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) er
 		"${1}v"+strconv.FormatUint(target.Major(), 10)+"${3}v"+target.String(),
 	)
 
-	// update go.mod file
-	if err := os.WriteFile(modFile, []byte(fileContentStr), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", modFile, err)
+	if fileContentStr != string(fileContent) {
+		// update go.mod file
+		if err := os.WriteFile(modFile, []byte(fileContentStr), 0o600); err != nil {
+			return fmt.Errorf("write %s: %w", modFile, err)
+		}
+		changed = true
+	}
+
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating Go packages")

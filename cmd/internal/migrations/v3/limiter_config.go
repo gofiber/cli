@@ -12,7 +12,7 @@ import (
 )
 
 func MigrateLimiterConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		reConfig := regexp.MustCompile(`limiter\.Config{[^}]*}`)
 		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
 			s = strings.ReplaceAll(s, "Duration:", "Expiration:")
@@ -23,6 +23,9 @@ func MigrateLimiterConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate limiter configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating limiter middleware configs")

@@ -11,7 +11,7 @@ import (
 )
 
 func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return replaceCall(content, ".Test", func(call string, args []string) string {
 			if len(args) != 2 {
 				return call
@@ -28,6 +28,9 @@ func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate app.Test calls: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating app.Test usages")

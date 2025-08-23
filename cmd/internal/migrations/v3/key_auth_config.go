@@ -17,7 +17,7 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	reKeyLookup := regexp.MustCompile(`(?m)(\s*)KeyLookup:\s*("[^"]+")(,?)(\n?)`)
 	reAuthScheme := regexp.MustCompile(`(?m)\s*AuthScheme:\s*([^,\n]+)`)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
 			keyMatch := reKeyLookup.FindStringSubmatch(cfg)
 			if len(keyMatch) < 5 {
@@ -88,6 +88,9 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate keyauth configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating keyauth middleware configs")

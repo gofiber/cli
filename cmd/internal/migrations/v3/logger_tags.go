@@ -11,11 +11,14 @@ import (
 )
 
 func MigrateLoggerTags(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return strings.ReplaceAll(content, "logger.TagHeader", "logger.TagReqHeader")
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate logger tags: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating logger tag constants")

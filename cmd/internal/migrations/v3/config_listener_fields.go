@@ -15,7 +15,7 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	var disableStartup string
 	var enablePrint string
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed1, err := internal.ChangeFileContent(cwd, func(content string) string {
 		rePrefork := regexp.MustCompile(`(?m)^(\s*)Prefork:`)
 		content = rePrefork.ReplaceAllString(content, `${1}EnablePrefork:`)
 		reNetwork := regexp.MustCompile(`(?m)^(\s*)Network:`)
@@ -49,7 +49,7 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 		return fmt.Errorf("failed to migrate listener related config fields: %w", err)
 	}
 
-	err = internal.ChangeFileContent(cwd, func(content string) string {
+	changed2, err := internal.ChangeFileContent(cwd, func(content string) string {
 		if disableStartup == "" && enablePrint == "" {
 			return content
 		}
@@ -94,6 +94,9 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related listen calls: %w", err)
+	}
+	if !(changed1 || changed2) {
+		return nil
 	}
 
 	cmd.Println("Migrating listener related config fields")

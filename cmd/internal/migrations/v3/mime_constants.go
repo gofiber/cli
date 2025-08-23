@@ -16,11 +16,14 @@ func MigrateMimeConstants(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 		"MIMEApplicationJavaScript", "MIMETextJavaScript",
 	)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return replacer.Replace(content)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate MIME constants: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating MIME constants")

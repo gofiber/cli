@@ -17,7 +17,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		".RedirectToRoute(", ".Redirect().Route(",
 	)
 
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		re := regexp.MustCompile(`\.Redirect\([^)]`)
 		content = re.ReplaceAllStringFunc(content, func(s string) string {
 			return strings.Replace(s, ".Redirect(", ".Redirect().To(", 1)
@@ -26,6 +26,9 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate redirect methods: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating redirect methods")

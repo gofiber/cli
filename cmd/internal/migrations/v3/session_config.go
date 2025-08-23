@@ -12,7 +12,7 @@ import (
 )
 
 func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	err := internal.ChangeFileContent(cwd, func(content string) string {
+	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		reConfig := regexp.MustCompile(`session\.Config{[^}]*}`)
 		return reConfig.ReplaceAllStringFunc(content, func(s string) string {
 			return strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
@@ -20,6 +20,9 @@ func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate session configs: %w", err)
+	}
+	if !changed {
+		return nil
 	}
 
 	cmd.Println("Migrating session middleware configs")

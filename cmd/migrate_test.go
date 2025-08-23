@@ -197,7 +197,7 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
 		require.NoError(t, err)
 		assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
-		assert.Contains(t, out, "Migrating Go packages")
+		assert.NotContains(t, out, "Migrating Go packages")
 		assert.Len(t, cmds, 3)
 	})
 
@@ -223,7 +223,7 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f", "-s")
 		require.NoError(t, err)
 		assert.Contains(t, out, "Migration from Fiber 2.0.0 to 3.0.0")
-		assert.Contains(t, out, "Migrating Go packages")
+		assert.NotContains(t, out, "Migrating Go packages")
 		assert.Empty(t, cmds)
 	})
 }

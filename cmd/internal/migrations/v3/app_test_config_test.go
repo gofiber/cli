@@ -90,7 +90,7 @@ func main() {
 	content := readFile(t, file)
 	assert.Contains(t, content, `app.Test(httptest.NewRequest("GET", "/", nil))`)
 	assert.NotContains(t, content, "fiber.TestConfig")
-	assert.Contains(t, buf.String(), "Migrating app.Test usages")
+	assert.NotContains(t, buf.String(), "Migrating app.Test usages")
 }
 
 func Test_MigrateAppTestConfig_Idempotent(t *testing.T) {
