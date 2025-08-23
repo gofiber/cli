@@ -23,12 +23,7 @@ func newMigrateCmd() *cobra.Command {
 		Short: "Migrate Fiber project version to a newer version",
 	}
 
-	latestFiberVersion, err := LatestFiberVersion()
-	if err != nil {
-		latestFiberVersion = ""
-	}
-
-	cmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version. Default: latest ("+latestFiberVersion+")")
+	cmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version. Default: latest")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force migration even if already on version")
 	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
