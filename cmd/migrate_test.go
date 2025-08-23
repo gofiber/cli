@@ -41,7 +41,12 @@ require github.com/valyala/fasthttp v1.0.0`
 	}
 
 	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
+		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "go", "mod", "download") // #nosec G204 -- test helper
+		cmd.Env = []string{
+			"GO_WANT_HELPER_PROCESS=1",
+			"GO_HELPER_STDOUT=" + fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod)),
+		}
+		return cmd
 	}
 
 	code := m.Run()

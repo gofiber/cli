@@ -2,9 +2,7 @@ package migrations_test
 
 import (
 	"bytes"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -59,11 +57,8 @@ require github.com/valyala/fasthttp v1.0.0`
 		fiberGoMod := filepath.Join(dir, "fiber.mod")
 		require.NoError(t, os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600))
 
-		origExec := migrations.ExecCommand
-		migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-			return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
-		}
-		t.Cleanup(func() { migrations.ExecCommand = origExec })
+		restore := stubFiberDownload(t, fiberGoMod)
+		t.Cleanup(restore)
 
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\nrequire github.com/gofiber/fiber/v2 v2.0.0\n"), 0o600))
 		var buf bytes.Buffer
@@ -85,11 +80,8 @@ require github.com/valyala/fasthttp v1.0.0`
 		fiberGoMod := filepath.Join(dir, "fiber.mod")
 		require.NoError(t, os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600))
 
-		origExec := migrations.ExecCommand
-		migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-			return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
-		}
-		t.Cleanup(func() { migrations.ExecCommand = origExec })
+		restore := stubFiberDownload(t, fiberGoMod)
+		t.Cleanup(restore)
 
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\nrequire github.com/gofiber/fiber/v1 v1.0.0\n"), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nimport \"github.com/gofiber/fiber/v1\"\n"), 0o600))

@@ -2,9 +2,7 @@ package migrations_test
 
 import (
 	"bytes"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -42,11 +40,8 @@ require (
 	fiberGoMod := filepath.Join(dir, "fiber.mod")
 	require.NoError(t, os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600))
 
-	origExec := migrations.ExecCommand
-	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
-	}
-	defer func() { migrations.ExecCommand = origExec }()
+	restore := stubFiberDownload(t, fiberGoMod)
+	defer restore()
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
@@ -86,11 +81,8 @@ require (
 	fiberGoMod := filepath.Join(dir, "fiber.mod")
 	require.NoError(t, os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600))
 
-	origExec := migrations.ExecCommand
-	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))) // #nosec G204 -- testing stub
-	}
-	defer func() { migrations.ExecCommand = origExec }()
+	restore := stubFiberDownload(t, fiberGoMod)
+	defer restore()
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
