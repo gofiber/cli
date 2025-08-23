@@ -26,6 +26,7 @@ import (
 var _ = csrf.New(csrf.Config{
     Expiration: 10 * time.Minute,
     SessionKey: "csrf",
+    ContextKey: "csrf",
 })`)
 
 	var buf bytes.Buffer
@@ -36,6 +37,7 @@ var _ = csrf.New(csrf.Config{
 	assert.Contains(t, content, "IdleTimeout:")
 	assert.NotContains(t, content, "Expiration:")
 	assert.NotContains(t, content, "SessionKey")
+	assert.NotContains(t, content, "ContextKey")
 	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
 }
 
