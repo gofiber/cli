@@ -40,3 +40,32 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, `token := keyauth.TokenFromContext(c)`)
 	assert.Contains(t, buf.String(), "Migrating middleware locals")
 }
+
+func Test_MigrateMiddlewareLocals_ContextKey(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mctxkey")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/keyauth"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+    "github.com/gofiber/fiber/v2/middleware/session"
+)
+
+func main() {
+    _ = keyauth.New(keyauth.Config{ContextKey: "token"})
+    _ = csrf.New(csrf.Config{ContextKey: "csrf"})
+    _ = session.New(session.Config{ContextKey: "session"})
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ContextKey")
+}
