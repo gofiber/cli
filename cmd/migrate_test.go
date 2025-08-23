@@ -334,3 +334,37 @@ func Test_Migrate_WithHash(t *testing.T) {
 	gm := readFileTB(t, filepath.Join(dir, "go.mod"))
 	assert.Contains(t, gm, "github.com/gofiber/fiber/v3 v3.0.1-0.20200102030405-abcdef123456")
 }
+
+func Test_Migrate_WithHash_UpdatePseudoVersion(t *testing.T) {
+	dir, err := os.MkdirTemp("", "migrate_hash_update")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	goMod := "module example\n\n" +
+		"go 1.20\n\n" +
+		"require github.com/gofiber/fiber/v3\tv3.0.1-0.20200102030405-abcdef123456\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o600))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	hash := "fedcba654321fedcba654321fedcba654321fedc"
+	short := hash[:7]
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + short
+	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-03T03:04:05Z"}}}`)))
+
+	cmd := newMigrateCmd()
+	setupCmd()
+	defer teardownCmd()
+	_, err = runCobraCmd(cmd, "-t=3.0.0", "--hash="+short, "-f")
+	require.NoError(t, err)
+
+	gm := readFileTB(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, gm, "v3.0.1-0.20200103030405-fedcba654321")
+	assert.NotContains(t, gm, "abcdef123456")
+}

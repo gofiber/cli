@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	pkgRegex         = regexp.MustCompile(`(github\.com/gofiber/fiber/)(v\d+)( *?)(v[\w.-]+)`)
+	pkgRegex         = regexp.MustCompile(`(github\.com/gofiber/fiber/)(v\d+)(\s+)(v[\w.-]+)`)
 	fiberImportRegex = regexp.MustCompile(`(^|")github\.com/gofiber/fiber/v\d+`)
 )
 
