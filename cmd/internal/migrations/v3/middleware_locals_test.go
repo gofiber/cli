@@ -69,3 +69,33 @@ func main() {
 	content := readFile(t, file)
 	assert.NotContains(t, content, "ContextKey")
 }
+
+func Test_MigrateMiddlewareLocals_CustomContextKey(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcustomctx")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+
+var _ = csrf.New(csrf.Config{ContextKey: "token"})
+
+func handler(c fiber.Ctx) error {
+    token := c.Locals("token").(string)
+    _ = token
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `token := csrf.TokenFromContext(c)`)
+	assert.NotContains(t, content, "ContextKey")
+}

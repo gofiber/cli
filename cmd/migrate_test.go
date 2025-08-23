@@ -39,6 +39,7 @@ func Test_Migrate_V2_to_V3(t *testing.T) {
 import (
     "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/monitor"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
 )
 
 func handler(c *fiber.Ctx) error {
@@ -50,7 +51,9 @@ func handler(c *fiber.Ctx) error {
     ctx := c.Context()
     uc := c.UserContext()
     c.SetUserContext(uc)
+    csrfToken := c.Locals("token").(string)
     _ = ctx
+    _ = csrfToken
     return c.Bind(fiber.Map{})
 }
 
@@ -60,6 +63,7 @@ func main() {
         Prefork:                 true,
         Network:                 "tcp",
     })
+    app.Use(csrf.New(csrf.Config{ContextKey: "token"}))
     app.Static("/", "./public")
     app.Add(fiber.MethodGet, "/foo", handler)
     app.Mount("/api", app)
@@ -92,6 +96,8 @@ func main() {
 	at.Contains(content, ".Redirect().To(\"/foo\")")
 	at.Contains(content, ".Redirect().Back()")
 	at.Contains(content, "fiber.Params[int](c, \"id\"")
+	at.Contains(content, "csrf.TokenFromContext(c)")
+	at.NotContains(content, "ContextKey")
 	at.Contains(content, ".Use(\"/api\", app)")
 	at.Contains(content, ".Listen(")
 	at.Contains(content, "MIMETextJavaScript")
