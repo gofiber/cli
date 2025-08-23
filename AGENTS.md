@@ -1,4 +1,5 @@
 # Repository Guidelines
 
-- Always run `go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run ./...`
-- Always run `go run gotest.tools/gotestsum@latest -f testname -- ./... -race -count=1 -shuffle=on`
+- Use the Makefile commands for common tasks (e.g., `make lint`, `make test`)
+- Always run `TOOLCHAIN=go1.25.0 make lint`
+- Always run `make test`
