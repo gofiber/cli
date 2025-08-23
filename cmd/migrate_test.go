@@ -21,18 +21,19 @@ func readFileTB(tb testing.TB, path string) string {
 	return string(b)
 }
 
-func Test_Migrate_V2_to_V3(t *testing.T) {
-	dir, err := os.MkdirTemp("", "migrate_v2_v3")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	gomod := `module example.com/demo
+const goModV2 = `module example.com/demo
 
 go 1.20
 
 require github.com/gofiber/fiber/v2 v2.0.6
 `
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+
+func Test_Migrate_V2_to_V3(t *testing.T) {
+	dir, err := os.MkdirTemp("", "migrate_v2_v3")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
 
 	main := `package main
 import (
@@ -118,13 +119,7 @@ func Test_Migrate_DefaultTarget(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	gomod := `module example.com/demo
-
-go 1.20
-
-require github.com/gofiber/fiber/v2 v2.0.6
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
 
 	main := `package main
 import "github.com/gofiber/fiber/v2"
@@ -302,4 +297,33 @@ func main() {}`
 
 	content := readFileTB(t, filepath.Join(dir, "main.go"))
 	assert.NotContains(t, content, "github.com/gofiber/fiber/v2")
+}
+
+func Test_Migrate_WithHash(t *testing.T) {
+	dir, err := os.MkdirTemp("", "migrate_hash")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o600))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	hash := "abcdef1234567890abcdef1234567890abcdef12"
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + hash
+	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
+
+	cmd := newMigrateCmd()
+	setupCmd()
+	defer teardownCmd()
+	_, err = runCobraCmd(cmd, "-t=3.0.0", "--hash="+hash)
+	require.NoError(t, err)
+
+	gm := readFileTB(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, gm, "github.com/gofiber/fiber/v3 v3.0.1-0.20200102030405-abcdef123456")
 }
