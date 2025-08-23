@@ -38,8 +38,8 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		cmd.SetOut(&buf)
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
 		out := buf.String()
-		assert.Contains(t, out, "Skipping migration from >=1.0.0 to >=0.0.0-0")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=1.0.0-0 to >=0.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
 	})
 }
 
@@ -59,7 +59,7 @@ func Test_DoMigration_Verbose_Run(t *testing.T) {
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
 		out := buf.String()
 		assert.Contains(t, out, "MigrateGoPkgs: no changes")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
 	})
 
 	t.Run("changes", func(t *testing.T) {
@@ -75,6 +75,6 @@ func Test_DoMigration_Verbose_Run(t *testing.T) {
 		out := buf.String()
 		assert.Contains(t, out, "Migrating Go packages")
 		assert.Contains(t, out, "MigrateGoPkgs: changed")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
 	})
 }
