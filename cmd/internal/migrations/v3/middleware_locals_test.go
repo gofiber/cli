@@ -21,8 +21,12 @@ func Test_MigrateMiddlewareLocals(t *testing.T) {
 	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 func handler(c fiber.Ctx) error {
-    id := c.Locals("requestid")
+    id := c.Locals("requestid").(string)
+    csrfToken, _ := c.Locals("csrf").(string)
+    token := c.Locals("token").(string)
     _ = id
+    _ = csrfToken
+    _ = token
     return nil
 }`)
 
@@ -31,6 +35,8 @@ func handler(c fiber.Ctx) error {
 	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `requestid.FromContext(c)`)
+	assert.Contains(t, content, `id := requestid.FromContext(c)`)
+	assert.Contains(t, content, `csrfToken := csrf.TokenFromContext(c)`)
+	assert.Contains(t, content, `token := keyauth.TokenFromContext(c)`)
 	assert.Contains(t, buf.String(), "Migrating middleware locals")
 }

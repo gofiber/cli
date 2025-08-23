@@ -15,12 +15,14 @@ import (
 func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reConfig := regexp.MustCompile(`csrf\.Config{[^}]*}`)
 	reSession := regexp.MustCompile(`\s*SessionKey:\s*[^,]+,?\n`)
+	reContextKey := regexp.MustCompile(`\s*ContextKey:\s*[^,]+,?\n`)
 	reKeyLookup := regexp.MustCompile(`(\s*)KeyLookup:\s*([^,\n]+)(,?)(\n?)`)
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		content = reConfig.ReplaceAllStringFunc(content, func(s string) string {
 			return strings.ReplaceAll(s, "Expiration:", "IdleTimeout:")
 		})
 		content = reSession.ReplaceAllString(content, "")
+		content = reContextKey.ReplaceAllString(content, "")
 
 		content = reKeyLookup.ReplaceAllStringFunc(content, func(s string) string {
 			sub := reKeyLookup.FindStringSubmatch(s)
