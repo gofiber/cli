@@ -319,15 +319,16 @@ func Test_Migrate_WithHash(t *testing.T) {
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
 	hash := "abcdef1234567890abcdef1234567890abcdef12"
+	short := hash[:7]
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
-	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + hash
-	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
+	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + short
+	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
 
 	cmd := newMigrateCmd()
 	setupCmd()
 	defer teardownCmd()
-	_, err = runCobraCmd(cmd, "-t=3.0.0", "--hash="+hash)
+	_, err = runCobraCmd(cmd, "-t=3.0.0", "--hash="+short)
 	require.NoError(t, err)
 
 	gm := readFileTB(t, filepath.Join(dir, "go.mod"))

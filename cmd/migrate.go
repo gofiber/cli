@@ -147,6 +147,7 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	}()
 
 	var data struct {
+		SHA    string `json:"sha"`
 		Commit struct {
 			Committer struct {
 				Date time.Time `json:"date"`
@@ -157,7 +158,10 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	short := hash
+	short := data.SHA
+	if short == "" {
+		short = hash
+	}
 	if len(short) > 12 {
 		short = short[:12]
 	}
