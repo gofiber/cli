@@ -147,12 +147,12 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	}()
 
 	var data struct {
-		SHA    string `json:"sha"`
 		Commit struct {
 			Committer struct {
 				Date time.Time `json:"date"`
 			} `json:"committer"`
 		} `json:"commit"`
+		SHA string `json:"sha"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
