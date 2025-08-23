@@ -140,7 +140,11 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
-	defer func() { _ = res.Body.Close() }()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to close response body: %v\n", err)
+		}
+	}()
 
 	var data struct {
 		Commit struct {
