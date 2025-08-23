@@ -3,6 +3,7 @@ package v3_test
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,4 +65,28 @@ func handler(ctx fiber.Ctx) error {
 	assert.Contains(t, content, `// TODO: SetUserContext was removed, please migrate manually: res := ctx.SetUserContext(ctx.RequestCtx())`)
 	assert.NotContains(t, content, `.UserContext()`)
 	assert.Contains(t, buf.String(), "Migrating context methods")
+}
+
+func Test_MigrateContextMethods_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtestid")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    c.SetUserContext(c.Context())
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+	first := readFile(t, file)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+	second := readFile(t, file)
+	assert.Equal(t, first, second)
+	assert.Equal(t, 1, strings.Count(second, "TODO: SetUserContext was removed"))
 }

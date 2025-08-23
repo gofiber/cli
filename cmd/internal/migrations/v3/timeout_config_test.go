@@ -31,7 +31,7 @@ var _ = timeout.New(func(c fiber.Ctx) error { return nil }, 2*time.Second)`)
 	require.NoError(t, v3.MigrateTimeoutConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `timeout.New(func(c fiber.Ctx) error { return nil }, timeout.Config{Timeout: 2*time.Second})`)
+	assert.Contains(t, content, "timeout.New(func(c fiber.Ctx) error { return nil }, timeout.Config{Timeout: 2 * time.Second})")
 	assert.Contains(t, buf.String(), "Migrating timeout middleware configs")
 }
 
@@ -56,6 +56,30 @@ var _ = timeout.New(wrap("a", "b"), 2*time.Second)`)
 	require.NoError(t, v3.MigrateTimeoutConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `timeout.New(wrap("a", "b"), timeout.Config{Timeout: 2*time.Second})`)
+	assert.Contains(t, content, "timeout.New(wrap(\"a\", \"b\"), timeout.Config{Timeout: 2 * time.Second})")
 	assert.Contains(t, buf.String(), "Migrating timeout middleware configs")
+}
+
+func Test_MigrateTimeoutConfig_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtimeoutidem")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/timeout"
+    "time"
+)
+var _ = timeout.New(func(c fiber.Ctx) error { return nil }, 2*time.Second)`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateTimeoutConfig(cmd, dir, nil, nil))
+	first := readFile(t, file)
+	require.NoError(t, v3.MigrateTimeoutConfig(cmd, dir, nil, nil))
+	second := readFile(t, file)
+	assert.Equal(t, first, second)
 }

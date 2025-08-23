@@ -52,7 +52,10 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 			default:
 				args := splitArgs(inner)
 				if len(args) >= 2 {
-					args[0] = fmt.Sprintf("[]string{%s}", args[0])
+					first := strings.TrimSpace(args[0])
+					if !strings.HasPrefix(first, "[]string{") {
+						args[0] = fmt.Sprintf("[]string{%s}", args[0])
+					}
 				}
 				if _, err := b.WriteString(".Add(" + strings.Join(args, ", ") + ")"); err != nil {
 					return content

@@ -36,7 +36,7 @@ func main() {
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `static.New("", static.Config{`)
-	assert.Contains(t, content, `FS: os.DirFS("./assets")`)
+	assert.Contains(t, content, "FS:         os.DirFS(\"./assets\")")
 	assert.Contains(t, content, `IndexNames: []string{"index.html"}`)
 	assert.Contains(t, buf.String(), "Migrating filesystem middleware")
 }

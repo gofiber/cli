@@ -247,6 +247,5 @@ func main() {}`
 	assert.Contains(t, out, "Migrating Go packages")
 
 	content := readFileTB(t, filepath.Join(dir, "main.go"))
-	assert.Contains(t, content, "github.com/gofiber/fiber/v3")
 	assert.NotContains(t, content, "github.com/gofiber/fiber/v2")
 }

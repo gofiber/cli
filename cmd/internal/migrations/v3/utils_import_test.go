@@ -61,3 +61,31 @@ var (
 	assert.Contains(t, content, "string([]byte(\"b\"))")
 	assert.Contains(t, buf.String(), "Migrating utils imports")
 }
+
+func Test_MigrateUtilsImport_RemovesUnusedUtilsImport(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mutils")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "testing"
+    "github.com/gofiber/fiber/v3/utils"
+)
+
+func foo(t *testing.T) {
+    utils.AssertEqual(t, 1, 1)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateUtilsImport(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "github.com/gofiber/utils/v2\"")
+	assert.Contains(t, content, "github.com/stretchr/testify/assert")
+	assert.Contains(t, content, "assert.Equal(")
+	assert.NotContains(t, content, "utils.")
+}

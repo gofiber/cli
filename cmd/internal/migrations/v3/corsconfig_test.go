@@ -32,9 +32,9 @@ var _ = cors.New(cors.Config{
 	require.NoError(t, v3.MigrateCORSConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `AllowOrigins: []string{"https://a.com", "https://b.com"}`)
-	assert.Contains(t, content, `AllowMethods: []string{"GET", "POST"}`)
-	assert.Contains(t, content, `AllowHeaders: []string{"Content-Type"}`)
+	assert.Contains(t, content, "AllowOrigins:  []string{\"https://a.com\", \"https://b.com\"}")
+	assert.Contains(t, content, "AllowMethods:  []string{\"GET\", \"POST\"}")
+	assert.Contains(t, content, "AllowHeaders:  []string{\"Content-Type\"}")
 	assert.Contains(t, content, `ExposeHeaders: []string{"Content-Length"}`)
 	assert.Contains(t, buf.String(), "Migrating CORS middleware configs")
 }

@@ -201,7 +201,16 @@ func replaceCall(src, name string, repl func(call string, args []string) string)
 		end, inner := extractCall(src, start)
 		call := src[m[0]:end]
 		args := splitArgs(inner)
-		if _, err := b.WriteString(repl(call, args)); err != nil {
+		replCall := repl(call, args)
+		if replCall != call && strings.HasPrefix(replCall, name+"(") {
+			if end2, inner2 := extractCall(replCall, len(name)+1); end2 <= len(replCall) {
+				args2 := splitArgs(inner2)
+				if repl(replCall, args2) != replCall {
+					replCall = call
+				}
+			}
+		}
+		if _, err := b.WriteString(replCall); err != nil {
 			return src
 		}
 		last = end

@@ -2,6 +2,7 @@ package v3
 
 import (
 	"fmt"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -12,7 +13,7 @@ import (
 func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	err := internal.ChangeFileContent(cwd, func(content string) string {
 		return replaceCall(content, "timeout.New", func(call string, args []string) string {
-			if len(args) != 2 {
+			if len(args) != 2 || strings.Contains(args[1], "timeout.Config{") {
 				return call
 			}
 			return fmt.Sprintf("timeout.New(%s, timeout.Config{Timeout: %s})", args[0], args[1])

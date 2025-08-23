@@ -33,7 +33,7 @@ func main() {
 	require.NoError(t, v3.MigrateTrustedProxyConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "TrustProxy: true")
+	assert.Contains(t, content, "TrustProxy:       true")
 	assert.Contains(t, content, "TrustProxyConfig: fiber.TrustProxyConfig{Proxies: []string{\"0.8.0.0\"}},")
 	assert.Contains(t, buf.String(), "Migrating trusted proxy config")
 }

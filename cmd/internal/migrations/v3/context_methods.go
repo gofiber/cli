@@ -19,7 +19,16 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 		// SetUserContext removed - comment out the call
 		reSetUserCtx := regexp.MustCompile(`(?m)^(\s*)(.*\.SetUserContext\([^\n]*\).*)$`)
-		content = reSetUserCtx.ReplaceAllString(content, `$1// TODO: SetUserContext was removed, please migrate manually: $2`)
+		content = reSetUserCtx.ReplaceAllStringFunc(content, func(line string) string {
+			if strings.Contains(line, "TODO: SetUserContext was removed") {
+				return line
+			}
+			parts := reSetUserCtx.FindStringSubmatch(line)
+			if len(parts) != 3 {
+				return line
+			}
+			return fmt.Sprintf("%s// TODO: SetUserContext was removed, please migrate manually: %s", parts[1], parts[2])
+		})
 
 		// old Context() returned fasthttp.RequestCtx
 		reReqCtx := regexp.MustCompile(`(\w+)\.Context\(\)`)

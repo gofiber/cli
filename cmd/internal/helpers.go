@@ -8,6 +8,7 @@ import (
 
 	"github.com/containerd/console"
 	"github.com/muesli/termenv"
+	"golang.org/x/tools/imports"
 )
 
 var term = termenv.ColorProfile()
@@ -53,8 +54,16 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) error {
 			return fmt.Errorf("read file %s: %w", path, err)
 		}
 
-		// update go.mod file
-		if err2 := os.WriteFile(path, []byte(processorFn(string(fileContent))), 0o600); err2 != nil {
+		processed := processorFn(string(fileContent))
+		if processed != string(fileContent) {
+			fixed, err := imports.Process(path, []byte(processed), nil)
+			if err != nil {
+				return fmt.Errorf("fix imports for %s: %w", path, err)
+			}
+			processed = string(fixed)
+		}
+
+		if err2 := os.WriteFile(path, []byte(processed), 0o600); err2 != nil {
 			return fmt.Errorf("write file %s: %w", path, err2)
 		}
 

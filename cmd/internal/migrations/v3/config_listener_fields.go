@@ -16,11 +16,10 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	var enablePrint string
 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		replacer := strings.NewReplacer(
-			"Prefork:", "EnablePrefork:",
-			"Network:", "ListenerNetwork:",
-		)
-		content = replacer.Replace(content)
+		rePrefork := regexp.MustCompile(`(?m)^(\s*)Prefork:`)
+		content = rePrefork.ReplaceAllString(content, `${1}EnablePrefork:`)
+		reNetwork := regexp.MustCompile(`(?m)^(\s*)Network:`)
+		content = reNetwork.ReplaceAllString(content, `${1}ListenerNetwork:`)
 
 		reStartup := regexp.MustCompile(`(?m)^\s*DisableStartupMessage:\s*([^,]+),?\n`)
 		content = reStartup.ReplaceAllStringFunc(content, func(s string) string {

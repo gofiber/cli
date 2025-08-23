@@ -17,6 +17,9 @@ func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 				return call
 			}
 			arg := strings.TrimSpace(args[1])
+			if strings.HasPrefix(arg, "fiber.TestConfig") {
+				return call
+			}
 			if arg == "-1" {
 				return fmt.Sprintf(".Test(%s, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})", args[0])
 			}

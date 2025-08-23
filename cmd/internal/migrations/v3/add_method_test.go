@@ -85,3 +85,26 @@ func main() {
 	assert.NotContains(t, content, "[]string{")
 	assert.Contains(t, buf.String(), "Migrating Add method calls")
 }
+
+func Test_MigrateAddMethod_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maddid")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    app.Add(fiber.MethodGet, "/foo", func(c fiber.Ctx) error { return nil })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+	first := readFile(t, file)
+	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+	second := readFile(t, file)
+	assert.Equal(t, first, second)
+}
