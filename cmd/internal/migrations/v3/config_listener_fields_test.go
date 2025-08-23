@@ -43,12 +43,14 @@ func main() {
 	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
 
 	content := readFile(t, file1)
-	assert.Contains(t, content, "EnablePrefork:   true")
-	assert.Contains(t, content, "ListenerNetwork: \"tcp\"")
+	assert.NotContains(t, content, "Prefork")
+	assert.NotContains(t, content, "Network")
 	assert.NotContains(t, content, "DisableStartupMessage")
 	assert.NotContains(t, content, "EnablePrintRoutes")
 	content2 := readFile(t, file2)
 	assert.Contains(t, content2, "fiber.ListenConfig{")
+	assert.Contains(t, content2, "EnablePrefork: true")
+	assert.Contains(t, content2, "ListenerNetwork: \"tcp\"")
 	assert.Contains(t, content2, "DisableStartupMessage: true")
 	assert.Contains(t, content2, "EnablePrintRoutes: true")
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
@@ -66,6 +68,8 @@ func Test_MigrateConfigListenerFields_ExistingListenConfig(t *testing.T) {
 import "github.com/gofiber/fiber/v2"
 func newApp() *fiber.App {
     return fiber.New(fiber.Config{
+        Prefork: true,
+        Network: "tcp",
         DisableStartupMessage: true,
         EnablePrintRoutes: true,
     })
@@ -84,11 +88,14 @@ func main() {
 	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
 
 	content1 := readFile(t, file1)
+	assert.NotContains(t, content1, "Prefork")
+	assert.NotContains(t, content1, "Network")
 	assert.NotContains(t, content1, "DisableStartupMessage")
 	assert.NotContains(t, content1, "EnablePrintRoutes")
 
 	content2 := readFile(t, file2)
 	assert.Contains(t, content2, "EnablePrefork: true")
+	assert.Contains(t, content2, "ListenerNetwork: \"tcp\"")
 	assert.Contains(t, content2, "DisableStartupMessage: true")
 	assert.Contains(t, content2, "EnablePrintRoutes: true")
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
@@ -168,4 +175,56 @@ func main() {
 	second2 := readFile(t, file2)
 	assert.Equal(t, first1, second1)
 	assert.Equal(t, first2, second2)
+}
+
+func Test_MigrateConfigListenerFields_SingleFile(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf_single")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New(fiber.Config{
+        Prefork: true,
+        Network: "tcp",
+        DisableStartupMessage: true,
+        EnablePrintRoutes: true,
+    })
+    app.Listen(":3000")
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "fiber.ListenConfig{EnablePrefork: true, ListenerNetwork: \"tcp\", DisableStartupMessage: true, EnablePrintRoutes: true}")
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}
+
+func Test_MigrateConfigListenerFields_InlineConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf_inline")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New(fiber.Config{DisableStartupMessage: true})
+    go app.Listen(":3000")
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "fiber.New(fiber.Config{})")
+	assert.Contains(t, content, `go app.Listen(":3000", fiber.ListenConfig{DisableStartupMessage: true})`)
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
