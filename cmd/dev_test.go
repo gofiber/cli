@@ -56,7 +56,6 @@ func Test_Dev_Escort_Run(t *testing.T) {
 	e.sig = make(chan os.Signal, 1)
 
 	go func() {
-		time.Sleep(time.Millisecond * 500)
 		e.sig <- syscall.SIGINT
 	}()
 
@@ -103,11 +102,13 @@ func Test_Dev_Escort_WatchingBin(t *testing.T) {
 
 	e.hitCh <- struct{}{}
 	e.hitCh <- struct{}{}
-	time.Sleep(e.delay * 2)
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&count) == 1
+	}, time.Second, e.delay)
 	e.hitCh <- struct{}{}
-	time.Sleep(e.delay * 2)
-
-	assert.Equal(t, int32(2), atomic.LoadInt32(&count))
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&count) == 2
+	}, time.Second, e.delay)
 }
 
 func Test_Dev_Escort_WatchingFiles(t *testing.T) {
