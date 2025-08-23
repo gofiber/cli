@@ -2,7 +2,9 @@ package migrations_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -44,14 +46,25 @@ func Test_DoMigration_Verbose(t *testing.T) {
 }
 
 func Test_DoMigration_Verbose_Run(t *testing.T) {
-	t.Parallel()
 	curr := semver.MustParse("1.0.0")
 	target := semver.MustParse("2.0.0")
 
 	t.Run("no changes", func(t *testing.T) {
-		t.Parallel()
+		fiberMod := `module github.com/gofiber/fiber/v2
 
+go 1.22
+
+require github.com/valyala/fasthttp v1.0.0`
 		dir := t.TempDir()
+		fiberGoMod := filepath.Join(dir, "fiber.mod")
+		require.NoError(t, os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600))
+
+		origExec := migrations.ExecCommand
+		migrations.ExecCommand = func(string, ...string) *exec.Cmd {
+			return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, fiberGoMod)) // #nosec G204 -- testing stub
+		}
+		t.Cleanup(func() { migrations.ExecCommand = origExec })
+
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\nrequire github.com/gofiber/fiber/v2 v2.0.0\n"), 0o600))
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
@@ -63,9 +76,21 @@ func Test_DoMigration_Verbose_Run(t *testing.T) {
 	})
 
 	t.Run("changes", func(t *testing.T) {
-		t.Parallel()
+		fiberMod := `module github.com/gofiber/fiber/v1
 
+go 1.22
+
+require github.com/valyala/fasthttp v1.0.0`
 		dir := t.TempDir()
+		fiberGoMod := filepath.Join(dir, "fiber.mod")
+		require.NoError(t, os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600))
+
+		origExec := migrations.ExecCommand
+		migrations.ExecCommand = func(string, ...string) *exec.Cmd {
+			return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, fiberGoMod)) // #nosec G204 -- testing stub
+		}
+		t.Cleanup(func() { migrations.ExecCommand = origExec })
+
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\nrequire github.com/gofiber/fiber/v1 v1.0.0\n"), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nimport \"github.com/gofiber/fiber/v1\"\n"), 0o600))
 		var buf bytes.Buffer

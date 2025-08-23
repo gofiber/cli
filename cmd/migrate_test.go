@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cmdinternal "github.com/gofiber/cli/cmd/internal"
+	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
 func readFileTB(tb testing.TB, path string) string {
@@ -19,6 +21,36 @@ func readFileTB(tb testing.TB, path string) string {
 	b, err := os.ReadFile(filepath.Clean(path))
 	require.NoError(tb, err)
 	return string(b)
+}
+
+func TestMain(m *testing.M) {
+	orig := migrations.ExecCommand
+
+	tmpDir, err := os.MkdirTemp("", "fiber_mod")
+	if err != nil {
+		panic(err)
+	}
+	fiberMod := `module github.com/gofiber/fiber/v2
+
+go 1.22
+
+require github.com/valyala/fasthttp v1.0.0`
+	fiberGoMod := filepath.Join(tmpDir, "go.mod")
+	if err := os.WriteFile(fiberGoMod, []byte(fiberMod), 0o600); err != nil {
+		panic(err)
+	}
+
+	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
+		return exec.Command("echo", fmt.Sprintf(`{"GoMod":%q}`, fiberGoMod)) // #nosec G204 -- testing stub
+	}
+
+	code := m.Run()
+
+	migrations.ExecCommand = orig
+	if err := os.RemoveAll(tmpDir); err != nil {
+		panic(err)
+	}
+	os.Exit(code)
 }
 
 const goModV2 = `module example.com/demo
