@@ -12,21 +12,46 @@ import (
 
 func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		replacements := []struct {
-			re   *regexp.Regexp
-			repl string
+		ctxMap := map[string]string{
+			"requestid":    "requestid.FromContext(%s)",
+			"csrf":         "csrf.TokenFromContext(%s)",
+			"csrf_handler": "csrf.HandlerFromContext(%s)",
+			"session":      "session.FromContext(%s)",
+			"username":     "basicauth.UsernameFromContext(%s)",
+			"password":     "basicauth.PasswordFromContext(%s)",
+			"token":        "keyauth.TokenFromContext(%s)",
+		}
+
+		extractors := []struct {
+			pkg     string
+			field   string
+			replFmt string
 		}{
-			{regexp.MustCompile(`(\w+)\.Locals\("requestid"\)`), `requestid.FromContext($1)`},
-			{regexp.MustCompile(`(\w+)\.Locals\("csrf"\)`), `csrf.TokenFromContext($1)`},
-			{regexp.MustCompile(`(\w+)\.Locals\("csrf_handler"\)`), `csrf.HandlerFromContext($1)`},
-			{regexp.MustCompile(`(\w+)\.Locals\("session"\)`), `session.FromContext($1)`},
-			{regexp.MustCompile(`(\w+)\.Locals\("username"\)`), `basicauth.UsernameFromContext($1)`},
-			{regexp.MustCompile(`(\w+)\.Locals\("password"\)`), `basicauth.PasswordFromContext($1)`},
-			{regexp.MustCompile(`(\w+)\.Locals\("token"\)`), `keyauth.TokenFromContext($1)`},
+			{"csrf", "ContextKey", "csrf.TokenFromContext(%s)"},
+			{"keyauth", "ContextKey", "keyauth.TokenFromContext(%s)"},
+			{"session", "ContextKey", "session.FromContext(%s)"},
+			{"basicauth", "ContextUsername", "basicauth.UsernameFromContext(%s)"},
+			{"basicauth", "ContextPassword", "basicauth.PasswordFromContext(%s)"},
 		}
-		for _, r := range replacements {
-			content = r.re.ReplaceAllString(content, r.repl)
+
+		for _, e := range extractors {
+			re := regexp.MustCompile(e.pkg + `\.Config{[^}]*` + e.field + `:\s*"([^"]+)"`)
+			matches := re.FindAllStringSubmatch(content, -1)
+			for _, m := range matches {
+				ctxMap[m[1]] = e.replFmt
+			}
 		}
+
+		reLocals := regexp.MustCompile(`(\w+)\.Locals\("([^"]+)"\)`)
+		content = reLocals.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reLocals.FindStringSubmatch(s)
+			ctx := sub[1]
+			key := sub[2]
+			if fmtStr, ok := ctxMap[key]; ok {
+				return fmt.Sprintf(fmtStr, ctx)
+			}
+			return s
+		})
 
 		reTypeAssert := regexp.MustCompile(`([\w\.]+FromContext\([^\)]+\))\.\([^\)]+\)`)
 		content = reTypeAssert.ReplaceAllString(content, "$1")
@@ -34,7 +59,7 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		reComma := regexp.MustCompile(`(\w+)\s*,\s*\w+\s*:=\s*([\w\.]+FromContext\([^\)]+\))`)
 		content = reComma.ReplaceAllString(content, "$1 := $2")
 
-		reCtxKey := regexp.MustCompile(`\s*ContextKey:\s*[^,}\n]+,?`)
+		reCtxKey := regexp.MustCompile(`\s*Context(?:Username|Password|Key):\s*[^,}\n]+,?`)
 		content = reCtxKey.ReplaceAllString(content, "")
 
 		return content
