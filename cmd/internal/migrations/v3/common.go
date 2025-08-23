@@ -221,6 +221,50 @@ func replaceCall(src, name string, repl func(call string, args []string) string)
 	return b.String()
 }
 
+// identHasType reports whether the identifier appears with the given type in the
+// source. The type comparison ignores whether the identifier is a pointer.
+func identHasType(src, ident, typ string) bool {
+	re := regexp.MustCompile(fmt.Sprintf(`\b%[1]s\s*\*?%[2]s\b`, regexp.QuoteMeta(ident), regexp.QuoteMeta(typ)))
+	return re.MatchString(src)
+}
+
+// identAssignedFrom reports whether the identifier is assigned from a function
+// matching the provided pattern.
+func identAssignedFrom(src, ident, fnPattern string) bool {
+	re := regexp.MustCompile(fmt.Sprintf(`\b%[1]s\s*:?[=]\s*%[2]s`, regexp.QuoteMeta(ident), fnPattern))
+	return re.MatchString(src)
+}
+
+// isFiberApp reports whether ident references a Fiber application instance.
+func isFiberApp(src, ident string) bool {
+	if identHasType(src, ident, "fiber.App") {
+		return true
+	}
+	return identAssignedFrom(src, ident, "fiber\\.New\\(")
+}
+
+// isFiberGroup reports whether ident references a Fiber route group.
+func isFiberGroup(src, ident string) bool {
+	if identHasType(src, ident, "fiber.Group") {
+		return true
+	}
+	return identAssignedFrom(src, ident, "\\w+\\.Group\\(")
+}
+
+// isFiberRouter reports whether ident implements a Fiber routing interface or
+// is a concrete router such as an App or Group.
+func isFiberRouter(src, ident string) bool {
+	if identHasType(src, ident, "fiber.Router") || identHasType(src, ident, "fiber.Registering") {
+		return true
+	}
+	return isFiberApp(src, ident) || isFiberGroup(src, ident)
+}
+
+// isFiberCtx reports whether ident references a Fiber request context.
+func isFiberCtx(src, ident string) bool {
+	return identHasType(src, ident, "fiber.Ctx")
+}
+
 func addImport(content, path string) string {
 	imp := fmt.Sprintf("%q", path)
 	if strings.Contains(content, imp) {

@@ -44,12 +44,7 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 			}
 			ident := content[identStart+1 : startCall]
 
-			switch ident {
-			case "Header", "httpServerActiveRequests":
-				if _, err := b.WriteString(content[startCall:end]); err != nil {
-					return content
-				}
-			default:
+			if isFiberRouter(content, ident) {
 				args := splitArgs(inner)
 				if len(args) >= 2 {
 					first := strings.TrimSpace(args[0])
@@ -58,6 +53,10 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 					}
 				}
 				if _, err := b.WriteString(".Add(" + strings.Join(args, ", ") + ")"); err != nil {
+					return content
+				}
+			} else {
+				if _, err := b.WriteString(content[startCall:end]); err != nil {
 					return content
 				}
 			}

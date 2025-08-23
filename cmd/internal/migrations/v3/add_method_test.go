@@ -60,6 +60,30 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating Add method calls")
 }
 
+func Test_MigrateAddMethod_Group(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "maddgroup")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    app := fiber.New()
+    grp := app.Group("/api")
+    grp.Add(fiber.MethodGet, "/foo", func(c fiber.Ctx) error { return nil })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `grp.Add([]string{fiber.MethodGet}, "/foo"`)
+	assert.Contains(t, buf.String(), "Migrating Add method calls")
+}
+
 func Test_MigrateAddMethod_SkipUnrelated(t *testing.T) {
 	t.Parallel()
 
@@ -70,6 +94,7 @@ func Test_MigrateAddMethod_SkipUnrelated(t *testing.T) {
 	file := writeTempFile(t, dir, `package main
 func main() {
     req.Header.Add("Authorization", "Bearer "+test.Token)
+    reqHeader.Add("X-Key", "Value")
     c.Response().Header.Add("X-Key", "Value")
     httpServerActiveRequests.Add(1)
 }`)
@@ -80,6 +105,7 @@ func main() {
 
 	content := readFile(t, file)
 	assert.Contains(t, content, `req.Header.Add("Authorization", "Bearer "+test.Token)`)
+	assert.Contains(t, content, `reqHeader.Add("X-Key", "Value")`)
 	assert.Contains(t, content, `c.Response().Header.Add("X-Key", "Value")`)
 	assert.Contains(t, content, `httpServerActiveRequests.Add(1)`)
 	assert.NotContains(t, content, "[]string{")
