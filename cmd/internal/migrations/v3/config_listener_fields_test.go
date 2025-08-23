@@ -56,6 +56,33 @@ func main() {
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
 
+func Test_MigrateConfigListenerFields_PreserveFormatting(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf_format")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func newApp() *fiber.App {
+    var engine any
+    return fiber.New(fiber.Config{
+        Views:       engine,
+        ViewsLayout: "layouts/main",
+        Prefork:     true,
+    })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "\tViews:       engine,\n\t\tViewsLayout: \"layouts/main\",\n\t})")
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}
+
 func Test_MigrateConfigListenerFields_ExistingListenConfig(t *testing.T) {
 	t.Parallel()
 

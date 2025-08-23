@@ -52,11 +52,16 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 			inner = regexp.MustCompile(`,\s*,`).ReplaceAllString(inner, ",")
 			inner = strings.TrimSpace(inner)
 			inner = strings.TrimPrefix(inner, ",")
-			inner = strings.TrimSuffix(inner, ",")
 			inner = strings.TrimSpace(inner)
 			if inner == "" {
 				return "fiber.Config{}"
 			}
+			if strings.Contains(inner, "\n") {
+				inner = strings.TrimSuffix(inner, ",")
+				inner = strings.TrimSpace(inner)
+				return "fiber.Config{\n" + inner + ",\n}"
+			}
+			inner = strings.TrimSuffix(inner, ",")
 			return "fiber.Config{" + inner + "}"
 		})
 	})
