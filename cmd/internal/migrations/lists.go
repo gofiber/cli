@@ -1,7 +1,12 @@
 package migrations
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"reflect"
+	"runtime"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -71,6 +76,14 @@ var Migrations = []Migration{
 	},
 }
 
+func migrationName(fn MigrationFn) string {
+	f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+	if idx := strings.LastIndex(f, "."); idx >= 0 {
+		return f[idx+1:]
+	}
+	return f
+}
+
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
 func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool) error {
@@ -86,8 +99,25 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 
 		if fromC.Check(curr) && toC.Check(target) {
 			for _, fn := range m.Functions {
-				if err := fn(cmd, cwd, curr, target); err != nil {
-					return err
+				if verbose {
+					var buf bytes.Buffer
+					origOut := cmd.OutOrStdout()
+					cmd.SetOut(io.MultiWriter(origOut, &buf))
+					err := fn(cmd, cwd, curr, target)
+					cmd.SetOut(origOut)
+					name := migrationName(fn)
+					if buf.Len() == 0 {
+						cmd.Printf("%s: no changes\n", name)
+					} else {
+						cmd.Printf("%s: changed\n", name)
+					}
+					if err != nil {
+						return err
+					}
+				} else {
+					if err := fn(cmd, cwd, curr, target); err != nil {
+						return err
+					}
 				}
 			}
 		} else if verbose {
