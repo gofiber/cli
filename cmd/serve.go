@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	fileserver "github.com/gofiber/cli/cmd/fileserver/app"
 	"github.com/gofiber/fiber/v3"
-	"github.com/spf13/cobra"
 )
 
 var (

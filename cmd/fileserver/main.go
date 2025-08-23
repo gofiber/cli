@@ -3,10 +3,11 @@ package main
 import (
 	"time"
 
+	"github.com/spf13/pflag"
+
 	fileserver "github.com/gofiber/cli/cmd/fileserver/app"
 	"github.com/gofiber/fiber/v3"
 	fiberlog "github.com/gofiber/fiber/v3/log"
-	"github.com/spf13/pflag"
 )
 
 func main() {

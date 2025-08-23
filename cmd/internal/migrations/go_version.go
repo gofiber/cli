@@ -7,10 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/mod/modfile"
-
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/modfile"
 )
 
 // MigrateGoVersion ensures that all go.mod files referencing Fiber declare at

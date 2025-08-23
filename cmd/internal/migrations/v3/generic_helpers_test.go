@@ -1,0 +1,42 @@
+package v3_test
+
+import (
+	"bytes"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/gofiber/cli/cmd/internal/migrations/v3"
+)
+
+func Test_MigrateGenericHelpers(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mghtest")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    _ = c.ParamsInt("id", 0)
+    _ = c.QueryInt("age", 0)
+    _ = c.QueryFloat("score", 0.5)
+    _ = c.QueryBool("ok", true)
+    return nil
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateGenericHelpers(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "fiber.Params[int](c, \"id\"")
+	assert.Contains(t, content, "fiber.Query[int](c, \"age\"")
+	assert.Contains(t, content, "fiber.Query[float64](c, \"score\"")
+	assert.Contains(t, content, "fiber.Query[bool](c, \"ok\"")
+	assert.Contains(t, buf.String(), "Migrating generic helpers")
+}

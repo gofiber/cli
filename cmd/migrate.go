@@ -89,15 +89,9 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		migrateFromS = migrateFrom.String()
 	}
 
-	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion)
+	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion, opts.SkipGoMod)
 	if err != nil {
 		return fmt.Errorf("migration failed %w", err)
-	}
-
-	if !opts.SkipGoMod {
-		if err := runGoMod(wd); err != nil {
-			return fmt.Errorf("go mod: %w", err)
-		}
 	}
 
 	msg := fmt.Sprintf("Migration from Fiber %s to %s", migrateFromS, opts.TargetVersionS)

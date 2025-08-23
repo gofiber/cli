@@ -26,6 +26,8 @@ coverage:
 .PHONY: format
 format:
 	go run mvdan.cc/gofumpt@latest -w -l .
+	go install github.com/daixiang0/gci@latest
+	gci write --skip-generated -s standard -s default -s "prefix(github.com/gofiber)" .
 
 ## markdown: 🎨 Find markdown format issues (Requires markdownlint-cli)
 .PHONY: markdown

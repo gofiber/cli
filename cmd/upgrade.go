@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gofiber/cli/cmd/internal"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 var upgradeCmd = &cobra.Command{

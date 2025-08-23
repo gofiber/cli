@@ -4,8 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gofiber/fiber/v3"
 )
 
 func Test_ServeRunE(t *testing.T) {

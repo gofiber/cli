@@ -8,9 +8,10 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/spf13/cobra"
+	cmdinternal "github.com/gofiber/cli/cmd/internal"
 )
 
 var (
@@ -62,6 +63,7 @@ func TestHelperProcess(t *testing.T) {
 
 func setupCmd(flag ...struct{}) {
 	execCommand = fakeExecCommand
+	cmdinternal.ExecCommand = fakeExecCommand
 	if len(flag) > 0 {
 		needError = true
 	}
@@ -69,6 +71,7 @@ func setupCmd(flag ...struct{}) {
 
 func teardownCmd() {
 	execCommand = exec.Command
+	cmdinternal.ExecCommand = exec.Command
 	needError = false
 }
 

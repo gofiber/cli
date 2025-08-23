@@ -57,7 +57,8 @@ linters-settings:
       - default
       - blank
       - dot
-      # - alias
+      #- alias
+      - prefix(github.com/gofiber)
     custom-order: true
 
   goconst:
@@ -163,6 +164,8 @@ linters-settings:
           - make
         disabled: true # TODO: Do not disable
       - name: exported
+        disabled: true
+      - name: flag-parameter
         disabled: true
       - name: file-header
         disabled: true
@@ -293,7 +296,7 @@ linters:
     - forbidigo
     - forcetypeassert
     # - funlen
-    # - gci # TODO: Enable
+    - gci
     - ginkgolinter
     # - gocheckcompilerdirectives # TODO: Enable
     # - gochecknoglobals # TODO: Enable
@@ -309,7 +312,7 @@ linters:
     - gofmt
     - gofumpt
     # - goheader
-    - goimports
+    # - goimports
     # - mnd # TODO: Enable
     - gomoddirectives
     # - gomodguard

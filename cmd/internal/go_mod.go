@@ -1,19 +1,23 @@
-package cmd
+package internal
 
 import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/mod/modfile"
 )
 
-// runGoMod executes `go mod tidy`, `go mod download` and `go mod vendor`
+// ExecCommand is used to run external commands. It can be replaced in tests.
+var ExecCommand = exec.Command
+
+// RunGoMod executes `go mod tidy`, `go mod download` and `go mod vendor`
 // inside every directory under root that contains a go.mod file referencing
 // github.com/gofiber/fiber. Directories named `vendor` are skipped.
-func runGoMod(root string) error {
+func RunGoMod(root string) error {
 	dirs, err := fiberModuleDirs(root)
 	if err != nil {
 		return fmt.Errorf("find modules: %w", err)
@@ -25,7 +29,7 @@ func runGoMod(root string) error {
 	}
 	for _, dir := range dirs {
 		for _, args := range commands {
-			cmd := execCommand(args[0], args[1:]...) // #nosec G204 -- commands are controlled
+			cmd := ExecCommand(args[0], args[1:]...) // #nosec G204 -- commands are controlled
 			cmd.Dir = dir
 			if err := runCmd(cmd); err != nil {
 				return fmt.Errorf("in %s: %w", dir, err)
@@ -68,4 +72,13 @@ func fiberModuleDirs(root string) ([]string, error) {
 		return nil, fmt.Errorf("walk %s: %w", root, walkErr)
 	}
 	return dirs, nil
+}
+
+func runCmd(cmd *exec.Cmd) error {
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run %s: %w", cmd.String(), err)
+	}
+	return nil
 }

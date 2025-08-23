@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	semver "github.com/Masterminds/semver/v3"
-	"github.com/gofiber/cli/cmd/internal/migrations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
 func Test_MigrateGoPkgs(t *testing.T) {

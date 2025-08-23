@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	cmdinternal "github.com/gofiber/cli/cmd/internal"
 )
 
 func readFileTB(tb testing.TB, path string) string {
@@ -110,9 +112,9 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 	require.NoError(t, os.Mkdir(vendor, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(vendor, "go.mod"), []byte("module vendor"), 0o600))
 
-	origExec := execCommand
+	origExec := cmdinternal.ExecCommand
 	var cmds []*exec.Cmd
-	execCommand = func(name string, args ...string) *exec.Cmd {
+	cmdinternal.ExecCommand = func(name string, args ...string) *exec.Cmd {
 		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
 		cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
 		env := []string{"GO_WANT_HELPER_PROCESS=1"}
@@ -124,11 +126,11 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 		return cmd
 	}
 	defer func() {
-		execCommand = origExec
+		cmdinternal.ExecCommand = origExec
 		needError = false
 	}()
 
-	require.NoError(t, runGoMod(dir))
+	require.NoError(t, cmdinternal.RunGoMod(dir))
 	assert.Len(t, cmds, 3)
 	for _, c := range cmds {
 		assert.Equal(t, dir, c.Dir)
@@ -136,7 +138,7 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 
 	cmds = nil
 	needError = true
-	assert.Error(t, runGoMod(dir))
+	assert.Error(t, cmdinternal.RunGoMod(dir))
 }
 
 func Test_Migrate_ForceAndSkip(t *testing.T) {
@@ -163,16 +165,22 @@ require github.com/gofiber/fiber/v3 v3.0.0
 	})
 
 	t.Run("force", func(t *testing.T) {
-		origExec := execCommand
+		origExec := cmdinternal.ExecCommand
+		origCmdExec := execCommand
 		var cmds []*exec.Cmd
-		execCommand = func(name string, args ...string) *exec.Cmd {
+		fake := func(name string, args ...string) *exec.Cmd {
 			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
 			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
 			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 			cmds = append(cmds, cmd)
 			return cmd
 		}
-		defer func() { execCommand = origExec }()
+		cmdinternal.ExecCommand = fake
+		execCommand = fake
+		defer func() {
+			cmdinternal.ExecCommand = origExec
+			execCommand = origCmdExec
+		}()
 
 		cmd := newMigrateCmd()
 		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
@@ -183,16 +191,22 @@ require github.com/gofiber/fiber/v3 v3.0.0
 	})
 
 	t.Run("force skip go mod", func(t *testing.T) {
-		origExec := execCommand
+		origExec := cmdinternal.ExecCommand
+		origCmdExec := execCommand
 		var cmds []*exec.Cmd
-		execCommand = func(name string, args ...string) *exec.Cmd {
+		fake := func(name string, args ...string) *exec.Cmd {
 			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
 			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
 			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 			cmds = append(cmds, cmd)
 			return cmd
 		}
-		defer func() { execCommand = origExec }()
+		cmdinternal.ExecCommand = fake
+		execCommand = fake
+		defer func() {
+			cmdinternal.ExecCommand = origExec
+			execCommand = origCmdExec
+		}()
 
 		cmd := newMigrateCmd()
 		out, err := runCobraCmd(cmd, "-t=3.0.0", "-f", "-s")

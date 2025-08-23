@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gofiber/cli/cmd/internal/migrations"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
 func readFile(t *testing.T, path string) string {

@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/healthcheck"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewAppHealthEndpoints(t *testing.T) {

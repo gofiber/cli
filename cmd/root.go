@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/cli/cmd/internal"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 const (

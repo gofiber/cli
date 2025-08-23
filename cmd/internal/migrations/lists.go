@@ -6,6 +6,7 @@ import (
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 
+	"github.com/gofiber/cli/cmd/internal"
 	v3migrations "github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
@@ -71,7 +72,7 @@ var Migrations = []Migration{
 
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
-func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version) error {
+func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod bool) error {
 	for _, m := range Migrations {
 		toC, err := semver.NewConstraint(m.To)
 		if err != nil {
@@ -90,6 +91,12 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version) e
 			}
 		} else {
 			cmd.Printf("Skipping migration from %s to %s\n", m.From, m.To)
+		}
+	}
+
+	if !skipGoMod {
+		if err := internal.RunGoMod(cwd); err != nil {
+			return fmt.Errorf("go mod: %w", err)
 		}
 	}
 
