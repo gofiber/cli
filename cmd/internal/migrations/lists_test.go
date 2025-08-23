@@ -19,6 +19,8 @@ func Test_DoMigration_Verbose(t *testing.T) {
 	target := semver.MustParse("0.1.0")
 
 	t.Run("silent", func(t *testing.T) {
+		t.Parallel()
+
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
@@ -27,6 +29,8 @@ func Test_DoMigration_Verbose(t *testing.T) {
 	})
 
 	t.Run("verbose", func(t *testing.T) {
+		t.Parallel()
+
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
