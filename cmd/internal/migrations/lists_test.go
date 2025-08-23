@@ -2,6 +2,8 @@ package migrations_test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -37,6 +39,42 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
 		out := buf.String()
 		assert.Contains(t, out, "Skipping migration from >=1.0.0 to >=0.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0 to <4.0.0-0")
+	})
+}
+
+func Test_DoMigration_Verbose_Run(t *testing.T) {
+	t.Parallel()
+	curr := semver.MustParse("1.0.0")
+	target := semver.MustParse("2.0.0")
+
+	t.Run("no changes", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\nrequire github.com/gofiber/fiber/v2 v2.0.0\n"), 0o600))
+		var buf bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&buf)
+		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
+		out := buf.String()
+		assert.Contains(t, out, "MigrateGoPkgs: no changes")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0 to <4.0.0-0")
+	})
+
+	t.Run("changes", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n\nrequire github.com/gofiber/fiber/v1 v1.0.0\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nimport \"github.com/gofiber/fiber/v1\"\n"), 0o600))
+		var buf bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&buf)
+		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
+		out := buf.String()
+		assert.Contains(t, out, "Migrating Go packages")
+		assert.Contains(t, out, "MigrateGoPkgs: changed")
 		assert.Contains(t, out, "Skipping migration from >=2.0.0 to <4.0.0-0")
 	})
 }
