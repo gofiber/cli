@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -109,6 +111,47 @@ func main() {
 
 	content2 := readFileTB(t, filepath.Join(dir, "main.go"))
 	assert.Equal(t, content, content2)
+}
+
+func Test_Migrate_DefaultTarget(t *testing.T) {
+	dir, err := os.MkdirTemp("", "migrate_default")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	gomod := `module example.com/demo
+
+go 1.20
+
+require github.com/gofiber/fiber/v2 v2.0.6
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+
+	main := `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    _ = fiber.New()
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0o600))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	setupCmd()
+	defer teardownCmd()
+
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+	httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases/latest", httpmock.NewBytesResponder(200, []byte(`{"name":"v3.0.0"}`)))
+
+	cmd := newMigrateCmd()
+	out, err := runCobraCmd(cmd)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Migration from Fiber 2.0.6 to 3.0.0")
+
+	content := readFileTB(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, content, "github.com/gofiber/fiber/v3 v3.0.0")
 }
 
 func Test_RunGoMod(t *testing.T) {

@@ -16,6 +16,7 @@ func newMigrateCmd() *cobra.Command {
 	var targetVersionS string
 	var force bool
 	var skipGoMod bool
+	var verbose bool
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
@@ -27,12 +28,10 @@ func newMigrateCmd() *cobra.Command {
 		latestFiberVersion = ""
 	}
 
-	cmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version e.g:"+latestFiberVersion+" Format: X.Y.Z")
-	if err := cmd.MarkFlagRequired("to"); err != nil {
-		panic(err)
-	}
+	cmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version. Default: latest ("+latestFiberVersion+")")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force migration even if already on version")
 	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		return migrateRunE(cmd, MigrateOptions{
@@ -40,6 +39,7 @@ func newMigrateCmd() *cobra.Command {
 			TargetVersionS:     targetVersionS,
 			Force:              force,
 			SkipGoMod:          skipGoMod,
+			Verbose:            verbose,
 		})
 	}
 
@@ -53,6 +53,7 @@ type MigrateOptions struct {
 	TargetVersionS     string
 	Force              bool
 	SkipGoMod          bool
+	Verbose            bool
 }
 
 func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
@@ -63,6 +64,12 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 	currentVersionS = strings.TrimPrefix(currentVersionS, "v")
 	currentVersion := semver.MustParse(currentVersionS)
 
+	if opts.TargetVersionS == "" {
+		opts.TargetVersionS, err = LatestFiberVersion()
+		if err != nil {
+			return fmt.Errorf("failed to determine latest fiber version: %w", err)
+		}
+	}
 	opts.TargetVersionS = strings.TrimPrefix(opts.TargetVersionS, "v")
 	targetVersion, err := semver.NewVersion(opts.TargetVersionS)
 	if err != nil {
@@ -89,7 +96,7 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		migrateFromS = migrateFrom.String()
 	}
 
-	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion, opts.SkipGoMod)
+	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion, opts.SkipGoMod, opts.Verbose)
 	if err != nil {
 		return fmt.Errorf("migration failed %w", err)
 	}
