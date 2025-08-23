@@ -11,11 +11,22 @@ import (
 )
 
 func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	// Replace .Bind() with arguments, not the Bind() from the binding package
-	reViewBind := regexp.MustCompile(`\.Bind\(([^)]+)\)`)
+	reViewBind := regexp.MustCompile(`(\w+)\.Bind\(([^)]+)\)`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		return reViewBind.ReplaceAllString(content, ".ViewBind($1)")
+		orig := content
+		return reViewBind.ReplaceAllStringFunc(content, func(match string) string {
+			parts := reViewBind.FindStringSubmatch(match)
+			if len(parts) != 3 {
+				return match
+			}
+			ident := parts[1]
+			args := parts[2]
+			if isFiberCtx(orig, ident) {
+				return ident + ".ViewBind(" + args + ")"
+			}
+			return match
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate ViewBind calls: %w", err)
