@@ -59,6 +59,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateEnvVarConfig,
 			v3migrations.MigrateSessionConfig,
 			v3migrations.MigrateSessionExtractor,
+			v3migrations.MigrateSessionStore,
 			v3migrations.MigrateKeyAuthConfig,
 			v3migrations.MigrateTimeoutConfig,
 			v3migrations.MigrateBasicauthAuthorizer,
