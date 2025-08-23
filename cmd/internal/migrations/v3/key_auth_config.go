@@ -13,23 +13,12 @@ import (
 )
 
 func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	reConfig := regexp.MustCompile(`keyauth\.Config{[^}]*}`)
-	reKeyLookup := regexp.MustCompile(`(?m)(\s*)KeyLookup:\s*("[^"]+")(,?)(\n?)`)
+	reConfig := regexp.MustCompile(`keyauth\.Config{(?:[^{}]|{[^{}]*})*}`)
 	reAuthScheme := regexp.MustCompile(`(?m)\s*AuthScheme:\s*([^,\n]+)`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
-			keyMatch := reKeyLookup.FindStringSubmatch(cfg)
-			if len(keyMatch) == 5 {
-				indent := keyMatch[1]
-				val := strings.TrimSpace(keyMatch[2])
-				comma := keyMatch[3]
-				newline := keyMatch[4]
-
-				if uq, err := strconv.Unquote(val); err == nil {
-					val = uq
-				}
-
+			cfg = replaceKeyLookup(cfg, func(indent, val, comma, comment, newline string) string {
 				scheme := "Bearer"
 				if am := reAuthScheme.FindStringSubmatch(cfg); len(am) > 1 {
 					scheme = strings.TrimSpace(am[1])
@@ -59,9 +48,10 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 					case strings.HasPrefix(p, "cookie:"):
 						extractors = append(extractors, fmt.Sprintf("keyauth.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
 					default:
-						cfg = removeConfigField(cfg, "AuthScheme")
-						cfg = removeConfigField(cfg, "KeyLookup")
-						return cfg
+						if comment != "" {
+							comment = " " + comment
+						}
+						return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s%s", indent, val, comment, newline)
 					}
 				}
 
@@ -71,19 +61,19 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 				} else if len(extractors) > 1 {
 					extractor = fmt.Sprintf("keyauth.Chain(%s)", strings.Join(extractors, ", "))
 				}
-
-				cfg = removeConfigField(cfg, "AuthScheme")
 				if extractor == "" {
-					cfg = removeConfigField(cfg, "KeyLookup")
-					return cfg
+					if comment != "" {
+						comment = " " + comment
+					}
+					return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s%s", indent, val, comment, newline)
 				}
 
-				newField := fmt.Sprintf("%sExtractor: %s%s%s", indent, extractor, comma, newline)
-				cfg = reKeyLookup.ReplaceAllString(cfg, newField)
-				return cfg
-			}
+				if comment != "" {
+					comment = " " + comment
+				}
+				return fmt.Sprintf("%sExtractor: %s%s%s%s", indent, extractor, comma, comment, newline)
+			})
 
-			cfg = removeConfigField(cfg, "KeyLookup")
 			cfg = removeConfigField(cfg, "AuthScheme")
 			return cfg
 		})

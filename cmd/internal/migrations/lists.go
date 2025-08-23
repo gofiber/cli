@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -78,6 +79,10 @@ var Migrations = []Migration{
 
 func migrationName(fn MigrationFn) string {
 	f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+	f = strings.TrimSuffix(f, "-fm")
+	if idx := strings.LastIndex(f, ".func"); idx >= 0 {
+		f = f[:idx]
+	}
 	if idx := strings.LastIndex(f, "."); idx >= 0 {
 		return f[idx+1:]
 	}
@@ -87,6 +92,7 @@ func migrationName(fn MigrationFn) string {
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
 func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool) error {
+	var errs []error
 	for _, m := range Migrations {
 		toC, err := semver.NewConstraint(m.To)
 		if err != nil {
@@ -112,11 +118,11 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 						cmd.Printf("%s: changed\n", name)
 					}
 					if err != nil {
-						return err
+						errs = append(errs, fmt.Errorf("%s: %w", name, err))
 					}
 				} else {
 					if err := fn(cmd, cwd, curr, target); err != nil {
-						return err
+						errs = append(errs, fmt.Errorf("%s: %w", migrationName(fn), err))
 					}
 				}
 			}
@@ -127,8 +133,12 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 
 	if !skipGoMod {
 		if err := internal.RunGoMod(cwd); err != nil {
-			return fmt.Errorf("go mod: %w", err)
+			errs = append(errs, fmt.Errorf("go mod: %w", err))
 		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 
 	return nil
