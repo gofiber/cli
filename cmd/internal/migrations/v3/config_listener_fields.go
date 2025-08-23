@@ -12,45 +12,60 @@ import (
 )
 
 func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	var enablePrefork string
+	var listenerNetwork string
 	var disableStartup string
 	var enablePrint string
 
+	reField := regexp.MustCompile(`\s*(Prefork|Network|DisableStartupMessage|EnablePrintRoutes):\s*([^,}]+),?`)
 	changed1, err := internal.ChangeFileContent(cwd, func(content string) string {
-		rePrefork := regexp.MustCompile(`(?m)^(\s*)Prefork:`)
-		content = rePrefork.ReplaceAllString(content, `${1}EnablePrefork:`)
-		reNetwork := regexp.MustCompile(`(?m)^(\s*)Network:`)
-		content = reNetwork.ReplaceAllString(content, `${1}ListenerNetwork:`)
-
-		reStartup := regexp.MustCompile(`(?m)^\s*DisableStartupMessage:\s*([^,]+),?\n`)
-		content = reStartup.ReplaceAllStringFunc(content, func(s string) string {
-			if disableStartup == "" {
-				sub := reStartup.FindStringSubmatch(s)
-				if len(sub) > 1 {
-					disableStartup = strings.TrimSpace(sub[1])
+		reConfig := regexp.MustCompile(`fiber\.Config\{[^}]*\}`)
+		return reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
+			inner := cfg[len("fiber.Config{") : len(cfg)-1]
+			inner = reField.ReplaceAllStringFunc(inner, func(f string) string {
+				sub := reField.FindStringSubmatch(f)
+				if len(sub) == 3 {
+					name := sub[1]
+					val := strings.TrimSpace(sub[2])
+					switch name {
+					case "Prefork":
+						if enablePrefork == "" {
+							enablePrefork = val
+						}
+					case "Network":
+						if listenerNetwork == "" {
+							listenerNetwork = val
+						}
+					case "DisableStartupMessage":
+						if disableStartup == "" {
+							disableStartup = val
+						}
+					case "EnablePrintRoutes":
+						if enablePrint == "" {
+							enablePrint = val
+						}
+					}
+					return ""
 				}
+				return f
+			})
+			inner = regexp.MustCompile(`,\s*,`).ReplaceAllString(inner, ",")
+			inner = strings.TrimSpace(inner)
+			inner = strings.TrimPrefix(inner, ",")
+			inner = strings.TrimSuffix(inner, ",")
+			inner = strings.TrimSpace(inner)
+			if inner == "" {
+				return "fiber.Config{}"
 			}
-			return ""
+			return "fiber.Config{" + inner + "}"
 		})
-
-		rePrint := regexp.MustCompile(`(?m)^\s*EnablePrintRoutes:\s*([^,]+),?\n`)
-		content = rePrint.ReplaceAllStringFunc(content, func(s string) string {
-			if enablePrint == "" {
-				sub := rePrint.FindStringSubmatch(s)
-				if len(sub) > 1 {
-					enablePrint = strings.TrimSpace(sub[1])
-				}
-			}
-			return ""
-		})
-
-		return content
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related config fields: %w", err)
 	}
 
 	changed2, err := internal.ChangeFileContent(cwd, func(content string) string {
-		if disableStartup == "" && enablePrint == "" {
+		if enablePrefork == "" && listenerNetwork == "" && disableStartup == "" && enablePrint == "" {
 			return content
 		}
 
@@ -61,6 +76,18 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 			if len(args) == 2 && strings.Contains(args[1], "fiber.ListenConfig") {
 				cfg := strings.TrimPrefix(args[1], "fiber.ListenConfig{")
 				cfg = strings.TrimSuffix(cfg, "}")
+				if enablePrefork != "" && !strings.Contains(cfg, "EnablePrefork:") {
+					if len(strings.TrimSpace(cfg)) > 0 {
+						cfg += ","
+					}
+					cfg += " EnablePrefork: " + enablePrefork
+				}
+				if listenerNetwork != "" && !strings.Contains(cfg, "ListenerNetwork:") {
+					if len(strings.TrimSpace(cfg)) > 0 {
+						cfg += ","
+					}
+					cfg += " ListenerNetwork: " + listenerNetwork
+				}
 				if disableStartup != "" && !strings.Contains(cfg, "DisableStartupMessage:") {
 					if len(strings.TrimSpace(cfg)) > 0 {
 						cfg += ","
@@ -78,15 +105,20 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 			}
 
 			if len(args) == 1 {
-				fields := ""
+				var fields []string
+				if enablePrefork != "" {
+					fields = append(fields, "EnablePrefork: "+enablePrefork)
+				}
+				if listenerNetwork != "" {
+					fields = append(fields, "ListenerNetwork: "+listenerNetwork)
+				}
 				if disableStartup != "" {
-					fields += "DisableStartupMessage: " + disableStartup + ", "
+					fields = append(fields, "DisableStartupMessage: "+disableStartup)
 				}
 				if enablePrint != "" {
-					fields += "EnablePrintRoutes: " + enablePrint + ", "
+					fields = append(fields, "EnablePrintRoutes: "+enablePrint)
 				}
-				fields = strings.TrimSuffix(strings.TrimSpace(fields), ",")
-				return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", args[0], fields)
+				return fmt.Sprintf(".Listen(%s, fiber.ListenConfig{%s})", args[0], strings.Join(fields, ", "))
 			}
 
 			return call
@@ -102,5 +134,3 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	cmd.Println("Migrating listener related config fields")
 	return nil
 }
-
-// ListenerConfig. Fiber v3 replaces these with the OnPostShutdown hook.
