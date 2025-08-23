@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,7 +127,7 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 }
 
 func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/gofiber/fiber/commits/%s", hash)
+	url := "https://api.github.com/repos/gofiber/fiber/commits/" + hash
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -134,11 +135,12 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create http request: %w", err)
 	}
-	res, err := http.DefaultClient.Do(req)
+	client := http.Client{}
+	res, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var data struct {
 		Commit struct {
@@ -155,6 +157,6 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	if len(short) > 12 {
 		short = short[:12]
 	}
-	pv := module.PseudoVersion("v"+fmt.Sprint(base.Major()), "v"+base.String(), data.Commit.Committer.Date, short)
+	pv := module.PseudoVersion("v"+strconv.FormatUint(base.Major(), 10), "v"+base.String(), data.Commit.Committer.Date, short)
 	return strings.TrimPrefix(pv, "v"), nil
 }

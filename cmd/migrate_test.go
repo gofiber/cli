@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,18 +21,19 @@ func readFileTB(tb testing.TB, path string) string {
 	return string(b)
 }
 
-func Test_Migrate_V2_to_V3(t *testing.T) {
-	dir, err := os.MkdirTemp("", "migrate_v2_v3")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	gomod := `module example.com/demo
+const goModV2 = `module example.com/demo
 
 go 1.20
 
 require github.com/gofiber/fiber/v2 v2.0.6
 `
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+
+func Test_Migrate_V2_to_V3(t *testing.T) {
+	dir, err := os.MkdirTemp("", "migrate_v2_v3")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
 
 	main := `package main
 import (
@@ -119,13 +119,7 @@ func Test_Migrate_DefaultTarget(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	gomod := `module example.com/demo
-
-go 1.20
-
-require github.com/gofiber/fiber/v2 v2.0.6
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
 
 	main := `package main
 import "github.com/gofiber/fiber/v2"
@@ -310,13 +304,7 @@ func Test_Migrate_WithHash(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
-	gomod := `module example.com/demo
-
-go 1.20
-
-require github.com/gofiber/fiber/v2 v2.0.6
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o600))
 
 	cwd, err := os.Getwd()
@@ -327,7 +315,7 @@ require github.com/gofiber/fiber/v2 v2.0.6
 	hash := "abcdef1234567890abcdef1234567890abcdef12"
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
-	commitURL := fmt.Sprintf("https://api.github.com/repos/gofiber/fiber/commits/%s", hash)
+	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + hash
 	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
 
 	cmd := newMigrateCmd()
