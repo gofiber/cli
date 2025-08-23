@@ -41,6 +41,7 @@ import (
 func handler(c *fiber.Ctx) error {
     var v any
     c.BodyParser(&v)
+    c.Redirect("/foo")
     c.RedirectBack()
     _ = c.ParamsInt("id", 0)
     ctx := c.Context()
@@ -85,6 +86,7 @@ func main() {
 	at.Contains(content, "fiber.Ctx")
 	at.Contains(content, ".Bind().Body(&v)")
 	at.Contains(content, ".ViewBind(fiber.Map{})")
+	at.Contains(content, ".Redirect().To(\"/foo\")")
 	at.Contains(content, ".Redirect().Back()")
 	at.Contains(content, "fiber.Params[int](c, \"id\"")
 	at.Contains(content, ".Use(\"/api\", app)")
@@ -98,6 +100,15 @@ func main() {
 	at.Contains(out, "Migration from Fiber 2.0.6 to 3.0.0")
 	at.Contains(out, "Migrating Go packages")
 	at.Contains(out, "Migrating handler signatures")
+
+	// run migration again to ensure idempotency
+	cmd = newMigrateCmd()
+	out2, err := runCobraCmd(cmd, "-t=3.0.0", "-f")
+	require.NoError(t, err)
+	at.Contains(out2, "Migration from Fiber 2.0.0 to 3.0.0")
+
+	content2 := readFileTB(t, filepath.Join(dir, "main.go"))
+	assert.Equal(t, content, content2)
 }
 
 func Test_RunGoMod(t *testing.T) {

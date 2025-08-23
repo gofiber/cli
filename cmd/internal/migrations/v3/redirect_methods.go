@@ -18,8 +18,10 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	)
 
 	err := internal.ChangeFileContent(cwd, func(content string) string {
-		re := regexp.MustCompile(`\.Redirect\(`)
-		content = re.ReplaceAllString(content, ".Redirect().To(")
+		re := regexp.MustCompile(`\.Redirect\([^)]`)
+		content = re.ReplaceAllStringFunc(content, func(s string) string {
+			return strings.Replace(s, ".Redirect(", ".Redirect().To(", 1)
+		})
 		return replacer.Replace(content)
 	})
 	if err != nil {
