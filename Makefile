@@ -1,4 +1,4 @@
-TOOLCHAIN ?= local
+TOOLCHAIN ?= go1.25.0
 
 ## help: 💡 Display available commands
 .PHONY: help
