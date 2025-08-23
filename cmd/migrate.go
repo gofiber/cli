@@ -1,19 +1,25 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/module"
 
 	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
 func newMigrateCmd() *cobra.Command {
 	var targetVersionS string
+	var targetHash string
 	var force bool
 	var skipGoMod bool
 	var verbose bool
@@ -27,11 +33,13 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force migration even if already on version")
 	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	cmd.Flags().StringVar(&targetHash, "hash", "", "Commit hash for Fiber version")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		return migrateRunE(cmd, MigrateOptions{
 			CurrentVersionFile: currentVersionFile,
 			TargetVersionS:     targetVersionS,
+			TargetHash:         targetHash,
 			Force:              force,
 			SkipGoMod:          skipGoMod,
 			Verbose:            verbose,
@@ -46,6 +54,7 @@ var migrateCmd = newMigrateCmd()
 type MigrateOptions struct {
 	CurrentVersionFile string
 	TargetVersionS     string
+	TargetHash         string
 	Force              bool
 	SkipGoMod          bool
 	Verbose            bool
@@ -66,9 +75,22 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 	opts.TargetVersionS = strings.TrimPrefix(opts.TargetVersionS, "v")
-	targetVersion, err := semver.NewVersion(opts.TargetVersionS)
+	baseVersion, err := semver.NewVersion(opts.TargetVersionS)
 	if err != nil {
 		return fmt.Errorf("invalid version for \"%s\": %w", opts.TargetVersionS, err)
+	}
+
+	targetVersion := baseVersion
+	if opts.TargetHash != "" {
+		pv, err := pseudoVersionFromHash(baseVersion, opts.TargetHash)
+		if err != nil {
+			return fmt.Errorf("pseudo version: %w", err)
+		}
+		opts.TargetVersionS = pv
+		targetVersion, err = semver.NewVersion(pv)
+		if err != nil {
+			return fmt.Errorf("invalid pseudo version for \"%s\": %w", pv, err)
+		}
 	}
 
 	if !targetVersion.GreaterThan(currentVersion) && !(opts.Force && targetVersion.Equal(currentVersion)) {
@@ -101,4 +123,38 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		Foreground(termenv.ANSIBrightBlue))
 
 	return nil
+}
+
+func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/gofiber/fiber/commits/%s", hash)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create http request: %w", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("http request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	var data struct {
+		Commit struct {
+			Committer struct {
+				Date time.Time `json:"date"`
+			} `json:"committer"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	short := hash
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	pv := module.PseudoVersion("v"+fmt.Sprint(base.Major()), "v"+base.String(), data.Commit.Committer.Date, short)
+	return strings.TrimPrefix(pv, "v"), nil
 }
