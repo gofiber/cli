@@ -3,8 +3,8 @@ TOOLCHAIN ?= local
 ## help: 💡 Display available commands
 .PHONY: help
 help:
-        @echo '⚡️ GoFiber/Cli Development:'
-        @sed -n 's/^##//p' ${MAKEFILE_LIST} | column -t -s ':' |  sed -e 's/^/ /'
+	@echo '⚡️ GoFiber/Cli Development:'
+	@sed -n 's/^##//p' ${MAKEFILE_LIST} | column -t -s ':' |  sed -e 's/^/ /'
 
 ## audit: 🚀 Conduct quality checks
 .PHONY: audit
@@ -39,7 +39,7 @@ markdown:
 ## lint: 🚨 Run lint checks
 .PHONY: lint
 lint:
-        GOTOOLCHAIN=$(TOOLCHAIN) go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run ./...
 
 ## test: 🚦 Execute all tests
 .PHONY: test
