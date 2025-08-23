@@ -9,7 +9,7 @@ require (
 	github.com/containerd/console v1.0.5
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gofiber/fiber/v3 v3.0.0-beta.5
-	github.com/jarcoal/httpmock v1.4.0
+	github.com/jarcoal/httpmock v1.4.1
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.7
