@@ -37,6 +37,11 @@ func cacheFile(url string) string {
 }
 
 func readFromFile(url string) ([]byte, bool) {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
+		return nil, false
+	}
+
 	lock := flock.New(cacheFile(url) + ".lock")
 	if err := lock.RLock(); err != nil {
 		log.Printf("httpcache: acquire read lock for %s: %v", url, err)
@@ -70,6 +75,11 @@ func readFromFile(url string) ([]byte, bool) {
 }
 
 func writeToFile(url string, body []byte) {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
+		return
+	}
+
 	lock := flock.New(cacheFile(url) + ".lock")
 	if err := lock.Lock(); err != nil {
 		log.Printf("httpcache: acquire write lock for %s: %v", url, err)
@@ -81,10 +91,6 @@ func writeToFile(url string, body []byte) {
 		}
 	}()
 
-	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
-		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
-		return
-	}
 	e := cacheEntry{Expiry: time.Now().Add(cacheTTL), Body: body}
 	b, err := json.Marshal(e)
 	if err != nil {
