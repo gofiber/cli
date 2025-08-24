@@ -127,7 +127,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 
 func findContribModules(cwd string) ([]string, error) {
 	modules := make(map[string]struct{})
-	re := regexp.MustCompile(`\bgithub\.com/gofiber/contrib/(?:v\d+/)?([a-zA-Z0-9_]+)`) // capture module name
+	re := regexp.MustCompile(`(?:^|[^\w])github\.com/gofiber/contrib/(?:v\d+/)?([a-zA-Z0-9_]+)\b`) // capture module name, anchored to avoid partial matches
 	err := filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("walk path: %w", err)
@@ -287,7 +287,7 @@ func refreshTemplates(cmd *cobra.Command, cwd, hash string) (bool, error) {
 
 func findThirdPartyModules(cwd, repo string) (map[string]string, error) {
 	modules := make(map[string]string)
-	re := regexp.MustCompile(fmt.Sprintf(`\bgithub\.com/gofiber/%s/([a-zA-Z0-9_]+)(?:/(v\d+))?`, regexp.QuoteMeta(repo)))
+	re := regexp.MustCompile(fmt.Sprintf(`(?:^|[^\w])github\.com/gofiber/%s/([a-zA-Z0-9_]+)(?:/(v\d+))?\b`, regexp.QuoteMeta(repo)))
 	err := filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("walk path: %w", err)
