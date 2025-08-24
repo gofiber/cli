@@ -94,7 +94,7 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 
-	if !targetVersion.GreaterThan(currentVersion) && !(opts.Force && targetVersion.Equal(currentVersion)) {
+	if !targetVersion.GreaterThan(currentVersion) && !opts.Force {
 		return fmt.Errorf("target version v%s is not greater than current version v%s", opts.TargetVersionS, currentVersionS)
 	}
 
@@ -152,12 +152,16 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 				Date time.Time `json:"date"`
 			} `json:"committer"`
 		} `json:"commit"`
+		SHA string `json:"sha"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	short := hash
+	short := data.SHA
+	if short == "" {
+		short = hash
+	}
 	if len(short) > 12 {
 		short = short[:12]
 	}

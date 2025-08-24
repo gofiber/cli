@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	pkgRegex         = regexp.MustCompile(`(github\.com/gofiber/fiber/)(v\d+)( *?)(v[\w.-]+)`)
+	pkgRegex         = regexp.MustCompile(`(?m)^(\s*require\s+)?(github\.com/gofiber/fiber/)(v\d+)(\s+)(v[\w.-]+)$`)
 	fiberImportRegex = regexp.MustCompile(`(^|")github\.com/gofiber/fiber/v\d+`)
 )
 
@@ -37,7 +37,7 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) er
 	// replace old version with new version in go.mod file
 	fileContentStr := pkgRegex.ReplaceAllString(
 		string(fileContent),
-		"${1}v"+strconv.FormatUint(target.Major(), 10)+"${3}v"+target.String(),
+		"${1}${2}v"+strconv.FormatUint(target.Major(), 10)+"${4}v"+target.String(),
 	)
 
 	if fileContentStr != string(fileContent) {

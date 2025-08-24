@@ -40,7 +40,7 @@ func versionRun(cmd *cobra.Command, _ []string) {
 }
 
 var (
-	currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
+	currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*?\s+(.*)\n`)
 	currentVersionFile   = "go.mod"
 )
 

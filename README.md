@@ -14,6 +14,15 @@ go install github.com/gofiber/cli/fiber@latest
 
 ## Commands
 
+The Fiber CLI provides several commands to enhance development workflows:
+
+- `fiber dev` – Rerun the project whenever watched files change
+- `fiber serve` – Serve static files with optional TLS and caching
+- `fiber new` – Generate a new Fiber project from templates
+- `fiber migrate` – Migrate an existing project to a newer Fiber version
+- `fiber upgrade` – Upgrade the CLI itself to the latest release
+- `fiber version` – Print the local and latest available CLI versions
+
 ## fiber
 
 ### Synopsis
@@ -142,6 +151,8 @@ fiber new PROJECT [module name] [flags]
 
 Migrate Fiber project version to a newer version
 
+See the [Migration guide](docs/guide/migrate.md) for more details.
+
 ```bash
 fiber migrate --to 3.0.0
 ```
@@ -152,6 +163,8 @@ fiber migrate --to 3.0.0
   -t, --to string        Migrate to a specific version e.g:3.0.0 Format: X.Y.Z
   -f, --force            Force migration even if already on the version
   -s, --skip_go_mod      Skip running go mod tidy, download and vendor
+      --hash string      Commit hash for Fiber version
+  -v, --verbose          Enable verbose output
   -h, --help             help for migrate
 ```
 
