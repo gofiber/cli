@@ -67,18 +67,14 @@ func removeConfigField(src, field string) string {
 		}
 
 		start := loc[0]
-		// include any leading whitespace and comma
+		// include any leading whitespace and comma, but keep the preceding
+		// newline intact so that formatting is preserved for the previous
+		// field when the target field is removed.
 		for start > 0 {
 			switch src[start-1] {
 			case ' ', '\t':
 				start--
 			case ',':
-				start--
-				for start > 0 && (src[start-1] == ' ' || src[start-1] == '\t') {
-					start--
-				}
-				goto leadDone
-			case '\n':
 				start--
 				for start > 0 && (src[start-1] == ' ' || src[start-1] == '\t') {
 					start--
