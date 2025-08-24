@@ -20,6 +20,7 @@ func Test_Upgrade_upgradeRunE(t *testing.T) {
 
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewErrorResponder(errors.New("network error")))
 
@@ -34,6 +35,7 @@ func Test_Upgrade_upgradeRunE(t *testing.T) {
 
 	at.Contains(b.String(), "99.99.99")
 
+	clearHTTPCache()
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewBytesResponder(200, fakeCliVersionResponse(version)))
 
 	b.Reset()
