@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -11,8 +12,9 @@ import (
 )
 
 type ctxRepl struct {
-	pkg     string
-	replFmt string
+	pkg       string
+	replFmt   string
+	isDefault bool
 }
 
 func parseMiddlewareImports(content string, reImport *regexp.Regexp) map[string]string {
@@ -29,29 +31,7 @@ func parseMiddlewareImports(content string, reImport *regexp.Regexp) map[string]
 }
 
 func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	ctxMap := map[string][]ctxRepl{
-		"requestid": {
-			{pkg: "requestid", replFmt: "requestid.FromContext(%s)"},
-		},
-		"csrf": {
-			{pkg: "csrf", replFmt: "csrf.TokenFromContext(%s)"},
-		},
-		"csrf_handler": {
-			{pkg: "csrf", replFmt: "csrf.HandlerFromContext(%s)"},
-		},
-		"session": {
-			{pkg: "session", replFmt: "session.FromContext(%s)"},
-		},
-		"username": {
-			{pkg: "basicauth", replFmt: "basicauth.UsernameFromContext(%s)"},
-		},
-		"password": {
-			{pkg: "basicauth", replFmt: "basicauth.PasswordFromContext(%s)"},
-		},
-		"token": {
-			{pkg: "keyauth", replFmt: "keyauth.TokenFromContext(%s)"},
-		},
-	}
+	ctxMap := map[string][]ctxRepl{}
 
 	extractors := []struct {
 		pkg     string
@@ -76,10 +56,16 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 				if e.pkg != pkg {
 					continue
 				}
-				re := regexp.MustCompile(alias + `\.Config{[^}]*` + e.field + `:\s*"([^"]+)"`)
-				matches := re.FindAllStringSubmatch(content, -1)
+				reCfg := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config{`)
+				matches := reCfg.FindAllStringIndex(content, -1)
 				for _, m := range matches {
-					ctxMap[m[1]] = append(ctxMap[m[1]], ctxRepl{pkg: e.pkg, replFmt: e.replFmt})
+					start := m[0]
+					end := extractBlock(content, m[1], '{', '}')
+					cfg := content[start:end]
+					reField := regexp.MustCompile(e.field + `:\s*"([^"]+)"`)
+					for _, fm := range reField.FindAllStringSubmatch(cfg, -1) {
+						ctxMap[fm[1]] = append(ctxMap[fm[1]], ctxRepl{pkg: e.pkg, replFmt: e.replFmt})
+					}
 				}
 			}
 		}
@@ -88,6 +74,30 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	})
 	if err != nil {
 		return fmt.Errorf("failed to gather middleware locals: %w", err)
+	}
+
+	defaults := map[string][]ctxRepl{
+		"requestid":    {{pkg: "requestid", replFmt: "requestid.FromContext(%s)", isDefault: true}},
+		"csrf":         {{pkg: "csrf", replFmt: "csrf.TokenFromContext(%s)", isDefault: true}},
+		"csrf_handler": {{pkg: "csrf", replFmt: "csrf.HandlerFromContext(%s)", isDefault: true}},
+		"session":      {{pkg: "session", replFmt: "session.FromContext(%s)", isDefault: true}},
+		"username":     {{pkg: "basicauth", replFmt: "basicauth.UsernameFromContext(%s)", isDefault: true}},
+		"password":     {{pkg: "basicauth", replFmt: "basicauth.PasswordFromContext(%s)", isDefault: true}},
+		"token":        {{pkg: "keyauth", replFmt: "keyauth.TokenFromContext(%s)", isDefault: true}},
+	}
+	for key, repls := range defaults {
+		for _, r := range repls {
+			exists := false
+			for _, existing := range ctxMap[key] {
+				if existing.pkg == r.pkg {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				ctxMap[key] = append(ctxMap[key], r)
+			}
+		}
 	}
 
 	// second pass: perform replacements and clean up
@@ -99,15 +109,43 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 			sub := reLocals.FindStringSubmatch(s)
 			ctx := sub[1]
 			key := sub[2]
-			if repls, ok := ctxMap[key]; ok {
-				if len(repls) == 1 {
-					return fmt.Sprintf(repls[0].replFmt, ctx)
+			repls, ok := ctxMap[key]
+			if !ok {
+				return s
+			}
+
+			var custom, defs []ctxRepl
+			for _, r := range repls {
+				if r.isDefault {
+					defs = append(defs, r)
+				} else {
+					custom = append(custom, r)
 				}
-				for _, r := range repls {
+			}
+
+			choose := func(r ctxRepl) string { return fmt.Sprintf(r.replFmt, ctx) }
+
+			if len(custom) == 1 {
+				return choose(custom[0])
+			}
+			if len(custom) > 1 {
+				for _, r := range custom {
 					for _, pkg := range imports {
 						if pkg == r.pkg {
-							return fmt.Sprintf(r.replFmt, ctx)
+							return choose(r)
 						}
+					}
+				}
+				return s
+			}
+
+			if len(defs) == 1 {
+				return choose(defs[0])
+			}
+			for _, r := range defs {
+				for _, pkg := range imports {
+					if pkg == r.pkg {
+						return choose(r)
 					}
 				}
 			}
@@ -121,13 +159,32 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		content = reComma.ReplaceAllString(content, "$1, $2 := $3, true")
 
 		for alias := range imports {
-			reCfg := regexp.MustCompile(alias + `\.Config{[^}]*}`)
-			content = reCfg.ReplaceAllStringFunc(content, func(cfg string) string {
+			reCfg := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config{`)
+			matches := reCfg.FindAllStringIndex(content, -1)
+			if len(matches) == 0 {
+				continue
+			}
+			var b strings.Builder
+			last := 0
+			for _, m := range matches {
+				if _, err := b.WriteString(content[last:m[0]]); err != nil {
+					return content
+				}
+				start := m[0]
+				end := extractBlock(content, m[1], '{', '}')
+				cfg := content[start:end]
 				cfg = removeConfigField(cfg, "ContextKey")
 				cfg = removeConfigField(cfg, "ContextUsername")
 				cfg = removeConfigField(cfg, "ContextPassword")
-				return cfg
-			})
+				if _, err := b.WriteString(cfg); err != nil {
+					return content
+				}
+				last = end
+			}
+			if _, err := b.WriteString(content[last:]); err != nil {
+				return content
+			}
+			content = b.String()
 		}
 
 		return content
