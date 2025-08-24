@@ -5,13 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 var (
@@ -33,16 +37,32 @@ func cacheFile(url string) string {
 }
 
 func readFromFile(url string) ([]byte, bool) {
+	lock := flock.New(cacheFile(url) + ".lock")
+	if err := lock.RLock(); err != nil {
+		log.Printf("httpcache: acquire read lock for %s: %v", url, err)
+		return nil, false
+	}
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			log.Printf("httpcache: release read lock for %s: %v", url, err)
+		}
+	}()
+
 	b, err := os.ReadFile(cacheFile(url))
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("httpcache: read cache file for %s: %v", url, err)
+		}
 		return nil, false
 	}
 	var e cacheEntry
 	if err := json.Unmarshal(b, &e); err != nil {
+		log.Printf("httpcache: unmarshal cache file for %s: %v", url, err)
 		_ = os.Remove(cacheFile(url)) //nolint:errcheck // best effort cleanup
 		return nil, false
 	}
 	if time.Now().After(e.Expiry) {
+		log.Printf("httpcache: cache expired for %s", url)
 		_ = os.Remove(cacheFile(url)) //nolint:errcheck // remove expired cache
 		return nil, false
 	}
@@ -50,16 +70,29 @@ func readFromFile(url string) ([]byte, bool) {
 }
 
 func writeToFile(url string, body []byte) {
+	lock := flock.New(cacheFile(url) + ".lock")
+	if err := lock.Lock(); err != nil {
+		log.Printf("httpcache: acquire write lock for %s: %v", url, err)
+		return
+	}
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			log.Printf("httpcache: release write lock for %s: %v", url, err)
+		}
+	}()
+
 	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
 		return
 	}
 	e := cacheEntry{Expiry: time.Now().Add(cacheTTL), Body: body}
 	b, err := json.Marshal(e)
 	if err != nil {
+		log.Printf("httpcache: marshal cache entry for %s: %v", url, err)
 		return
 	}
 	if err := os.WriteFile(cacheFile(url), b, 0o600); err != nil {
-		return
+		log.Printf("httpcache: write cache file for %s: %v", url, err)
 	}
 }
 
@@ -73,10 +106,15 @@ func cachedGET(ctx context.Context, url string, headers map[string]string) (body
 	}
 	cacheMu.RUnlock()
 
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if b, ok := responseCache[url]; ok {
+		return b, http.StatusOK, nil
+	}
+
 	if b, ok := readFromFile(url); ok {
-		cacheMu.Lock()
 		responseCache[url] = b
-		cacheMu.Unlock()
 		return b, http.StatusOK, nil
 	}
 
@@ -105,9 +143,7 @@ func cachedGET(ctx context.Context, url string, headers map[string]string) (body
 	}
 
 	if res.StatusCode == http.StatusOK {
-		cacheMu.Lock()
 		responseCache[url] = body
-		cacheMu.Unlock()
 		writeToFile(url, body)
 	}
 
