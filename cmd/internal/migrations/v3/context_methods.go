@@ -47,7 +47,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 		})
 
 		// old Context() returned fasthttp.RequestCtx
-		reReqCtx := regexp.MustCompile(`(\w+)\.Context\(\)`)
+		reReqCtx := regexp.MustCompile(`(\w+)(?:\.[\w]+\([^)]*\))*\.Context\(\)`)
 		content = reReqCtx.ReplaceAllStringFunc(content, func(match string) string {
 			parts := reReqCtx.FindStringSubmatch(match)
 			if len(parts) != 2 {
@@ -55,7 +55,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			}
 			ident := parts[1]
 			if isFiberCtx(orig, ident) {
-				return ident + ".RequestCtx()"
+				return strings.TrimSuffix(match, ".Context()") + ".RequestCtx()"
 			}
 			return match
 		})

@@ -100,7 +100,9 @@ func Test_MigrateContextMethods_SkipNonFiber(t *testing.T) {
 
 	file := writeTempFile(t, dir, `package main
 type ctx struct{}
+
 func (ctx) UserContext() {}
+
 func (ctx) SetUserContext(any) {}
 func (ctx) Context() {}
 func handler(c ctx) {
@@ -118,4 +120,54 @@ func handler(c ctx) {
 	assert.Contains(t, content, "c.SetUserContext(nil)")
 	assert.Contains(t, content, "c.Context()")
 	assert.NotContains(t, buf.String(), "Migrating context methods")
+}
+
+func Test_MigrateContextMethods_RequestCtxChained(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtestchain")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    c.Status(fiber.StatusOK).Context().SetBodyStreamWriter(nil)
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, ".RequestCtx().SetBodyStreamWriter")
+	assert.NotContains(t, content, ".Context().SetBodyStreamWriter")
+	assert.Contains(t, buf.String(), "Migrating context methods")
+}
+
+func Test_MigrateContextMethods_MultipleContextCalls(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtestmulti")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    rc := c.Context()
+    c.Type("json").Status(fiber.StatusOK).Context().SetBodyStreamWriter(nil)
+    _ = rc
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Equal(t, 2, strings.Count(content, ".RequestCtx()"))
+	assert.NotContains(t, content, ".Context()")
+	assert.Contains(t, buf.String(), "Migrating context methods")
 }
