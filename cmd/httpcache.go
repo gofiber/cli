@@ -26,6 +26,12 @@ var (
 	cacheTTL = 5 * time.Minute
 )
 
+func init() {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		log.Fatalf("httpcache: mkdir %s: %v", cacheDir, err)
+	}
+}
+
 type cacheEntry struct {
 	Expiry time.Time `json:"expiry"`
 	Body   []byte    `json:"body"`
@@ -81,10 +87,6 @@ func writeToFile(url string, body []byte) {
 		}
 	}()
 
-	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
-		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
-		return
-	}
 	e := cacheEntry{Expiry: time.Now().Add(cacheTTL), Body: body}
 	b, err := json.Marshal(e)
 	if err != nil {
@@ -155,5 +157,6 @@ func clearHTTPCache() {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	responseCache = make(map[string][]byte)
-	_ = os.RemoveAll(cacheDir) //nolint:errcheck // best effort cleanup
+	_ = os.RemoveAll(cacheDir)       //nolint:errcheck // best effort cleanup
+	_ = os.MkdirAll(cacheDir, 0o750) //nolint:errcheck // recreate cache dir
 }
