@@ -8,6 +8,7 @@ import (
 
 func Test_HTTPCache_ReadWrite(t *testing.T) {
 	clearHTTPCache()
+	t.Cleanup(clearHTTPCache)
 
 	url := "https://example.com/foo"
 	body := []byte("bar")

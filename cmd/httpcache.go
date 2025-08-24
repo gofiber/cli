@@ -26,6 +26,12 @@ var (
 	cacheTTL = 5 * time.Minute
 )
 
+func init() {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		log.Fatalf("httpcache: mkdir %s: %v", cacheDir, err)
+	}
+}
+
 type cacheEntry struct {
 	Expiry time.Time `json:"expiry"`
 	Body   []byte    `json:"body"`
@@ -37,11 +43,6 @@ func cacheFile(url string) string {
 }
 
 func readFromFile(url string) ([]byte, bool) {
-	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
-		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
-		return nil, false
-	}
-
 	lock := flock.New(cacheFile(url) + ".lock")
 	if err := lock.RLock(); err != nil {
 		log.Printf("httpcache: acquire read lock for %s: %v", url, err)
@@ -75,11 +76,6 @@ func readFromFile(url string) ([]byte, bool) {
 }
 
 func writeToFile(url string, body []byte) {
-	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
-		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
-		return
-	}
-
 	lock := flock.New(cacheFile(url) + ".lock")
 	if err := lock.Lock(); err != nil {
 		log.Printf("httpcache: acquire write lock for %s: %v", url, err)
@@ -161,5 +157,6 @@ func clearHTTPCache() {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	responseCache = make(map[string][]byte)
-	_ = os.RemoveAll(cacheDir) //nolint:errcheck // best effort cleanup
+	_ = os.RemoveAll(cacheDir)       //nolint:errcheck // best effort cleanup
+	_ = os.MkdirAll(cacheDir, 0o750) //nolint:errcheck // recreate cache dir
 }
