@@ -2,16 +2,99 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
+
+	"github.com/gofrs/flock"
 )
 
 var (
 	cacheMu       sync.RWMutex
 	responseCache = make(map[string][]byte)
+
+	cacheDir = filepath.Join(os.TempDir(), "cli-httpcache")
+	cacheTTL = 5 * time.Minute
 )
+
+type cacheEntry struct {
+	Expiry time.Time `json:"expiry"`
+	Body   []byte    `json:"body"`
+}
+
+func cacheFile(url string) string {
+	h := sha256.Sum256([]byte(url))
+	return filepath.Join(cacheDir, hex.EncodeToString(h[:])+".json")
+}
+
+func readFromFile(url string) ([]byte, bool) {
+	lock := flock.New(cacheFile(url) + ".lock")
+	if err := lock.RLock(); err != nil {
+		log.Printf("httpcache: acquire read lock for %s: %v", url, err)
+		return nil, false
+	}
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			log.Printf("httpcache: release read lock for %s: %v", url, err)
+		}
+	}()
+
+	b, err := os.ReadFile(cacheFile(url))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("httpcache: read cache file for %s: %v", url, err)
+		}
+		return nil, false
+	}
+	var e cacheEntry
+	if err := json.Unmarshal(b, &e); err != nil {
+		log.Printf("httpcache: unmarshal cache file for %s: %v", url, err)
+		_ = os.Remove(cacheFile(url)) //nolint:errcheck // best effort cleanup
+		return nil, false
+	}
+	if time.Now().After(e.Expiry) {
+		log.Printf("httpcache: cache expired for %s", url)
+		_ = os.Remove(cacheFile(url)) //nolint:errcheck // remove expired cache
+		return nil, false
+	}
+	return e.Body, true
+}
+
+func writeToFile(url string, body []byte) {
+	lock := flock.New(cacheFile(url) + ".lock")
+	if err := lock.Lock(); err != nil {
+		log.Printf("httpcache: acquire write lock for %s: %v", url, err)
+		return
+	}
+	defer func() {
+		if err := lock.Unlock(); err != nil {
+			log.Printf("httpcache: release write lock for %s: %v", url, err)
+		}
+	}()
+
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
+		log.Printf("httpcache: mkdir %s: %v", cacheDir, err)
+		return
+	}
+	e := cacheEntry{Expiry: time.Now().Add(cacheTTL), Body: body}
+	b, err := json.Marshal(e)
+	if err != nil {
+		log.Printf("httpcache: marshal cache entry for %s: %v", url, err)
+		return
+	}
+	if err := os.WriteFile(cacheFile(url), b, 0o600); err != nil {
+		log.Printf("httpcache: write cache file for %s: %v", url, err)
+	}
+}
 
 // cachedGET performs an HTTP GET request and caches successful responses.
 // Headers may be nil. Only responses with status 200 are cached.
@@ -22,6 +105,18 @@ func cachedGET(ctx context.Context, url string, headers map[string]string) (body
 		return b, http.StatusOK, nil
 	}
 	cacheMu.RUnlock()
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if b, ok := responseCache[url]; ok {
+		return b, http.StatusOK, nil
+	}
+
+	if b, ok := readFromFile(url); ok {
+		responseCache[url] = b
+		return b, http.StatusOK, nil
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -48,9 +143,8 @@ func cachedGET(ctx context.Context, url string, headers map[string]string) (body
 	}
 
 	if res.StatusCode == http.StatusOK {
-		cacheMu.Lock()
 		responseCache[url] = body
-		cacheMu.Unlock()
+		writeToFile(url, body)
 	}
 
 	return body, res.StatusCode, nil
@@ -61,4 +155,5 @@ func clearHTTPCache() {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	responseCache = make(map[string][]byte)
+	_ = os.RemoveAll(cacheDir) //nolint:errcheck // best effort cleanup
 }
