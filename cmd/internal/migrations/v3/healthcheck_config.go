@@ -34,13 +34,13 @@ func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 					body = bodyMatch[1]
 				}
 
-				reLE := regexp.MustCompile(`(?m)\s*LivenessEndpoint:\s*([^,\n}]+),?`)
+				reLE := regexp.MustCompile(`(?m)\s*LivenessEndpoint:\s*([^,\n}]+),?\s*(//[^\n]*)?\n?`)
 				if m := reLE.FindStringSubmatch(body); len(m) > 1 {
 					lEndpoint = strings.TrimSpace(m[1])
 				}
 				body = reLE.ReplaceAllString(body, "")
 
-				reRE := regexp.MustCompile(`(?m)\s*ReadinessEndpoint:\s*([^,\n}]+),?`)
+				reRE := regexp.MustCompile(`(?m)\s*ReadinessEndpoint:\s*([^,\n}]+),?\s*(//[^\n]*)?\n?`)
 				if m := reRE.FindStringSubmatch(body); len(m) > 1 {
 					rEndpoint = strings.TrimSpace(m[1])
 				}

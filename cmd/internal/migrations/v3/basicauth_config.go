@@ -14,8 +14,8 @@ import (
 )
 
 func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	reCtxUser := regexp.MustCompile(`\s*ContextUsername:\s*[^,]+,?\n`)
-	reCtxPass := regexp.MustCompile(`\s*ContextPassword:\s*[^,]+,?\n`)
+	reCtxUser := regexp.MustCompile(`(?m)\s*ContextUsername:\s*[^,\n]+,?\s*(//[^\n]*)?\n`)
+	reCtxPass := regexp.MustCompile(`(?m)\s*ContextPassword:\s*[^,\n]+,?\s*(//[^\n]*)?\n`)
 	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
 	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`)
 

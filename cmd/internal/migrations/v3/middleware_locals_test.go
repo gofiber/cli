@@ -71,6 +71,32 @@ func main() {
 	assert.NotContains(t, content, "ContextKey")
 }
 
+func Test_MigrateMiddlewareLocals_ContextKeyWithComment(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mctxkeyc")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/keyauth"
+)
+
+func main() {
+    _ = keyauth.New(keyauth.Config{ContextKey: "token", // key comment
+    })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ContextKey")
+	assert.NotContains(t, content, "key comment")
+}
+
 func Test_MigrateMiddlewareLocals_CustomContextKey(t *testing.T) {
 	t.Parallel()
 

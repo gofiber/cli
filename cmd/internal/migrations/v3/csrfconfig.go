@@ -13,7 +13,7 @@ import (
 
 func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	reConfig := regexp.MustCompile(`csrf\.Config{`)
-	reSession := regexp.MustCompile(`(?m)\s*SessionKey:\s*[^,]+,?\n`)
+	reSession := regexp.MustCompile(`(?m)\s*SessionKey:\s*[^,\n]+,?\s*(//[^\n]*)?\n`)
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		matches := reConfig.FindAllStringIndex(content, -1)
 		if len(matches) == 0 {
