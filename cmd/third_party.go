@@ -76,7 +76,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		return false, nil
 	}
 
-	re := regexp.MustCompile(`"github\.com/gofiber/contrib(?:/v\d+)?/([a-zA-Z0-9_]+)([^\"]*)"`)
+	re := regexp.MustCompile(`"github\.com/gofiber/contrib(?:/v\d+)?/([a-zA-Z0-9_]+)(?:/v\d+)?([^\"]*)"`)
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return re.ReplaceAllStringFunc(content, func(s string) string {
 			sub := re.FindStringSubmatch(s)
@@ -87,7 +87,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 				return s
 			}
 			major := majorFromVersion(ver)
-			return fmt.Sprintf("\"github.com/gofiber/contrib/v3/%s/%s%s\"", mod, major, rest)
+			return fmt.Sprintf("\"github.com/gofiber/contrib/%s%s%s\"", mod, majorPath(major), rest)
 		})
 	})
 	if err != nil {
@@ -104,8 +104,8 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		content := string(b)
 		for mod, ver := range versions {
 			major := majorFromVersion(ver)
-			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/contrib/%s\s+v[\w\.-]+`, regexp.QuoteMeta(mod)))
-			newLine := fmt.Sprintf(`${1}github.com/gofiber/contrib/v3/%s/%s %s`, mod, major, ver)
+			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/contrib/(?:v\d+/)?%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(mod)))
+			newLine := fmt.Sprintf(`${1}github.com/gofiber/contrib/%s%s %s`, mod, majorPath(major), ver)
 			replaced := re.ReplaceAllString(content, newLine)
 			if replaced != content {
 				content = replaced
@@ -127,7 +127,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 
 func findContribModules(cwd string) ([]string, error) {
 	modules := make(map[string]struct{})
-	re := regexp.MustCompile(`github\.com/gofiber/contrib/(?:v\d+/)?([a-zA-Z0-9_]+)`) // capture module name
+	re := regexp.MustCompile(`\bgithub\.com/gofiber/contrib/(?:v\d+/)?([a-zA-Z0-9_]+)`) // capture module name
 	err := filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("walk path: %w", err)
@@ -165,7 +165,7 @@ func findContribModules(cwd string) ([]string, error) {
 func latestContribVersion(module string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("https://proxy.golang.org/github.com/gofiber/contrib/v3/%s/@latest", module)
+	url := fmt.Sprintf("https://proxy.golang.org/github.com/gofiber/contrib/%s/@latest", module)
 	b, status, err := cachedGET(ctx, url, nil)
 	if err != nil || status != 200 {
 		return ""
@@ -195,8 +195,8 @@ func majorPath(major string) string {
 	return "/" + major
 }
 
-func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
-	modules, err := findStorageModules(cwd)
+func refreshThirdParty(cmd *cobra.Command, cwd, hash, repo, label string, latestFn func(string, string) string) (bool, error) {
+	modules, err := findThirdPartyModules(cwd, repo)
 	if err != nil {
 		return false, fmt.Errorf("find modules: %w", err)
 	}
@@ -206,7 +206,7 @@ func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
 
 	versions := make(map[string]string, len(modules))
 	for mod, curMajor := range modules {
-		latest := latestStorageVersionFn(mod, curMajor)
+		latest := latestFn(mod, curMajor)
 		if latest == "" {
 			continue
 		}
@@ -216,7 +216,7 @@ func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("parse version: %w", err)
 			}
-			pv, err := pseudoVersionFromHash("gofiber/storage", base, hash)
+			pv, err := pseudoVersionFromHash("gofiber/"+repo, base, hash)
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
@@ -228,7 +228,7 @@ func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		return false, nil
 	}
 
-	re := regexp.MustCompile(`"github\.com/gofiber/storage/([a-zA-Z0-9_]+)(?:/v\d+)?([^\"]*)"`)
+	re := regexp.MustCompile(fmt.Sprintf(`"github\.com/gofiber/%s/([a-zA-Z0-9_]+)(?:/v\d+)?([^\"]*)"`, regexp.QuoteMeta(repo)))
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		return re.ReplaceAllStringFunc(content, func(s string) string {
 			sub := re.FindStringSubmatch(s)
@@ -239,7 +239,7 @@ func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
 				return s
 			}
 			major := majorFromVersion(ver)
-			return fmt.Sprintf("\"github.com/gofiber/storage/%s%s%s\"", mod, majorPath(major), rest)
+			return fmt.Sprintf("\"github.com/gofiber/%s/%s%s%s\"", repo, mod, majorPath(major), rest)
 		})
 	})
 	if err != nil {
@@ -256,8 +256,8 @@ func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		content := string(b)
 		for mod, ver := range versions {
 			major := majorFromVersion(ver)
-			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/storage/%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(mod)))
-			newLine := fmt.Sprintf(`${1}github.com/gofiber/storage/%s%s %s`, mod, majorPath(major), ver)
+			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/%s/%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(repo), regexp.QuoteMeta(mod)))
+			newLine := fmt.Sprintf(`${1}github.com/gofiber/%s/%s%s %s`, repo, mod, majorPath(major), ver)
 			replaced := re.ReplaceAllString(content, newLine)
 			if replaced != content {
 				content = replaced
@@ -272,128 +272,22 @@ func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
 	}
 
 	if changed || changedMod {
-		cmd.Println("Refreshing storage packages")
+		cmd.Printf("Refreshing %s packages\n", label)
 	}
 	return changed || changedMod, nil
+}
+
+func refreshStorage(cmd *cobra.Command, cwd, hash string) (bool, error) {
+	return refreshThirdParty(cmd, cwd, hash, "storage", "storage", latestStorageVersionFn)
 }
 
 func refreshTemplates(cmd *cobra.Command, cwd, hash string) (bool, error) {
-	modules, err := findTemplateModules(cwd)
-	if err != nil {
-		return false, fmt.Errorf("find modules: %w", err)
-	}
-	if len(modules) == 0 {
-		return false, nil
-	}
-
-	versions := make(map[string]string, len(modules))
-	for mod, curMajor := range modules {
-		latest := latestTemplateVersionFn(mod, curMajor)
-		if latest == "" {
-			continue
-		}
-		ver := latest
-		if hash != "" {
-			base, err := semver.NewVersion(strings.TrimPrefix(latest, "v"))
-			if err != nil {
-				return false, fmt.Errorf("parse version: %w", err)
-			}
-			pv, err := pseudoVersionFromHash("gofiber/template", base, hash)
-			if err != nil {
-				return false, fmt.Errorf("pseudo version: %w", err)
-			}
-			ver = pv
-		}
-		versions[mod] = ver
-	}
-	if len(versions) == 0 {
-		return false, nil
-	}
-
-	re := regexp.MustCompile(`"github\.com/gofiber/template/([a-zA-Z0-9_]+)(?:/v\d+)?([^\"]*)"`)
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		return re.ReplaceAllStringFunc(content, func(s string) string {
-			sub := re.FindStringSubmatch(s)
-			mod := sub[1]
-			rest := sub[2]
-			ver, ok := versions[mod]
-			if !ok {
-				return s
-			}
-			major := majorFromVersion(ver)
-			return fmt.Sprintf("\"github.com/gofiber/template/%s%s%s\"", mod, majorPath(major), rest)
-		})
-	})
-	if err != nil {
-		return false, fmt.Errorf("refresh imports: %w", err)
-	}
-
-	modFile := filepath.Join(cwd, "go.mod")
-	b, err := os.ReadFile(modFile) // #nosec G304
-	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("read go.mod: %w", err)
-	}
-	changedMod := false
-	if err == nil {
-		content := string(b)
-		for mod, ver := range versions {
-			major := majorFromVersion(ver)
-			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/template/%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(mod)))
-			newLine := fmt.Sprintf(`${1}github.com/gofiber/template/%s%s %s`, mod, majorPath(major), ver)
-			replaced := re.ReplaceAllString(content, newLine)
-			if replaced != content {
-				content = replaced
-				changedMod = true
-			}
-		}
-		if changedMod {
-			if err := os.WriteFile(modFile, []byte(content), 0o600); err != nil {
-				return false, fmt.Errorf("write go.mod: %w", err)
-			}
-		}
-	}
-
-	if changed || changedMod {
-		cmd.Println("Refreshing template packages")
-	}
-	return changed || changedMod, nil
+	return refreshThirdParty(cmd, cwd, hash, "template", "template", latestTemplateVersionFn)
 }
 
-func findStorageModules(cwd string) (map[string]string, error) {
+func findThirdPartyModules(cwd, repo string) (map[string]string, error) {
 	modules := make(map[string]string)
-	re := regexp.MustCompile(`github\.com/gofiber/storage/([a-zA-Z0-9_]+)(?:/(v\d+))?`)
-	err := filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("walk path: %w", err)
-		}
-		if d.IsDir() {
-			if d.Name() == vendorDir {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(d.Name(), ".go") {
-			return nil
-		}
-		b, err := os.ReadFile(path) // #nosec G304
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		matches := re.FindAllStringSubmatch(string(b), -1)
-		for _, m := range matches {
-			modules[m[1]] = m[2]
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("walk %s: %w", cwd, err)
-	}
-	return modules, nil
-}
-
-func findTemplateModules(cwd string) (map[string]string, error) {
-	modules := make(map[string]string)
-	re := regexp.MustCompile(`github\.com/gofiber/template/([a-zA-Z0-9_]+)(?:/(v\d+))?`)
+	re := regexp.MustCompile(fmt.Sprintf(`\bgithub\.com/gofiber/%s/([a-zA-Z0-9_]+)(?:/(v\d+))?`, regexp.QuoteMeta(repo)))
 	err := filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("walk path: %w", err)

@@ -40,11 +40,11 @@ require github.com/gofiber/contrib/monitor v1.0.0
 
 	content, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "github.com/gofiber/contrib/v3/monitor/v1")
+	assert.Contains(t, string(content), "github.com/gofiber/contrib/monitor")
 
 	gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
 	require.NoError(t, err)
-	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/monitor/v1 v1.2.3")
+	assert.Contains(t, string(gm), "github.com/gofiber/contrib/monitor v1.2.3")
 }
 
 func Test_refreshStorage(t *testing.T) {
