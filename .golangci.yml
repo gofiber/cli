@@ -265,6 +265,7 @@ issues:
       linters:
         - bodyclose
         - err113
+        - revive
     - source: 'fmt.Fprintf?'
       linters:
         - errcheck

@@ -94,8 +94,9 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 
-	if !targetVersion.GreaterThan(currentVersion) && !opts.Force {
-		return fmt.Errorf("target version v%s is not greater than current version v%s", opts.TargetVersionS, currentVersionS)
+	if !opts.Force && !targetVersion.GreaterThan(currentVersion) {
+		cmd.Printf("Fiber already at %s\n", currentVersionS)
+		return nil
 	}
 
 	wd, err := os.Getwd()

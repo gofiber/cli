@@ -20,8 +20,8 @@ func Test_MigrateGoPkgs(t *testing.T) {
 
 	mainContent := `package main
 import (
-    fiber "github.com/gofiber/fiber/v2"
-    "github.com/gofiber/fiber/v2/middleware/adaptor"
+    fiber "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/middleware/adaptor"
 )
 func main() {
     _, _ = fiber.New(), adaptor.New()

@@ -36,5 +36,5 @@ func TestHelperProcess(t *testing.T) {
 	if out := os.Getenv("GO_HELPER_STDOUT"); out != "" {
 		_, _ = fmt.Fprint(os.Stdout, out)
 	}
-	os.Exit(0) //nolint:revive // helper process exits intentionally
+	os.Exit(0) // helper process exits intentionally
 }
