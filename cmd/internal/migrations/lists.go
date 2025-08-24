@@ -30,7 +30,7 @@ type Migration struct {
 // Example structure:
 // {"from": ">=2.0.0", "to": "<=3.*.*", "fn": [MigrateFN, MigrateFN]}
 var Migrations = []Migration{
-	{From: ">=1.0.0-0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs, MigrateDependencies}},
+	{From: ">=1.0.0-0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
 	{
 		From: ">=2.0.0-0",
 		To:   "<4.0.0-0",
@@ -94,6 +94,14 @@ func migrationName(fn MigrationFn) string {
 // It will run all migrations that match the current and target version
 func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool) error {
 	var errs []error
+	var origDeps map[string]map[string]*semver.Version
+	if !skipGoMod {
+		var err error
+		origDeps, err = dependencyVersions(cwd)
+		if err != nil {
+			return fmt.Errorf("record dependencies: %w", err)
+		}
+	}
 	for _, m := range Migrations {
 		toC, err := semver.NewConstraint(m.To)
 		if err != nil {
@@ -133,6 +141,12 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	}
 
 	if !skipGoMod {
+		if err := internal.RunGoMod(cwd); err != nil {
+			errs = append(errs, fmt.Errorf("go mod: %w", err))
+		}
+		if err := MigrateDependencies(cmd, cwd, origDeps, target); err != nil {
+			errs = append(errs, fmt.Errorf("migrate dependencies: %w", err))
+		}
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
 		}

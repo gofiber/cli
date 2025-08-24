@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -136,6 +138,8 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create http request: %w", err)
 	}
+	req.Header.Set("User-Agent", "fiber-cli")
+
 	client := http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
@@ -146,18 +150,40 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 			fmt.Fprintf(os.Stderr, "failed to close response body: %v\n", err)
 		}
 	}()
+	if res.StatusCode != http.StatusOK {
+		msg, err := io.ReadAll(res.Body)
+		if err != nil || len(msg) == 0 {
+			msg = []byte(res.Status)
+		}
+		return "", fmt.Errorf("http request failed: %s", strings.TrimSpace(string(msg)))
+	}
 
 	var data struct {
 		Commit struct {
 			Committer struct {
-				Date time.Time `json:"date"`
+				Date *time.Time `json:"date"`
 			} `json:"committer"`
+			Author struct {
+				Date *time.Time `json:"date"`
+			} `json:"author"`
 		} `json:"commit"`
 		SHA string `json:"sha"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
+
+	var commitTime time.Time
+	switch {
+	case data.Commit.Committer.Date != nil && !data.Commit.Committer.Date.IsZero():
+		commitTime = *data.Commit.Committer.Date
+	case data.Commit.Author.Date != nil && !data.Commit.Author.Date.IsZero():
+		commitTime = *data.Commit.Author.Date
+	default:
+		return "", errors.New("commit date not found")
+	}
+
+	commitTime = commitTime.UTC().Truncate(time.Second)
 
 	short := data.SHA
 	if short == "" {
@@ -166,6 +192,6 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	if len(short) > 12 {
 		short = short[:12]
 	}
-	pv := module.PseudoVersion("v"+strconv.FormatUint(base.Major(), 10), "v"+base.String(), data.Commit.Committer.Date, short)
+	pv := module.PseudoVersion("v"+strconv.FormatUint(base.Major(), 10), "v"+base.String(), commitTime, short)
 	return strings.TrimPrefix(pv, "v"), nil
 }

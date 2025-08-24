@@ -46,7 +46,13 @@ require (
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	target := semver.MustParse("3.0.0")
-	require.NoError(t, migrations.MigrateDependencies(cmd, dir, nil, target))
+	curr := map[string]map[string]*semver.Version{
+		dir: {
+			"github.com/valyala/fasthttp":   semver.MustParse("1.0.0"),
+			"github.com/andybalholm/brotli": semver.MustParse("1.2.0"),
+		},
+	}
+	require.NoError(t, migrations.MigrateDependencies(cmd, dir, curr, target))
 
 	content := readFile(t, filepath.Join(dir, "go.mod"))
 	assert.Contains(t, content, "github.com/valyala/fasthttp v1.10.0")
@@ -87,7 +93,13 @@ require (
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	target := semver.MustParse("3.0.0")
-	require.NoError(t, migrations.MigrateDependencies(cmd, dir, nil, target))
+	curr := map[string]map[string]*semver.Version{
+		dir: {
+			"github.com/valyala/fasthttp":   semver.MustParse("1.10.0"),
+			"github.com/andybalholm/brotli": semver.MustParse("1.2.0"),
+		},
+	}
+	require.NoError(t, migrations.MigrateDependencies(cmd, dir, curr, target))
 
 	content := readFile(t, filepath.Join(dir, "go.mod"))
 	assert.Contains(t, content, "github.com/valyala/fasthttp v1.10.0")
