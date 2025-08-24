@@ -3,6 +3,7 @@ package v3_test
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -180,4 +181,39 @@ var ConfigDefault = Config{
 
 	content := readFile(t, file)
 	assert.Contains(t, content, "ContextKey:     DefaultContextKey")
+}
+
+func Test_MigrateMiddlewareLocals_CustomContextKeyAcrossFiles(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcustomctxfiles")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	// config in separate file
+	cfg := `package main
+import "github.com/gofiber/fiber/v2/middleware/csrf"
+
+var _ = csrf.New(csrf.Config{ContextKey: "token"})`
+	cfgPath := filepath.Join(dir, "config.go")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o600))
+
+	handler := `package main
+import "github.com/gofiber/fiber/v2"
+
+func handler(c fiber.Ctx) error {
+    token := c.Locals("token").(string)
+    _ = token
+    return nil
+}`
+	file := writeTempFile(t, dir, handler)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `token := csrf.TokenFromContext(c)`)
+	cfgContent := readFile(t, cfgPath)
+	assert.NotContains(t, cfgContent, "ContextKey")
 }
