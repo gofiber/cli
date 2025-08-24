@@ -18,12 +18,12 @@ import (
 var ExecCommand = exec.Command
 
 // MigrateDependencies ensures that dependencies shared with Fiber are at least
-// the versions required by the target Fiber release.
+// the versions required by the target Fiber release, and preserves higher
+// versions already declared by the project.
 //
-// It updates go.mod files that already require a dependency also required by
-// Fiber, bumping the version when it is lower than Fiber's requirement. No
-// changes are made if the existing version is equal or higher.
-func MigrateDependencies(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
+// The current map contains the dependency versions present before any
+// migrations ran, keyed by module directory.
+func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[string]*semver.Version, target *semver.Version) error {
 	fiberModule := fmt.Sprintf("github.com/gofiber/fiber/v%d@v%s", target.Major(), target.String())
 
 	c := ExecCommand("go", "mod", "download", "-json", fiberModule)
@@ -80,17 +80,22 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, _, target *semver.Versi
 		}
 
 		changed := false
+		orig := current[dir]
 		for _, r := range mf.Require {
 			targetVer, ok := deps[r.Mod.Path]
 			if !ok {
 				continue
 			}
+			maxVer := targetVer
+			if v, ok := orig[r.Mod.Path]; ok && v.GreaterThan(maxVer) {
+				maxVer = v
+			}
 			currVer, err := semver.NewVersion(strings.TrimPrefix(r.Mod.Version, "v"))
 			if err != nil {
 				return fmt.Errorf("parse %s version in %s: %w", r.Mod.Path, modFile, err)
 			}
-			if currVer.LessThan(targetVer) {
-				r.Mod.Version = "v" + targetVer.String()
+			if currVer.LessThan(maxVer) {
+				r.Mod.Version = "v" + maxVer.String()
 				changed = true
 			}
 		}
@@ -112,4 +117,33 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, _, target *semver.Versi
 		cmd.Println("Updating dependency versions")
 	}
 	return nil
+}
+
+func dependencyVersions(root string) (map[string]map[string]*semver.Version, error) {
+	dirs, err := fiberModuleDirs(root)
+	if err != nil {
+		return nil, fmt.Errorf("find modules: %w", err)
+	}
+	deps := make(map[string]map[string]*semver.Version, len(dirs))
+	for _, dir := range dirs {
+		modFile := filepath.Join(dir, "go.mod")
+		b, err := os.ReadFile(modFile) // #nosec G304
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", modFile, err)
+		}
+		mf, err := modfile.Parse(modFile, b, nil)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", modFile, err)
+		}
+		m := make(map[string]*semver.Version, len(mf.Require))
+		for _, r := range mf.Require {
+			v, err := semver.NewVersion(strings.TrimPrefix(r.Mod.Version, "v"))
+			if err != nil {
+				return nil, fmt.Errorf("parse %s version in %s: %w", r.Mod.Path, modFile, err)
+			}
+			m[r.Mod.Path] = v
+		}
+		deps[dir] = m
+	}
+	return deps, nil
 }
