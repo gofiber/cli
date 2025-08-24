@@ -1,7 +1,12 @@
 package v3
 
 import (
+	"bytes"
 	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"strings"
 
@@ -29,6 +34,48 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			return match
 		})
 
+		// old Context() returned fasthttp.RequestCtx
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "", content, parser.ParseComments)
+		if err == nil {
+			modified := false
+			baseIdent := func(expr ast.Expr) *ast.Ident {
+				for {
+					switch e := expr.(type) {
+					case *ast.Ident:
+						return e
+					case *ast.SelectorExpr:
+						expr = e.X
+					case *ast.CallExpr:
+						expr = e.Fun
+					default:
+						return nil
+					}
+				}
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Context" || len(call.Args) != 0 {
+					return true
+				}
+				if ident := baseIdent(sel.X); ident != nil && isFiberCtx(orig, ident.Name) {
+					sel.Sel.Name = "RequestCtx"
+					modified = true
+				}
+				return true
+			})
+			if modified {
+				var buf bytes.Buffer
+				if err := format.Node(&buf, fset, file); err == nil {
+					content = buf.String()
+				}
+			}
+		}
+
 		// SetUserContext removed - comment out the call
 		reSetUserCtx := regexp.MustCompile(`(?m)^(\s*)(.*?\b(\w+)\.SetUserContext\([^\n]*\).*)$`)
 		content = reSetUserCtx.ReplaceAllStringFunc(content, func(line string) string {
@@ -44,20 +91,6 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 				return line
 			}
 			return fmt.Sprintf("%s// TODO: SetUserContext was removed, please migrate manually: %s", parts[1], parts[2])
-		})
-
-		// old Context() returned fasthttp.RequestCtx
-		reReqCtx := regexp.MustCompile(`(\w+)(?:\.[\w]+\([^)]*\))*\.Context\(\)`)
-		content = reReqCtx.ReplaceAllStringFunc(content, func(match string) string {
-			parts := reReqCtx.FindStringSubmatch(match)
-			if len(parts) != 2 {
-				return match
-			}
-			ident := parts[1]
-			if isFiberCtx(orig, ident) {
-				return strings.TrimSuffix(match, ".Context()") + ".RequestCtx()"
-			}
-			return match
 		})
 
 		return content

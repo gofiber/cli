@@ -171,3 +171,28 @@ func handler(c fiber.Ctx) error {
 	assert.NotContains(t, content, ".Context()")
 	assert.Contains(t, buf.String(), "Migrating context methods")
 }
+
+func Test_MigrateContextMethods_RequestCtxNested(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtestnested")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    c.Foo(bar(1)).Context()
+    c.Foo("a)b").Context()
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Equal(t, 2, strings.Count(content, ".RequestCtx()"))
+	assert.NotContains(t, content, ".Context()")
+	assert.Contains(t, buf.String(), "Migrating context methods")
+}
