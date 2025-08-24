@@ -283,3 +283,50 @@ func main() {
 	assert.Contains(t, content, `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: prod})`)
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
+
+func Test_MigrateConfigListenerFields_WithErrorHandler(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf_errhandler")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file1 := filepath.Join(dir, "app.go")
+	require.NoError(t, os.WriteFile(file1, []byte(`package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "net/http"
+)
+func newApp() *fiber.App {
+    var timesHandlingError int
+    return fiber.New(fiber.Config{
+        ErrorHandler: func(ctx *fiber.Ctx, err error) error {
+            timesHandlingError++
+            if err != nil {
+                return fiber.NewError(http.StatusInternalServerError, err.Error())
+            }
+            return nil
+        },
+        Prefork: true,
+    })
+}`), 0o600))
+
+	file2 := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(file2, []byte(`package main
+func main() {
+    app := newApp()
+    app.Listen(":3000")
+}`), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content1 := readFile(t, file1)
+	assert.Contains(t, content1, "ErrorHandler: func(ctx *fiber.Ctx, err error) error {")
+	assert.NotContains(t, content1, "Prefork:")
+
+	content2 := readFile(t, file2)
+	assert.Contains(t, content2, `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: true})`)
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}

@@ -19,8 +19,9 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 
 	reField := regexp.MustCompile(`\s*(Prefork|Network|DisableStartupMessage|EnablePrintRoutes):\s*([^,}]+),?\s*(//[^\n]*)?`)
 	changed1, err := internal.ChangeFileContent(cwd, func(content string) string {
-		reConfig := regexp.MustCompile(`fiber\.Config\{[^}]*\}`)
-		return reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
+		reConfigStart := regexp.MustCompile(`fiber\.Config{`)
+
+		process := func(cfg string) string {
 			inner := cfg[len("fiber.Config{") : len(cfg)-1]
 			inner = reField.ReplaceAllStringFunc(inner, func(f string) string {
 				sub := reField.FindStringSubmatch(f)
@@ -63,7 +64,25 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 			}
 			inner = strings.TrimSuffix(inner, ",")
 			return "fiber.Config{" + inner + "}"
-		})
+		}
+
+		var b strings.Builder
+		last := 0
+		for _, loc := range reConfigStart.FindAllStringIndex(content, -1) {
+			b.WriteString(content[last:loc[0]]) //nolint:errcheck // WriteString never returns an error
+			start := loc[1]
+			end := extractBlock(content, start, '{', '}')
+			if end > start {
+				cfg := content[loc[0]:end]
+				b.WriteString(process(cfg)) //nolint:errcheck // WriteString never returns an error
+				last = end
+			} else {
+				b.WriteString(content[loc[0]:loc[1]]) //nolint:errcheck // WriteString never returns an error
+				last = loc[1]
+			}
+		}
+		b.WriteString(content[last:]) //nolint:errcheck // WriteString never returns an error
+		return b.String()
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related config fields: %w", err)

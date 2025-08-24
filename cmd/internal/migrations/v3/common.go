@@ -287,6 +287,8 @@ func extractCall(src string, start int) (int, string) {
 // the opening delimiter at the start position. Start must point to the first
 // character after the opening delimiter. It handles nested delimiters and
 // quoted strings.
+//
+//nolint:unparam // keep open for potential future delimiters
 func extractBlock(src string, start int, open, closeDelim byte) int {
 	depth := 1
 	inStr := false
