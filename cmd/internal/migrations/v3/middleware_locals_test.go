@@ -199,7 +199,10 @@ var _ = csrf.New(csrf.Config{ContextKey: "token"})`
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o600))
 
 	handler := `package main
-import "github.com/gofiber/fiber/v2"
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
 
 func handler(c fiber.Ctx) error {
     token := c.Locals("token").(string)
@@ -216,4 +219,67 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, `token := csrf.TokenFromContext(c)`)
 	cfgContent := readFile(t, cfgPath)
 	assert.NotContains(t, cfgContent, "ContextKey")
+}
+
+func Test_MigrateMiddlewareLocals_SameContextKeyDifferentPackages(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mctxdup")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	kaCfg := `package main
+import "github.com/gofiber/fiber/v2/middleware/keyauth"
+
+var _ = keyauth.New(keyauth.Config{ContextKey: "token"})`
+	kaCfgPath := filepath.Join(dir, "keyauth.go")
+	require.NoError(t, os.WriteFile(kaCfgPath, []byte(kaCfg), 0o600))
+
+	csrfCfg := `package main
+import "github.com/gofiber/fiber/v2/middleware/csrf"
+
+var _ = csrf.New(csrf.Config{ContextKey: "token"})`
+	csrfCfgPath := filepath.Join(dir, "csrf.go")
+	require.NoError(t, os.WriteFile(csrfCfgPath, []byte(csrfCfg), 0o600))
+
+	kaHandler := `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/keyauth"
+)
+
+func handlerKA(c fiber.Ctx) error {
+    token := c.Locals("token").(string)
+    _ = token
+    return nil
+}`
+	kaHandlerPath := filepath.Join(dir, "ka_handler.go")
+	require.NoError(t, os.WriteFile(kaHandlerPath, []byte(kaHandler), 0o600))
+
+	csrfHandler := `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+
+func handlerCSRF(c fiber.Ctx) error {
+    token := c.Locals("token").(string)
+    _ = token
+    return nil
+}`
+	csrfHandlerPath := filepath.Join(dir, "csrf_handler.go")
+	require.NoError(t, os.WriteFile(csrfHandlerPath, []byte(csrfHandler), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	kaContent := readFile(t, kaHandlerPath)
+	assert.Contains(t, kaContent, `token := keyauth.TokenFromContext(c)`)
+
+	csrfContent := readFile(t, csrfHandlerPath)
+	assert.Contains(t, csrfContent, `token := csrf.TokenFromContext(c)`)
+
+	assert.NotContains(t, readFile(t, kaCfgPath), "ContextKey")
+	assert.NotContains(t, readFile(t, csrfCfgPath), "ContextKey")
 }

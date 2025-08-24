@@ -10,15 +10,47 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+type ctxRepl struct {
+	pkg     string
+	replFmt string
+}
+
+func parseMiddlewareImports(content string, reImport *regexp.Regexp) map[string]string {
+	imports := map[string]string{}
+	for _, m := range reImport.FindAllStringSubmatch(content, -1) {
+		alias := m[1]
+		pkg := m[2]
+		if alias == "" {
+			alias = pkg
+		}
+		imports[alias] = pkg
+	}
+	return imports
+}
+
 func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	ctxMap := map[string]string{
-		"requestid":    "requestid.FromContext(%s)",
-		"csrf":         "csrf.TokenFromContext(%s)",
-		"csrf_handler": "csrf.HandlerFromContext(%s)",
-		"session":      "session.FromContext(%s)",
-		"username":     "basicauth.UsernameFromContext(%s)",
-		"password":     "basicauth.PasswordFromContext(%s)",
-		"token":        "keyauth.TokenFromContext(%s)",
+	ctxMap := map[string][]ctxRepl{
+		"requestid": {
+			{pkg: "requestid", replFmt: "requestid.FromContext(%s)"},
+		},
+		"csrf": {
+			{pkg: "csrf", replFmt: "csrf.TokenFromContext(%s)"},
+		},
+		"csrf_handler": {
+			{pkg: "csrf", replFmt: "csrf.HandlerFromContext(%s)"},
+		},
+		"session": {
+			{pkg: "session", replFmt: "session.FromContext(%s)"},
+		},
+		"username": {
+			{pkg: "basicauth", replFmt: "basicauth.UsernameFromContext(%s)"},
+		},
+		"password": {
+			{pkg: "basicauth", replFmt: "basicauth.PasswordFromContext(%s)"},
+		},
+		"token": {
+			{pkg: "keyauth", replFmt: "keyauth.TokenFromContext(%s)"},
+		},
 	}
 
 	extractors := []struct {
@@ -37,15 +69,7 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 	// first pass: collect context key mappings across all files
 	_, err := internal.ChangeFileContent(cwd, func(content string) string {
-		imports := map[string]string{}
-		for _, m := range reImport.FindAllStringSubmatch(content, -1) {
-			alias := m[1]
-			pkg := m[2]
-			if alias == "" {
-				alias = pkg
-			}
-			imports[alias] = pkg
-		}
+		imports := parseMiddlewareImports(content, reImport)
 
 		for alias, pkg := range imports {
 			for _, e := range extractors {
@@ -55,7 +79,7 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 				re := regexp.MustCompile(alias + `\.Config{[^}]*` + e.field + `:\s*"([^"]+)"`)
 				matches := re.FindAllStringSubmatch(content, -1)
 				for _, m := range matches {
-					ctxMap[m[1]] = e.replFmt
+					ctxMap[m[1]] = append(ctxMap[m[1]], ctxRepl{pkg: e.pkg, replFmt: e.replFmt})
 				}
 			}
 		}
@@ -68,23 +92,24 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 	// second pass: perform replacements and clean up
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		imports := map[string]string{}
-		for _, m := range reImport.FindAllStringSubmatch(content, -1) {
-			alias := m[1]
-			pkg := m[2]
-			if alias == "" {
-				alias = pkg
-			}
-			imports[alias] = pkg
-		}
+		imports := parseMiddlewareImports(content, reImport)
 
 		reLocals := regexp.MustCompile(`(\w+)\.Locals\("([^"]+)"\)`)
 		content = reLocals.ReplaceAllStringFunc(content, func(s string) string {
 			sub := reLocals.FindStringSubmatch(s)
 			ctx := sub[1]
 			key := sub[2]
-			if fmtStr, ok := ctxMap[key]; ok {
-				return fmt.Sprintf(fmtStr, ctx)
+			if repls, ok := ctxMap[key]; ok {
+				if len(repls) == 1 {
+					return fmt.Sprintf(repls[0].replFmt, ctx)
+				}
+				for _, r := range repls {
+					for _, pkg := range imports {
+						if pkg == r.pkg {
+							return fmt.Sprintf(r.replFmt, ctx)
+						}
+					}
+				}
 			}
 			return s
 		})
