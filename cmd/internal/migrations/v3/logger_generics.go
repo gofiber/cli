@@ -59,41 +59,35 @@ func MigrateLoggerGenerics(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			loggerType = m[1]
 		}
 
-		content = reAllLogger.ReplaceAllStringFunc(content, func(m string) string {
-			sub := reAllLogger.FindStringSubmatch(m)
-			if len(sub) != 3 {
-				return m
-			}
-			return fmt.Sprintf("%s.AllLogger[%s]%s", sub[1], loggerType, sub[2])
-		})
-		content = reConfigurableLogger.ReplaceAllStringFunc(content, func(m string) string {
-			sub := reConfigurableLogger.FindStringSubmatch(m)
-			if len(sub) != 3 {
-				return m
-			}
-			return fmt.Sprintf("%s.ConfigurableLogger[%s]%s", sub[1], loggerType, sub[2])
-		})
-		content = reDefaultLogger.ReplaceAllStringFunc(content, func(m string) string {
-			sub := reDefaultLogger.FindStringSubmatch(m)
-			if len(sub) != 2 {
-				return m
-			}
-			return fmt.Sprintf("%s.DefaultLogger[%s]()", sub[1], loggerType)
-		})
-		content = reSetLogger.ReplaceAllStringFunc(content, func(m string) string {
-			sub := reSetLogger.FindStringSubmatch(m)
-			if len(sub) != 2 {
-				return m
-			}
-			return fmt.Sprintf("%s.SetLogger[%s](", sub[1], loggerType)
-		})
-		content = reLoggerToWriter.ReplaceAllStringFunc(content, func(m string) string {
-			sub := reLoggerToWriter.FindStringSubmatch(m)
-			if len(sub) != 2 {
-				return m
-			}
-			return fmt.Sprintf("%s.LoggerToWriter[%s](", sub[1], loggerType)
-		})
+		type replacement struct {
+			re               *regexp.Regexp
+			format           string
+			expectedSubmatch int
+		}
+
+		replacements := []replacement{
+			{reAllLogger, "%s.AllLogger[%s]%s", 3},
+			{reConfigurableLogger, "%s.ConfigurableLogger[%s]%s", 3},
+			{reDefaultLogger, "%s.DefaultLogger[%s]()", 2},
+			{reSetLogger, "%s.SetLogger[%s](", 2},
+			{reLoggerToWriter, "%s.LoggerToWriter[%s](", 2},
+		}
+
+		for _, r := range replacements {
+			content = r.re.ReplaceAllStringFunc(content, func(m string) string {
+				sub := r.re.FindStringSubmatch(m)
+				if len(sub) != r.expectedSubmatch {
+					return m
+				}
+
+				args := []any{sub[1], loggerType}
+				if len(sub) > 2 {
+					args = append(args, sub[2])
+				}
+
+				return fmt.Sprintf(r.format, args...)
+			})
+		}
 		return content
 	})
 	if err != nil {
