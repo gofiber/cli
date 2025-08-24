@@ -103,32 +103,41 @@ func removeConfigField(src, field string) string {
 				if ch == '"' {
 					inString = false
 				}
-			} else {
-				switch ch {
-				case '"':
-					inString = true
-				case '(', '{', '[':
-					depth++
-				case ')', '}', ']':
-					if depth > 0 {
-						depth--
-					} else if ch == '}' {
-						src = src[:start] + src[i:]
-						goto nextField
-					}
-				case ',':
-					if depth == 0 {
-						i = skipCommaSuffix(src, i)
-						src = src[:start] + src[i:]
-						goto nextField
-					}
-				case '\n':
-					if depth == 0 {
-						i++
-						src = src[:start] + src[i:]
-						goto nextField
-					}
+				i++
+				continue
+			}
+
+			switch ch {
+			case '"':
+				inString = true
+			case '(', '{', '[':
+				depth++
+			case ')', '}', ']':
+				if depth > 0 {
+					depth--
+					i++
+					continue
 				}
+				if ch == '}' {
+					src = src[:start] + src[i:]
+					goto nextField
+				}
+			case ',':
+				if depth > 0 {
+					i++
+					continue
+				}
+				i = skipCommaSuffix(src, i)
+				src = src[:start] + src[i:]
+				goto nextField
+			case '\n':
+				if depth > 0 {
+					i++
+					continue
+				}
+				i++
+				src = src[:start] + src[i:]
+				goto nextField
 			}
 			i++
 		}

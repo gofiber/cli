@@ -36,3 +36,25 @@ var _ = basicauth.New(basicauth.Config{
 	assert.NotContains(t, content, "password comment")
 	assert.Contains(t, buf.String(), "Migrating basicauth configs")
 }
+
+func Test_MigrateBasicauthConfig_Inline(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mbasiccfg_inline")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2/middleware/basicauth"
+var _ = basicauth.New(basicauth.Config{ContextUsername: "user", ContextPassword: "pass"})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateBasicauthConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ContextUsername")
+	assert.NotContains(t, content, "ContextPassword")
+	assert.Contains(t, content, "basicauth.Config{}")
+	assert.Contains(t, buf.String(), "Migrating basicauth configs")
+}
