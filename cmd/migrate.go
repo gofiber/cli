@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -134,26 +133,15 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", fmt.Errorf("create http request: %w", err)
-	}
-	req.Header.Set("User-Agent", "fiber-cli")
-
-	client := http.Client{}
-	res, err := client.Do(req)
+	headers := map[string]string{"User-Agent": "fiber-cli"}
+	b, status, err := cachedGET(ctx, url, headers)
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
-	defer func() {
-		if err := res.Body.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to close response body: %v\n", err)
-		}
-	}()
-	if res.StatusCode != http.StatusOK {
-		msg, err := io.ReadAll(res.Body)
-		if err != nil || len(msg) == 0 {
-			msg = []byte(res.Status)
+	if status != http.StatusOK {
+		msg := b
+		if len(msg) == 0 {
+			msg = []byte(http.StatusText(status))
 		}
 		return "", fmt.Errorf("http request failed: %s", strings.TrimSpace(string(msg)))
 	}
@@ -169,7 +157,7 @@ func pseudoVersionFromHash(base *semver.Version, hash string) (string, error) {
 		} `json:"commit"`
 		SHA string `json:"sha"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+	if err := json.Unmarshal(b, &data); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 

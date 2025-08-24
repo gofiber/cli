@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -74,34 +74,19 @@ func LatestCliVersion() (string, error) {
 }
 
 func latestVersionByURL(url string) (string, error) {
-	var (
-		res *http.Response
-		b   []byte
-	)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", fmt.Errorf("create http request: %w", err)
-	}
-
-	client := &http.Client{}
-	res, err = client.Do(req)
+	b, status, err := cachedGET(ctx, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("http request failed: %w", err)
 	}
-
-	defer func() {
-		if cerr := res.Body.Close(); cerr != nil && err == nil {
-			err = cerr
+	if status != http.StatusOK {
+		msg := strings.TrimSpace(string(b))
+		if msg == "" {
+			msg = http.StatusText(status)
 		}
-	}()
-
-	b, err = io.ReadAll(res.Body)
-	if err != nil {
-		return "", fmt.Errorf("read response body: %w", err)
+		return "", fmt.Errorf("http request failed: %s", msg)
 	}
 
 	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {

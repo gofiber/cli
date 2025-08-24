@@ -183,6 +183,7 @@ func main() {
 
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 	httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases/latest", httpmock.NewBytesResponder(200, []byte(`{"name":"v3.0.0"}`)))
 
 	cmd := newMigrateCmd()
@@ -363,6 +364,7 @@ func Test_Migrate_WithHash(t *testing.T) {
 	short := hash[:7]
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + short
 	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
 
@@ -396,6 +398,7 @@ func Test_Migrate_WithHash_UpdatePseudoVersion(t *testing.T) {
 	short := hash[:7]
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + short
 	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-03T03:04:05Z"}}}`)))
 
@@ -430,6 +433,7 @@ func Test_Migrate_WithHash_DowngradeWithForce(t *testing.T) {
 	short := hash[:7]
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + short
 	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
 
@@ -519,6 +523,7 @@ func Test_Migrate_WithHash_RequireBlock(t *testing.T) {
 	short := hash[:7]
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 	commitURL := "https://api.github.com/repos/gofiber/fiber/commits/" + short
 	httpmock.RegisterResponder(http.MethodGet, commitURL, httpmock.NewBytesResponder(200, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
 

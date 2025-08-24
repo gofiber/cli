@@ -82,6 +82,7 @@ func Test_Root_CheckCliVersion(t *testing.T) {
 
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
 
 	httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewErrorResponder(errors.New("network error")))
 
