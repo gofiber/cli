@@ -57,6 +57,9 @@ func TestHelperProcess(t *testing.T) {
 		testExit(1)
 		return
 	}
+	if out := os.Getenv("GO_HELPER_STDOUT"); out != "" {
+		_, _ = fmt.Fprint(os.Stdout, out)
+	}
 
 	testExit(0)
 }

@@ -30,7 +30,7 @@ type Migration struct {
 // Example structure:
 // {"from": ">=2.0.0", "to": "<=3.*.*", "fn": [MigrateFN, MigrateFN]}
 var Migrations = []Migration{
-	{From: ">=1.0.0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
+	{From: ">=1.0.0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs, MigrateDependencies}},
 	{
 		From: ">=2.0.0",
 		To:   "<4.0.0-0",
