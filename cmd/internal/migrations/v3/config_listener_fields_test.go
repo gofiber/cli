@@ -302,7 +302,10 @@ func newApp() *fiber.App {
     return fiber.New(fiber.Config{
         ErrorHandler: func(ctx *fiber.Ctx, err error) error {
             timesHandlingError++
-            return fiber.NewError(http.StatusInternalServerError, err.Error())
+            if err != nil {
+                return fiber.NewError(http.StatusInternalServerError, err.Error())
+            }
+            return nil
         },
         Prefork: true,
     })
