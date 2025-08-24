@@ -14,14 +14,26 @@ import (
 )
 
 func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	reCtxUser := regexp.MustCompile(`\s*ContextUsername:\s*[^,]+,?\n`)
-	reCtxPass := regexp.MustCompile(`\s*ContextPassword:\s*[^,]+,?\n`)
+	// Remove ContextKey/Username/Password when they are on their own line (with optional trailing comment).
+	reCtxKeyLine := regexp.MustCompile(`(?m)^\s*Context(?:Username|Password|Key):\s*[^,\n}]+,?\s*(//[^\n]*)?\n`)
+
+	// Also remove inline occurrences immediately before a closing '}' (with optional comma/comment),
+	// e.g. basicauth.Config{ContextUsername: "user"}) or {..., ContextPassword: "pass"})
+	// Keep the closing brace via a capture group.
+	reCtxKeyInline := regexp.MustCompile(`(?m)\s*Context(?:Username|Password|Key):\s*[^,\n}]+(?:,\s*)?(?://[^\n]*)?(\s*})`)
+
 	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
 	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		content = reCtxUser.ReplaceAllString(content, "")
-		content = reCtxPass.ReplaceAllString(content, "")
+		content = reCtxKeyLine.ReplaceAllString(content, "")
+		for {
+			newContent := reCtxKeyInline.ReplaceAllString(content, "$1")
+			if newContent == content {
+				break
+			}
+			content = newContent
+		}
 
 		content = reUsers.ReplaceAllStringFunc(content, func(m string) string {
 			sub := reUsers.FindStringSubmatch(m)

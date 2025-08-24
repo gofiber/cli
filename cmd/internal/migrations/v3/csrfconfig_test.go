@@ -39,6 +39,31 @@ var _ = csrf.New(csrf.Config{
 	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
 }
 
+func Test_MigrateCSRFConfig_SessionKeyWithComment(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcsrfskc")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+var _ = csrf.New(csrf.Config{
+    SessionKey: "csrf", // session comment
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateCSRFConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "SessionKey")
+	assert.NotContains(t, content, "session comment")
+	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
+}
+
 func Test_MigrateCSRFConfig_KeyLookup(t *testing.T) {
 	t.Parallel()
 
