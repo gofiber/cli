@@ -126,3 +126,58 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, `token := csrf.TokenFromContext(c)`)
 	assert.NotContains(t, content, "ContextKey")
 }
+
+func Test_MigrateMiddlewareLocals_ContextKeyFormatting(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mctxfmt")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import ka "github.com/gofiber/fiber/v2/middleware/keyauth"
+func main() {
+    _ = ka.New(ka.Config{
+        Next:        nil,
+        ContextKey:  "token",
+        SuccessHandler: nil,
+    })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "ContextKey")
+	assert.Contains(t, content, "Next:           nil,\n\t\tSuccessHandler: nil")
+}
+
+func Test_MigrateMiddlewareLocals_NonFiberConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mnonfiber")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+
+var ConfigDefault = Config{
+    Next:           nil,
+    SuccessHandler: nil,
+    ErrorHandler:   nil,
+    Validate:       nil,
+    SymmetricKey:   nil,
+    ContextKey:     DefaultContextKey,
+    TokenLookup:    [2]string{LookupHeader, fiber.HeaderAuthorization},
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "ContextKey:     DefaultContextKey")
+}

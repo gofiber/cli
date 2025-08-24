@@ -34,11 +34,27 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 			{"basicauth", "ContextPassword", "basicauth.PasswordFromContext(%s)"},
 		}
 
-		for _, e := range extractors {
-			re := regexp.MustCompile(e.pkg + `\.Config{[^}]*` + e.field + `:\s*"([^"]+)"`)
-			matches := re.FindAllStringSubmatch(content, -1)
-			for _, m := range matches {
-				ctxMap[m[1]] = e.replFmt
+		reImport := regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w\.]+)\s+)?"github\.com/gofiber/fiber/(?:v2|v3)/middleware/([\w]+)"`)
+		imports := map[string]string{}
+		for _, m := range reImport.FindAllStringSubmatch(content, -1) {
+			alias := m[1]
+			pkg := m[2]
+			if alias == "" {
+				alias = pkg
+			}
+			imports[alias] = pkg
+		}
+
+		for alias, pkg := range imports {
+			for _, e := range extractors {
+				if e.pkg != pkg {
+					continue
+				}
+				re := regexp.MustCompile(alias + `\.Config{[^}]*` + e.field + `:\s*"([^"]+)"`)
+				matches := re.FindAllStringSubmatch(content, -1)
+				for _, m := range matches {
+					ctxMap[m[1]] = e.replFmt
+				}
 			}
 		}
 
@@ -59,9 +75,15 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))`)
 		content = reComma.ReplaceAllString(content, "$1, $2 := $3, true")
 
-		content = removeConfigField(content, "ContextKey")
-		content = removeConfigField(content, "ContextUsername")
-		content = removeConfigField(content, "ContextPassword")
+		for alias := range imports {
+			reCfg := regexp.MustCompile(alias + `\.Config{[^}]*}`)
+			content = reCfg.ReplaceAllStringFunc(content, func(cfg string) string {
+				cfg = removeConfigField(cfg, "ContextKey")
+				cfg = removeConfigField(cfg, "ContextUsername")
+				cfg = removeConfigField(cfg, "ContextPassword")
+				return cfg
+			})
+		}
 
 		return content
 	})
