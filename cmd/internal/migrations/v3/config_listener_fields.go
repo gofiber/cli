@@ -19,7 +19,7 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 
 	reField := regexp.MustCompile(`\s*(Prefork|Network|DisableStartupMessage|EnablePrintRoutes):\s*([^,}]+),?\s*(//[^\n]*)?`)
 	changed1, err := internal.ChangeFileContent(cwd, func(content string) string {
-		reConfig := regexp.MustCompile(`fiber\.Config\{[^}]*\}`)
+		reConfig := regexp.MustCompile(`fiber\.Config{(?:[^{}]|{[^{}]*})*}`)
 		return reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
 			inner := cfg[len("fiber.Config{") : len(cfg)-1]
 			inner = reField.ReplaceAllStringFunc(inner, func(f string) string {
