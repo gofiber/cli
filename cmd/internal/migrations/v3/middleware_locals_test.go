@@ -221,6 +221,52 @@ func handler(c fiber.Ctx) error {
 	assert.NotContains(t, cfgContent, "ContextKey")
 }
 
+func Test_MigrateMiddlewareLocals_CustomContextKeyWithFunc(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcustomctxfunc")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	cfg := `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+
+var _ = csrf.New(csrf.Config{
+    Next: func(c *fiber.Ctx) bool { return csrfActivated },
+    ContextKey: "token",
+})`
+	cfgPath := filepath.Join(dir, "config.go")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o600))
+
+	handler := `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/keyauth"
+)
+
+func handler(c fiber.Ctx) error {
+    _ = keyauth.New(keyauth.Config{})
+    token := c.Locals("token").(string)
+    _ = token
+    return nil
+}`
+	handlerPath := filepath.Join(dir, "handler.go")
+	require.NoError(t, os.WriteFile(handlerPath, []byte(handler), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, handlerPath)
+	assert.Contains(t, content, `token := csrf.TokenFromContext(c)`)
+	assert.NotContains(t, content, `keyauth.TokenFromContext`)
+	cfgContent := readFile(t, cfgPath)
+	assert.NotContains(t, cfgContent, "ContextKey")
+}
+
 func Test_MigrateMiddlewareLocals_SameContextKeyDifferentPackages(t *testing.T) {
 	t.Parallel()
 

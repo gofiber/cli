@@ -79,6 +79,7 @@ import (
     "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/monitor"
     "github.com/gofiber/fiber/v2/middleware/csrf"
+    "github.com/gofiber/fiber/v2/middleware/keyauth"
 )
 
 func handler(c *fiber.Ctx) error {
@@ -103,6 +104,7 @@ func main() {
         Network:                 "tcp",
     })
     app.Use(csrf.New(csrf.Config{ContextKey: "token"}))
+    app.Use(keyauth.New(keyauth.Config{}))
     app.Static("/", "./public")
     app.Add(fiber.MethodGet, "/foo", handler)
     app.Mount("/api", app)
@@ -128,6 +130,7 @@ func main() {
 	at := assert.New(t)
 	at.Contains(content, "github.com/gofiber/fiber/v3")
 	at.Contains(content, "github.com/gofiber/contrib/monitor")
+	at.Contains(content, "github.com/gofiber/fiber/v3/middleware/keyauth")
 	at.NotContains(content, "*fiber.Ctx")
 	at.Contains(content, "fiber.Ctx")
 	at.Contains(content, ".Bind().Body(&v)")
@@ -136,6 +139,7 @@ func main() {
 	at.Contains(content, ".Redirect().Back()")
 	at.Contains(content, "fiber.Params[int](c, \"id\"")
 	at.Contains(content, "csrf.TokenFromContext(c)")
+	at.NotContains(content, "keyauth.TokenFromContext")
 	at.NotContains(content, "ContextKey")
 	at.Contains(content, ".Use(\"/api\", app)")
 	at.Contains(content, ".Listen(")
