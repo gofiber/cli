@@ -13,13 +13,38 @@ var (
 )
 
 // skipCommaSuffix advances the index past a comma and any trailing
-// whitespace or newline characters.
+// whitespace, comments, or newline characters.
 func skipCommaSuffix(src string, i int) int {
 	i++
 	for i < len(src) {
 		switch src[i] {
 		case ' ', '\t':
 			i++
+		case '/':
+			if i+1 < len(src) {
+				if src[i+1] == '/' { // line comment
+					i += 2
+					for i < len(src) && src[i] != '\n' {
+						i++
+					}
+					if i < len(src) {
+						return i + 1
+					}
+					return i
+				}
+				if src[i+1] == '*' { // block comment
+					i += 2
+					for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+						i++
+					}
+					if i+1 < len(src) {
+						i += 2
+						continue
+					}
+					return i
+				}
+			}
+			return i
 		case '\n':
 			return i + 1
 		default:
@@ -34,13 +59,37 @@ func skipCommaSuffix(src string, i int) int {
 // multi-line function literals or function calls with arguments that contain
 // commas.
 func removeConfigField(src, field string) string {
-	re := regexp.MustCompile(`(?m)^\s*` + field + `:\s*`)
+	re := regexp.MustCompile(field + `:\s*`)
 	for {
 		loc := re.FindStringIndex(src)
 		if loc == nil {
 			break
 		}
+
 		start := loc[0]
+		// include any leading whitespace and comma
+		for start > 0 {
+			switch src[start-1] {
+			case ' ', '\t':
+				start--
+			case ',':
+				start--
+				for start > 0 && (src[start-1] == ' ' || src[start-1] == '\t') {
+					start--
+				}
+				goto leadDone
+			case '\n':
+				start--
+				for start > 0 && (src[start-1] == ' ' || src[start-1] == '\t') {
+					start--
+				}
+				goto leadDone
+			default:
+				goto leadDone
+			}
+		}
+	leadDone:
+
 		i := loc[1]
 		depth := 0
 		inString := false
@@ -54,29 +103,41 @@ func removeConfigField(src, field string) string {
 				if ch == '"' {
 					inString = false
 				}
-			} else {
-				switch ch {
-				case '"':
-					inString = true
-				case '(', '{', '[':
-					depth++
-				case ')', '}', ']':
-					if depth > 0 {
-						depth--
-					}
-				case ',':
-					if depth == 0 {
-						i = skipCommaSuffix(src, i)
-						src = src[:start] + src[i:]
-						goto nextField
-					}
-				case '\n':
-					if depth == 0 {
-						i++
-						src = src[:start] + src[i:]
-						goto nextField
-					}
+				i++
+				continue
+			}
+
+			switch ch {
+			case '"':
+				inString = true
+			case '(', '{', '[':
+				depth++
+			case ')', '}', ']':
+				if depth > 0 {
+					depth--
+					i++
+					continue
 				}
+				if ch == '}' {
+					src = src[:start] + src[i:]
+					goto nextField
+				}
+			case ',':
+				if depth > 0 {
+					i++
+					continue
+				}
+				i = skipCommaSuffix(src, i)
+				src = src[:start] + src[i:]
+				goto nextField
+			case '\n':
+				if depth > 0 {
+					i++
+					continue
+				}
+				i++
+				src = src[:start] + src[i:]
+				goto nextField
 			}
 			i++
 		}

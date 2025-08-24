@@ -181,3 +181,34 @@ var cfg = healthcheck.Config{
 	assert.NotContains(t, content, "ReadinessEndpoint")
 	assert.Contains(t, buf.String(), "Migrating healthcheck middleware configs")
 }
+
+func Test_MigrateHealthcheckConfig_WithComments(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mhealthc")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/healthcheck"
+)
+func main() {
+    app := fiber.New()
+    app.Use(healthcheck.New(healthcheck.Config{
+        LivenessEndpoint: "/live", // live comment
+        ReadinessEndpoint: "/ready", // ready comment
+    }))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateHealthcheckConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `app.Get("/live"`)
+	assert.Contains(t, content, `app.Get("/ready"`)
+	assert.NotContains(t, content, "live comment")
+	assert.NotContains(t, content, "ready comment")
+}

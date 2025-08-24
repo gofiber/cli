@@ -59,8 +59,9 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))`)
 		content = reComma.ReplaceAllString(content, "$1, $2 := $3, true")
 
-		reCtxKey := regexp.MustCompile(`\s*Context(?:Username|Password|Key):\s*[^,}\n]+,?`)
-		content = reCtxKey.ReplaceAllString(content, "")
+		content = removeConfigField(content, "ContextKey")
+		content = removeConfigField(content, "ContextUsername")
+		content = removeConfigField(content, "ContextPassword")
 
 		return content
 	})

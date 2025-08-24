@@ -255,3 +255,31 @@ func main() {
 	assert.Contains(t, content, `go app.Listen(":3000", fiber.ListenConfig{DisableStartupMessage: true})`)
 	assert.Contains(t, buf.String(), "Migrating listener related config fields")
 }
+
+func Test_MigrateConfigListenerFields_WithComment(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mconf_comment")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+var prod bool
+func main() {
+    app := fiber.New(fiber.Config{
+        Prefork: prod, // comment
+    })
+    app.Listen(":3000")
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateConfigListenerFields(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "fiber.New(fiber.Config{})")
+	assert.NotContains(t, content, "// comment")
+	assert.Contains(t, content, `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: prod})`)
+	assert.Contains(t, buf.String(), "Migrating listener related config fields")
+}
