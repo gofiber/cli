@@ -19,7 +19,7 @@ fiber migrate --to 3.0.0
 
 - `-t`, `--to` – Target version to migrate to. Defaults to the latest release
 - `--hash` – Commit hash for the Fiber version when migrating to a pseudo version
-- `--third-party` – Refresh third-party modules like `contrib`, `storage`, or `template`. Append `@<commit>` to pin to a specific commit
+- `--third-party` – Refresh third-party modules like `contrib`, `storage`, or `template`. Provide a comma-separated list (e.g. `--third-party=contrib,storage`) and append `@<commit>` to pin to a specific commit
 - `-f`, `--force` – Force migration even if already on the target version
 - `-s`, `--skip_go_mod` – Skip running `go mod tidy`, `go mod download`, and `go mod vendor`
 - `-v`, `--verbose` – Enable verbose output during migration
@@ -54,6 +54,12 @@ Refresh template packages to a specific commit:
 
 ```bash
 fiber migrate --third-party=template@abcdef123456
+```
+
+Refresh both contrib and storage packages at once:
+
+```bash
+fiber migrate --third-party=contrib,storage
 ```
 
 Force re-running migrations even if the version matches:

@@ -38,7 +38,7 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringVar(&targetHash, "hash", "", "Commit hash for Fiber version")
-	cmd.Flags().StringSliceVar(&thirdParty, "third-party", nil, "Refresh third-party modules, e.g. --third-party=contrib")
+	cmd.Flags().StringSliceVar(&thirdParty, "third-party", nil, "Refresh third-party modules (contrib,storage,template). Use a comma-separated list like --third-party=contrib,storage and append @<commit> to pin a commit")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		tps := make([]ThirdPartyParam, 0, len(thirdParty))

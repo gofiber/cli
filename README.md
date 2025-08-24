@@ -164,7 +164,7 @@ fiber migrate --to 3.0.0
   -f, --force            Force migration even if already on the version
   -s, --skip_go_mod      Skip running go mod tidy, download and vendor
       --hash string      Commit hash for Fiber version
-      --third-party strings   Refresh third-party modules (e.g. contrib@<commit>)
+      --third-party strings   Refresh third-party modules (contrib,storage,template). Provide a comma-separated list and optionally append @<commit> to pin a commit
   -v, --verbose          Enable verbose output
   -h, --help             help for migrate
 ```
