@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -90,9 +92,37 @@ func migrationName(fn MigrationFn) string {
 	return f
 }
 
+func matchPatternList(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if matchPattern(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchPattern(name, pattern string) bool {
+	if ok, err := filepath.Match(pattern, name); err == nil {
+		if ok {
+			return true
+		}
+		if !isRegexPattern(pattern) {
+			return false
+		}
+	}
+	if re, err := regexp.Compile(pattern); err == nil {
+		return re.MatchString(name)
+	}
+	return name == pattern
+}
+
+func isRegexPattern(p string) bool {
+	return strings.ContainsAny(p, "^$[]()|+?\\")
+}
+
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
-func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool) error {
+func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool, include, exclude []string) error {
 	var errs []error
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
@@ -114,13 +144,20 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 
 		if fromC.Check(curr) && toC.Check(target) {
 			for _, fn := range m.Functions {
+				name := migrationName(fn)
+				if len(include) > 0 && !matchPatternList(name, include) {
+					continue
+				}
+				if len(exclude) > 0 && matchPatternList(name, exclude) {
+					continue
+				}
+
 				if verbose {
 					var buf bytes.Buffer
 					origOut := cmd.OutOrStdout()
 					cmd.SetOut(io.MultiWriter(origOut, &buf))
 					err := fn(cmd, cwd, curr, target)
 					cmd.SetOut(origOut)
-					name := migrationName(fn)
 					if buf.Len() == 0 {
 						cmd.Printf("%s: no changes\n", name)
 					} else {
@@ -131,7 +168,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 					}
 				} else {
 					if err := fn(cmd, cwd, curr, target); err != nil {
-						errs = append(errs, fmt.Errorf("%s: %w", migrationName(fn), err))
+						errs = append(errs, fmt.Errorf("%s: %w", name, err))
 					}
 				}
 			}
