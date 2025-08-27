@@ -26,7 +26,7 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
-		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, false))
+		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, false, nil, nil))
 		assert.Equal(t, "", buf.String())
 	})
 
@@ -36,7 +36,7 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
-		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
+		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "Skipping migration from >=1.0.0-0 to >=0.0.0-0")
 		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
@@ -64,7 +64,7 @@ require github.com/valyala/fasthttp v1.0.0`
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
-		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
+		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "MigrateGoPkgs: no changes")
 		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
@@ -88,7 +88,7 @@ require github.com/valyala/fasthttp v1.0.0`
 		var buf bytes.Buffer
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
-		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true))
+		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "Migrating Go packages")
 		assert.Contains(t, out, "MigrateGoPkgs: changed")

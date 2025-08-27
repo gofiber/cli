@@ -92,7 +92,9 @@ func migrationName(fn MigrationFn) string {
 
 // DoMigration runs all migrations
 // It will run all migrations that match the current and target version
-func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool) error {
+func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool, includeFiles, excludeFiles []string) error {
+	internal.SetFileFilters(includeFiles, excludeFiles)
+	defer internal.SetFileFilters(nil, nil)
 	var errs []error
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
@@ -114,13 +116,13 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 
 		if fromC.Check(curr) && toC.Check(target) {
 			for _, fn := range m.Functions {
+				name := migrationName(fn)
 				if verbose {
 					var buf bytes.Buffer
 					origOut := cmd.OutOrStdout()
 					cmd.SetOut(io.MultiWriter(origOut, &buf))
 					err := fn(cmd, cwd, curr, target)
 					cmd.SetOut(origOut)
-					name := migrationName(fn)
 					if buf.Len() == 0 {
 						cmd.Printf("%s: no changes\n", name)
 					} else {
@@ -131,7 +133,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 					}
 				} else {
 					if err := fn(cmd, cwd, curr, target); err != nil {
-						errs = append(errs, fmt.Errorf("%s: %w", migrationName(fn), err))
+						errs = append(errs, fmt.Errorf("%s: %w", name, err))
 					}
 				}
 			}

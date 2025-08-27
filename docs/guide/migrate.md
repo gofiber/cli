@@ -23,6 +23,8 @@ fiber migrate --to 3.0.0
 - `-f`, `--force` – Force migration even if already on the target version
 - `-s`, `--skip_go_mod` – Skip running `go mod tidy`, `go mod download`, and `go mod vendor`
 - `-v`, `--verbose` – Enable verbose output during migration
+- `--include` – Comma-separated list of files to include in the migration. Supports glob and regex patterns
+- `--exclude` – Comma-separated list of files to exclude from the migration. Supports glob and regex patterns
 
 ## Examples
 
@@ -78,4 +80,10 @@ Verbose mode prints detailed progress and executed steps:
 
 ```bash
 fiber migrate --verbose
+```
+
+Limit the migration to specific files:
+
+```bash
+fiber migrate --include=internal/** --exclude="*_test.go"
 ```
