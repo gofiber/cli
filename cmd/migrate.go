@@ -27,8 +27,8 @@ func newMigrateCmd() *cobra.Command {
 	var skipGoMod bool
 	var verbose bool
 	var thirdParty []string
-	var include []string
-	var exclude []string
+	var includeFiles []string
+	var excludeFiles []string
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
@@ -41,8 +41,8 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringVar(&targetHash, "hash", "", "Commit hash for Fiber version")
 	cmd.Flags().StringSliceVar(&thirdParty, "third-party", nil, "Refresh third-party modules (contrib,storage,template). Use a comma-separated list like --third-party=contrib,storage and append @<commit> to pin a commit")
-	cmd.Flags().StringSliceVar(&include, "include", nil, "Comma-separated list of migrations to include. Supports glob and regex patterns")
-	cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "Comma-separated list of migrations to exclude. Supports glob and regex patterns")
+	cmd.Flags().StringSliceVar(&includeFiles, "include", nil, "Comma-separated list of files to include. Supports glob and regex patterns")
+	cmd.Flags().StringSliceVar(&excludeFiles, "exclude", nil, "Comma-separated list of files to exclude. Supports glob and regex patterns")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		tps := make([]ThirdPartyParam, 0, len(thirdParty))
@@ -65,8 +65,8 @@ func newMigrateCmd() *cobra.Command {
 			SkipGoMod:          skipGoMod,
 			Verbose:            verbose,
 			ThirdParty:         tps,
-			Include:            include,
-			Exclude:            exclude,
+			IncludeFiles:       includeFiles,
+			ExcludeFiles:       excludeFiles,
 		})
 	}
 
@@ -80,8 +80,8 @@ type MigrateOptions struct {
 	TargetVersionS     string
 	TargetHash         string
 	ThirdParty         []ThirdPartyParam
-	Include            []string
-	Exclude            []string
+	IncludeFiles       []string
+	ExcludeFiles       []string
 	Force              bool
 	SkipGoMod          bool
 	Verbose            bool
@@ -146,7 +146,7 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		migrateFromS = migrateFrom.String()
 	}
 
-	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion, opts.SkipGoMod, opts.Verbose, opts.Include, opts.Exclude)
+	err = migrations.DoMigration(cmd, wd, migrateFrom, targetVersion, opts.SkipGoMod, opts.Verbose, opts.IncludeFiles, opts.ExcludeFiles)
 	if err != nil {
 		return fmt.Errorf("migration failed %w", err)
 	}
