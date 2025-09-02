@@ -4,24 +4,26 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/spf13/cobra"
+	cmdinternal "github.com/gofiber/cli/cmd/internal"
 )
 
 var (
 	needError bool
 	errFlag   = struct{}{}
+	testExit  = os.Exit // for testing exit
 )
 
 func fakeExecCommand(command string, args ...string) *exec.Cmd {
 	cs := []string{"-test.run=TestHelperProcess", "--", command}
 	cs = append(cs, args...)
+	// #nosec G204 -- safe for test, args are controlled
 	cmd := exec.Command(os.Args[0], cs...)
 	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 	if needError {
@@ -31,6 +33,7 @@ func fakeExecCommand(command string, args ...string) *exec.Cmd {
 }
 
 func TestHelperProcess(t *testing.T) {
+	t.Helper()
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
@@ -45,19 +48,25 @@ func TestHelperProcess(t *testing.T) {
 
 	if len(args) == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "No command")
-		os.Exit(2)
+		testExit(2)
+		return
 	}
 
 	if os.Getenv("GO_WANT_HELPER_NEED_ERR") == "1" {
 		_, _ = fmt.Fprintf(os.Stderr, "fake error")
-		os.Exit(1)
+		testExit(1)
+		return
+	}
+	if out := os.Getenv("GO_HELPER_STDOUT"); out != "" {
+		_, _ = fmt.Fprint(os.Stdout, out)
 	}
 
-	os.Exit(0)
+	testExit(0)
 }
 
 func setupCmd(flag ...struct{}) {
 	execCommand = fakeExecCommand
+	cmdinternal.ExecCommand = fakeExecCommand
 	if len(flag) > 0 {
 		needError = true
 	}
@@ -65,15 +74,16 @@ func setupCmd(flag ...struct{}) {
 
 func teardownCmd() {
 	execCommand = exec.Command
+	cmdinternal.ExecCommand = exec.Command
 	needError = false
 }
 
 func setupLookPath(flag ...struct{}) {
-	execLookPath = func(file string) (s string, err error) {
+	execLookPath = func(_ string) (s string, err error) {
 		if len(flag) > 0 {
 			err = errors.New("fake look path error")
 		}
-		return
+		return "", err
 	}
 }
 
@@ -87,32 +97,56 @@ func setupOsExit(override ...func(int)) {
 		fn = override[0]
 	}
 	osExit = fn
+	testExit = fn
 }
 
 func teardownOsExit() {
 	osExit = os.Exit
+	testExit = os.Exit
 }
 
 func runCobraCmd(cmd *cobra.Command, args ...string) (string, error) {
 	b := new(bytes.Buffer)
 
-	cmd.ResetCommands()
 	cmd.SetErr(b)
 	cmd.SetOut(b)
-	cmd.SetArgs(args)
-	err := cmd.Execute()
 
+	if parent := cmd.Parent(); parent != nil {
+		origArgs := parent.Flags().Args() // not used but placeholder
+		_ = origArgs
+		parent.SetErr(b)
+		parent.SetOut(b)
+		origSilence := parent.SilenceErrors
+		parent.SilenceErrors = false
+		parent.SetArgs(append([]string{cmd.Name()}, args...))
+		defer func() {
+			parent.SetArgs(nil)
+			parent.SilenceErrors = origSilence
+		}()
+	} else {
+		if len(args) == 0 {
+			cmd.SetArgs([]string{})
+		} else {
+			cmd.SetArgs(args)
+		}
+	}
+
+	err := cmd.Execute()
 	return b.String(), err
 }
 
 func setupHomeDir(t *testing.T, pattern string) string {
-	homeDir, err := ioutil.TempDir("", "test_"+pattern)
-	assert.Nil(t, err)
+	t.Helper()
+	homeDir, err := os.MkdirTemp("", "test_"+pattern)
+	assert.NoError(t, err)
 	return homeDir
 }
 
 func teardownHomeDir(dir string) {
-	_ = os.RemoveAll(dir)
+	err := os.RemoveAll(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to remove temp dir: %v", err)
+	}
 }
 
 func setupSpinner() {

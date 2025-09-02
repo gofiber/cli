@@ -2,21 +2,66 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"runtime/debug"
+	"strings"
 	"time"
 
-	"github.com/gofiber/cli/cmd/internal"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
-const version = "0.0.9"
-const configName = ".fiberconfig"
+const (
+	configName     = ".fiberconfig"
+	unknownVersion = "unknown"
+)
 
-var (
-	rc = rootConfig{
-		CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
+var version string // dynamically determined version
+
+// getVersion returns the current version using build info
+// Falls back to VCS info if available, then to "unknown"
+func getVersion() string {
+	if version != "" {
+		return version
 	}
-)
+
+	buildInfo, ok := debug.ReadBuildInfo()
+	if !ok {
+		version = unknownVersion
+		return version
+	}
+
+	// First try to get version from module version (when built with go install)
+	if buildInfo.Main.Version != "" && buildInfo.Main.Version != "(devel)" {
+		version = strings.TrimPrefix(buildInfo.Main.Version, "v")
+		return version
+	}
+
+	// Fallback to VCS info if available
+	for _, setting := range buildInfo.Settings {
+		switch setting.Key {
+		case "vcs.tag":
+			if setting.Value != "" {
+				version = strings.TrimPrefix(setting.Value, "v")
+				return version
+			}
+		case "vcs.revision":
+			if setting.Value != "" && len(setting.Value) >= 7 {
+				version = setting.Value[:7] // short commit hash
+				return version
+			}
+		}
+	}
+
+	version = unknownVersion
+	return version
+}
+
+var rc = rootConfig{
+	CliVersionCheckInterval: int64((time.Hour * 12) / time.Second),
+}
 
 type rootConfig struct {
 	CliVersionCheckInterval int64 `json:"cli_version_check_interval"`
@@ -24,15 +69,18 @@ type rootConfig struct {
 }
 
 func init() {
+	// Set the long description dynamically with the current version
+	rootCmd.Long = getLongDescription()
+
 	rootCmd.AddCommand(
-		versionCmd, newCmd, devCmd, upgradeCmd,
+		versionCmd, newCmd, devCmd, serveCmd, upgradeCmd, migrateCmd,
 	)
 }
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:               "fiber",
-	Long:              longDescription,
+	Long:              "", // will be set dynamically in init()
 	RunE:              rootRunE,
 	PersistentPreRun:  rootPersistentPreRun,
 	PersistentPostRun: rootPersistentPostRun,
@@ -49,7 +97,7 @@ func Execute() {
 }
 
 func rootRunE(cmd *cobra.Command, _ []string) error {
-	return cmd.Help()
+	return fmt.Errorf("help: %w", cmd.Help())
 }
 
 func rootPersistentPreRun(cmd *cobra.Command, _ []string) {
@@ -68,13 +116,13 @@ func checkCliVersion(cmd *cobra.Command) {
 		return
 	}
 
-	cliLatestVersion, err := latestVersion(true)
+	cliLatestVersion, err := LatestCliVersion()
 	if err != nil {
 		return
 	}
 
-	if version != cliLatestVersion {
-		title := termenv.String(fmt.Sprintf(versionUpgradeTitleFormat, version, cliLatestVersion)).
+	if getVersion() != cliLatestVersion {
+		title := termenv.String(fmt.Sprintf(versionUpgradeTitleFormat, getVersion(), cliLatestVersion)).
 			Foreground(termenv.ANSIBrightYellow)
 
 		prompt := internal.NewPrompt(title.String())
@@ -95,19 +143,26 @@ func checkCliVersion(cmd *cobra.Command) {
 
 func updateVersionCheckedAt() {
 	rc.CliVersionCheckedAt = time.Now().Unix()
-	storeConfig()
+	if err := storeConfig(); err != nil {
+		if _, pErr := fmt.Fprintf(os.Stdout, "failed to store config: %v\n", err); pErr != nil {
+			fmt.Fprintf(os.Stderr, "print error: %v", pErr)
+		}
+	}
 }
 
 func needCheckCliVersion() bool {
 	return !upgraded && rc.CliVersionCheckedAt+rc.CliVersionCheckInterval < time.Now().Unix()
 }
 
-const (
-	longDescription = `🚀 Fiber is an Express inspired web framework written in Go with 💖
+// getLongDescription returns the long description with the current version
+func getLongDescription() string {
+	return `🚀 Fiber is an Express inspired web framework written in Go with 💖
 Learn more on https://gofiber.io
 
-CLI version ` + version
+CLI version ` + getVersion()
+}
 
+const (
 	versionUpgradeTitleFormat = `
 You are using fiber cli version %s; however, version %s is available.
 Would you like to upgrade now? (y/N)`

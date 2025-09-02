@@ -1,4 +1,6 @@
-**Please provide enough information so that others can review your pull request:**
+# Pull Request Guide
+
+Please provide enough information so that others can review your pull request:
 
 <!-- You can skip this if you're fixing a typo or adding an app to the Showcase. -->
 
@@ -6,6 +8,6 @@
 
 <!-- Example: When "Adding a function to do X", explain why it is necessary to have a way to do X. -->
 
-**Commit formatting** 
+## Commit formatting
 
-Use emojis on commit messages so it provides an easy way of identifying the purpose or intention of a commit. Check out the emoji cheatsheet here: https://gitmoji.carloscuesta.me/
+Use emojis on commit messages so it provides an easy way of identifying the purpose or intention of a commit. Check out the emoji cheatsheet here: [https://gitmoji.carloscuesta.me](https://gitmoji.carloscuesta.me)

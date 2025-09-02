@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Dev_Escort_New(t *testing.T) {
@@ -30,38 +31,35 @@ func Test_Dev_Escort_Init(t *testing.T) {
 	at := assert.New(t)
 
 	e := getEscort()
-	at.Nil(e.init())
+	require.NoError(t, e.init())
 
 	at.Contains(e.root, "cli")
 	at.NotEmpty(e.binPath)
-	if runtime.GOOS != "windows" {
-		at.Nil(os.Remove(e.binPath))
+	if runtime.GOOS != windowsOS {
+		require.NoError(t, os.Remove(e.binPath))
 	}
 }
 
 func Test_Dev_Escort_Run(t *testing.T) {
-	at := assert.New(t)
-
 	setupCmd()
 	defer teardownCmd()
 
 	e := getEscort()
 
 	var err error
-	e.root, err = ioutil.TempDir("", "test_run")
-	at.Nil(err)
+	e.root, err = os.MkdirTemp("", "test_run")
+	require.NoError(t, err)
 	defer func() {
-		at.Nil(os.RemoveAll(e.root))
+		require.NoError(t, os.RemoveAll(e.root))
 	}()
 
 	e.sig = make(chan os.Signal, 1)
 
 	go func() {
-		time.Sleep(time.Millisecond * 500)
 		e.sig <- syscall.SIGINT
 	}()
 
-	at.Nil(e.run())
+	require.NoError(t, e.run())
 }
 
 func Test_Dev_Escort_RunBin(t *testing.T) {
@@ -72,9 +70,9 @@ func Test_Dev_Escort_RunBin(t *testing.T) {
 
 	e.bin = exec.Command("go", "version")
 	_, err := e.bin.CombinedOutput()
-	assert.Nil(t, err)
+	require.NoError(t, err)
 
-	rc := ioutil.NopCloser(strings.NewReader(""))
+	rc := io.NopCloser(strings.NewReader(""))
 	e.stdoutPipe = rc
 	e.stderrPipe = rc
 
@@ -87,7 +85,7 @@ func Test_Dev_Escort_WatchingPipes(t *testing.T) {
 	e := getEscort()
 	e.bin = exec.Command("go", "version")
 	_, err := e.bin.CombinedOutput()
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	e.watchingPipes()
 }
 
@@ -104,11 +102,13 @@ func Test_Dev_Escort_WatchingBin(t *testing.T) {
 
 	e.hitCh <- struct{}{}
 	e.hitCh <- struct{}{}
-	time.Sleep(time.Millisecond * 75)
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&count) == 1
+	}, time.Second, e.delay)
 	e.hitCh <- struct{}{}
-	time.Sleep(time.Millisecond * 75)
-
-	assert.Equal(t, int32(2), atomic.LoadInt32(&count))
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&count) == 2
+	}, time.Second, e.delay)
 }
 
 func Test_Dev_Escort_WatchingFiles(t *testing.T) {
@@ -120,35 +120,35 @@ func Test_Dev_Escort_WatchingFiles(t *testing.T) {
 	)
 
 	e := getEscort()
-	e.hitCh = make(chan struct{})
+	e.hitCh = make(chan struct{}, 2)
 
 	e.w, err = fsnotify.NewWatcher()
-	at.Nil(err)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, e.w.Close()) }()
 
 	e.extensions = []string{"go"}
 	e.watcherEvents = make(chan fsnotify.Event)
 	e.watcherErrors = make(chan error)
 
-	e.root, err = ioutil.TempDir("", "test_watch")
-	at.Nil(err)
+	e.root, err = os.MkdirTemp("", "test_watch")
+	require.NoError(t, err)
 	defer func() {
-		_ = os.RemoveAll(e.root)
+		require.NoError(t, os.RemoveAll(e.root))
 	}()
 
-	_, err = ioutil.TempDir(e.root, ".git")
-	at.Nil(err)
+	_, err = os.MkdirTemp(e.root, ".git")
+	require.NoError(t, err)
 
-	newDir, err := ioutil.TempDir(e.root, "")
-	at.Nil(err)
+	newDir, err := os.MkdirTemp(e.root, "")
+	require.NoError(t, err)
 
-	ignoredFile, err := ioutil.TempFile(e.root, "")
-	at.Nil(err)
-	defer func() { at.Nil(ignoredFile.Close()) }()
-	e.excludeFiles = []string{filepath.Base(ignoredFile.Name())}
+	ignoredFile, err := os.MkdirTemp(e.root, "")
+	require.NoError(t, err)
+	e.excludeFiles = []string{filepath.Base(ignoredFile)}
 
-	f, err := ioutil.TempFile(e.root, "*.go")
-	at.Nil(err)
-	defer func() { at.Nil(f.Close()) }()
+	f, err := os.CreateTemp(e.root, "*.go")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, f.Close()) }()
 	name := f.Name()
 
 	go e.watchingFiles()
@@ -164,7 +164,7 @@ func Test_Dev_Escort_WatchingFiles(t *testing.T) {
 		at.Fail("should hit")
 	}
 
-	e.watcherEvents <- fsnotify.Event{Name: ignoredFile.Name(), Op: fsnotify.Create}
+	e.watcherEvents <- fsnotify.Event{Name: ignoredFile, Op: fsnotify.Create}
 	e.watcherEvents <- fsnotify.Event{Name: name, Op: fsnotify.Create}
 
 	e.terminate()
@@ -247,6 +247,7 @@ func Test_Dev_IsRemoved(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Op.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.bool, isRemoved(tc.Op))
 		})
 	}
@@ -268,6 +269,7 @@ func Test_Dev_IsCreated(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Op.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.bool, isCreated(tc.Op))
 		})
 	}
@@ -289,6 +291,7 @@ func Test_Dev_IsChmoded(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.Op.String(), func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.bool, isChmoded(tc.Op))
 		})
 	}
@@ -312,5 +315,7 @@ func getEscort() *escort {
 		},
 		ctx:       c,
 		terminate: t,
+		hitCh:     make(chan struct{}, 1),
+		sig:       make(chan os.Signal, 1),
 	}
 }

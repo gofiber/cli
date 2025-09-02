@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gofiber/cli/cmd/internal"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 var upgradeCmd = &cobra.Command{
@@ -18,12 +19,12 @@ var upgradeCmd = &cobra.Command{
 var upgraded bool
 
 func upgradeRunE(cmd *cobra.Command, _ []string) error {
-	cliLatestVersion, err := latestVersion(true)
+	cliLatestVersion, err := LatestCliVersion()
 	if err != nil {
 		return err
 	}
 
-	if version != cliLatestVersion {
+	if getVersion() != cliLatestVersion {
 		upgrade(cmd, cliLatestVersion)
 	} else {
 		msg := fmt.Sprintf("Currently Fiber cli is the latest version %s.", cliLatestVersion)
@@ -35,9 +36,9 @@ func upgradeRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func upgrade(cmd *cobra.Command, cliLatestVersion string) {
-	upgrader := execCommand("go", "get", "-u", "-v", "github.com/gofiber/cli/fiber")
+	module := "github.com/gofiber/cli/fiber@v" + cliLatestVersion
+	upgrader := execCommand("go", "install", module)
 	upgrader.Env = append(upgrader.Env, os.Environ()...)
-	upgrader.Env = append(upgrader.Env, "GO111MODULE=off")
 
 	scmd := internal.NewSpinnerCmd(upgrader, "Upgrading")
 
