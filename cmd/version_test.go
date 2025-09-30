@@ -19,10 +19,13 @@ func Test_Version_Printer(t *testing.T) {
 		clearHTTPCache()
 
 		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, fakeVersionResponse))
+		httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewBytesResponder(200, fakeCliVersionResponse("1.2.3")))
 
 		out, err := runCobraCmd(versionCmd)
 		require.NoError(t, err)
 		at.Contains(out, "2.0.6")
+		at.Contains(out, "fiber cli version:")
+		at.Contains(out, "latest 1.2.3")
 	})
 
 	t.Run("latest err", func(t *testing.T) {
@@ -35,6 +38,20 @@ func Test_Version_Printer(t *testing.T) {
 		out, err := runCobraCmd(versionCmd)
 		require.NoError(t, err)
 		at.Contains(out, "no version")
+	})
+
+	t.Run("cli latest err", func(t *testing.T) {
+		httpmock.Activate()
+		defer httpmock.DeactivateAndReset()
+		clearHTTPCache()
+
+		httpmock.RegisterResponder(http.MethodGet, latestVersionURL, httpmock.NewBytesResponder(200, fakeVersionResponse))
+		httpmock.RegisterResponder(http.MethodGet, latestCliVersionURL, httpmock.NewErrorResponder(errors.New("cli network error")))
+
+		out, err := runCobraCmd(versionCmd)
+		require.NoError(t, err)
+		at.Contains(out, "latest check failed")
+		at.Contains(out, "cli network error")
 	})
 }
 

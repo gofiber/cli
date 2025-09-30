@@ -24,6 +24,8 @@ func versionRun(cmd *cobra.Command, _ []string) {
 	var (
 		cur, latest string
 		err         error
+		cliLatest   string
+		cliErr      error
 		w           = cmd.OutOrStdout()
 	)
 
@@ -37,6 +39,12 @@ func versionRun(cmd *cobra.Command, _ []string) {
 	}
 
 	_, _ = fmt.Fprintf(w, "fiber version: %s (latest %s)\n", cur, latest)
+	if cliLatest, cliErr = LatestCliVersion(); cliErr != nil {
+		_, _ = fmt.Fprintf(w, "fiber cli version: %s (latest check failed: %v)\n", getVersion(), cliErr)
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "fiber cli version: %s (latest %s)\n", getVersion(), cliLatest)
 }
 
 var (
