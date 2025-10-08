@@ -87,3 +87,30 @@ var _ = encryptcookie.New(encryptcookie.Config{
 	second := readFile(t, file)
 	assert.Equal(t, first, second)
 }
+
+func Test_MigrateEncryptcookieConfig_EncryptorDecryptorMigrated(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mencryptcookiealready")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	input := `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/encryptcookie"
+)
+var _ = encryptcookie.New(encryptcookie.Config{
+    Encryptor: func(_ string, value, key string) (string, error) { return "", nil },
+    Decryptor: func(_ string, value string, key string) (string, error) { return "", nil },
+})`
+
+	file := writeTempFile(t, dir, input)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateEncryptcookieConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Equal(t, input, content)
+	assert.Empty(t, buf.String())
+}
