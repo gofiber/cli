@@ -233,6 +233,8 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 	assert.Len(t, cmds, 3)
 	for _, c := range cmds {
 		assert.Equal(t, dir, c.Dir)
+		assert.Contains(t, c.Env, "GO_WANT_HELPER_PROCESS=1")
+		assert.Contains(t, c.Env, "GOWORK=off")
 	}
 
 	cmds = nil
