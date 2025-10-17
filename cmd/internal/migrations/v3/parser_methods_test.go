@@ -40,6 +40,7 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, ".Bind().Cookie(&v)")
 	assert.Contains(t, content, ".Bind().URI(&v)")
 	assert.Contains(t, content, ".Bind().Query(&v)")
+	assert.Contains(t, content, ".Bind().URI(&p)")
 	assert.Contains(t, buf.String(), "Migrating parser methods")
 }
 
