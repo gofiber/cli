@@ -27,6 +27,11 @@ var (
 
 const vendorDir = "vendor"
 
+const (
+	contribModulePrefix = "github.com/gofiber/contrib/v3/"
+	contribRepoPrefix   = "gofiber/contrib/v3"
+)
+
 func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 	modules, err := findContribModules(cwd)
 	if err != nil {
@@ -41,7 +46,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		reader := bufio.NewReader(cmd.InOrStdin())
 		for _, m := range modules {
 			latest := latestContribVersionFn(m)
-			prompt := fmt.Sprintf("Version for github.com/gofiber/contrib/%s (default %s): ", m, latest)
+			prompt := fmt.Sprintf("Version for %s%s (default %s): ", contribModulePrefix, m, latest)
 			cmd.Print(prompt)
 			line, err := reader.ReadString('\n')
 			if err != nil && err != io.EOF {
@@ -65,7 +70,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("parse version: %w", err)
 			}
-			pv, err := pseudoVersionFromHash("gofiber/contrib", base, hash)
+			pv, err := pseudoVersionFromHash(contribRepoPrefix, base, hash)
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
@@ -87,7 +92,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 				return s
 			}
 			major := majorFromVersion(ver)
-			return fmt.Sprintf("\"github.com/gofiber/contrib/%s%s%s\"", mod, majorPath(major), rest)
+			return fmt.Sprintf("\"%s%s%s\"", contribModulePrefix+mod, majorPath(major), rest)
 		})
 	})
 	if err != nil {
@@ -105,7 +110,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		for mod, ver := range versions {
 			major := majorFromVersion(ver)
 			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/contrib/(?:v\d+/)?%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(mod)))
-			newLine := fmt.Sprintf(`${1}github.com/gofiber/contrib/%s%s %s`, mod, majorPath(major), ver)
+			newLine := fmt.Sprintf(`${1}%s%s %s`, contribModulePrefix+mod, majorPath(major), ver)
 			replaced := re.ReplaceAllString(content, newLine)
 			if replaced != content {
 				content = replaced
@@ -165,7 +170,7 @@ func findContribModules(cwd string) ([]string, error) {
 func latestContribVersion(module string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("https://proxy.golang.org/github.com/gofiber/contrib/%s/@latest", module)
+	url := fmt.Sprintf("https://proxy.golang.org/%s%s/@latest", contribModulePrefix, module)
 	b, status, err := cachedGET(ctx, url, nil)
 	if err != nil || status != 200 {
 		return ""
