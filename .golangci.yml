@@ -1,5 +1,7 @@
 # v1.2.0. Created based on golangci-lint v1.57.1
 
+version: 2
+
 run:
   timeout: 5m
   modules-download-mode: readonly
@@ -297,7 +299,6 @@ linters:
     - forbidigo
     - forcetypeassert
     # - funlen
-    - gci
     - ginkgolinter
     # - gocheckcompilerdirectives # TODO: Enable
     # - gochecknoglobals # TODO: Enable
@@ -310,8 +311,6 @@ linters:
     # - godot
     # - godox
     - err113
-    - gofmt
-    - gofumpt
     # - goheader
     # - goimports
     # - mnd # TODO: Enable
@@ -319,7 +318,8 @@ linters:
     # - gomodguard
     - goprintffuncname
     - gosec
-    - gosimple
+    # Staticcheck bundles the checks previously exposed as gosimple/stylecheck
+    # so we keep only the main linter enabled here.
     # - gosmopolitan # TODO: Enable
     - govet
     - grouper
@@ -361,7 +361,6 @@ linters:
     - spancheck
     - sqlclosecheck
     - staticcheck
-    - stylecheck
     # - tagalign # TODO: Enable
     - tagliatelle
     - testableexamples
@@ -369,7 +368,6 @@ linters:
     # - testpackage # TODO: Enable
     - thelper
     - tparallel
-    - typecheck
     - unconvert
     - unparam
     - unused
@@ -380,3 +378,9 @@ linters:
     - wrapcheck
     # - wsl
     - zerologlint
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - gci
