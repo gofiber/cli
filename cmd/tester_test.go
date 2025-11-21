@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -24,7 +25,7 @@ func fakeExecCommand(command string, args ...string) *exec.Cmd {
 	cs := []string{"-test.run=TestHelperProcess", "--", command}
 	cs = append(cs, args...)
 	// #nosec G204 -- safe for test, args are controlled
-	cmd := exec.Command(os.Args[0], cs...)
+	cmd := exec.CommandContext(context.Background(), os.Args[0], cs...)
 	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 	if needError {
 		cmd.Env = append(cmd.Env, "GO_WANT_HELPER_NEED_ERR=1")

@@ -45,6 +45,8 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 						if enablePrint == "" {
 							enablePrint = val
 						}
+					default:
+						// no-op
 					}
 					return ""
 				}
@@ -151,7 +153,7 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener related listen calls: %w", err)
 	}
-	if !(changed1 || changed2) {
+	if !changed1 && !changed2 {
 		return nil
 	}
 

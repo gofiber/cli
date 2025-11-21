@@ -52,6 +52,8 @@ func getVersion() string {
 				version = setting.Value[:7] // short commit hash
 				return version
 			}
+		default:
+			continue
 		}
 	}
 

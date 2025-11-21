@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,7 +19,7 @@ func stubFiberDownload(t *testing.T, fiberGoMod string) func() {
 	orig := migrations.ExecCommand
 	out := fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod))
 	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--") // #nosec G204 -- test helper
+		cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=TestHelperProcess", "--") // #nosec G204 -- test helper
 		cmd.Env = []string{
 			"GO_WANT_HELPER_PROCESS=1",
 			"GO_HELPER_STDOUT=" + out,

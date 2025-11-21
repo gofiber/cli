@@ -173,7 +173,7 @@ func Test_GetVersionFallback(t *testing.T) {
 	v := getVersion()
 	// With runtime/debug.ReadBuildInfo(), the result depends on how the test is built
 	// It could be module version, VCS tag, VCS revision, or "unknown"
-	assert.NotEqual(t, "", v)
+	assert.NotEmpty(t, v)
 
 	// Test that caching works
 	version = "cached-version"

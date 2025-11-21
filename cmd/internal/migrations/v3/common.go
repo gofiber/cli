@@ -12,6 +12,10 @@ var (
 	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
 
+func isIdentifierChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
+}
+
 // skipCommaSuffix advances the index past a comma and any trailing
 // whitespace, comments, or newline characters.
 func skipCommaSuffix(src string, i int) int {
@@ -34,7 +38,7 @@ func skipCommaSuffix(src string, i int) int {
 				}
 				if src[i+1] == '*' { // block comment
 					i += 2
-					for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+					for i+1 < len(src) && (src[i] != '*' || src[i+1] != '/') {
 						i++
 					}
 					if i+1 < len(src) {
@@ -134,6 +138,7 @@ func removeConfigField(src, field string) string {
 				i++
 				src = src[:start] + src[i:]
 				goto nextField
+			default:
 			}
 			i++
 		}
@@ -238,6 +243,7 @@ func splitArgs(src string) []string {
 				args = append(args, strings.TrimSpace(src[start:i]))
 				start = i + 1
 			}
+		default:
 		}
 	}
 
@@ -278,6 +284,7 @@ func extractCall(src string, start int) (int, string) {
 			if depth == 0 {
 				return i + 1, src[start:i]
 			}
+		default:
 		}
 	}
 	return len(src), src[start:]
@@ -318,6 +325,7 @@ func extractBlock(src string, start int, open, closeDelim byte) int {
 			if depth == 0 {
 				return i + 1
 			}
+		default:
 		}
 	}
 	return len(src)

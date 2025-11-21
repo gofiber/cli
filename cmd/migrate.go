@@ -164,6 +164,8 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 			changed, err = refreshStorage(cmd, wd, tp.Hash)
 		case "template", "templates":
 			changed, err = refreshTemplates(cmd, wd, tp.Hash)
+		default:
+			continue
 		}
 		if err != nil {
 			return fmt.Errorf("refresh %s packages: %w", tp.Name, err)

@@ -1,4 +1,4 @@
-package fileserver
+package app
 
 import (
 	"strings"

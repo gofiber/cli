@@ -38,7 +38,7 @@ func MigrateListenMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 			identStart := startCall - 1
 			for identStart >= 0 {
 				ch := content[identStart]
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+				if !isIdentifierChar(ch) {
 					break
 				}
 				identStart--
