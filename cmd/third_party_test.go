@@ -15,13 +15,13 @@ func Test_refreshContrib(t *testing.T) {
 	dir := t.TempDir()
 	mainSrc := `package main
 
-import _ "github.com/gofiber/contrib/monitor"
+import _ "github.com/gofiber/contrib/v3/monitor"
 
 func main(){}`
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o600))
 	modSrc := `module test
 
-require github.com/gofiber/contrib/monitor v1.0.0
+require github.com/gofiber/contrib/v3/monitor v1.0.0
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modSrc), 0o600))
 
@@ -40,11 +40,11 @@ require github.com/gofiber/contrib/monitor v1.0.0
 
 	content, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "github.com/gofiber/contrib/monitor")
+	assert.Contains(t, string(content), "github.com/gofiber/contrib/v3/monitor")
 
 	gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
 	require.NoError(t, err)
-	assert.Contains(t, string(gm), "github.com/gofiber/contrib/monitor v1.2.3")
+	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/monitor v1.2.3")
 }
 
 func Test_refreshStorage(t *testing.T) {

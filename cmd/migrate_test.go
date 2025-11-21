@@ -129,7 +129,7 @@ func main() {
 	content := readFileTB(t, filepath.Join(dir, "main.go"))
 	at := assert.New(t)
 	at.Contains(content, "github.com/gofiber/fiber/v3")
-	at.Contains(content, "github.com/gofiber/contrib/monitor")
+	at.Contains(content, "github.com/gofiber/contrib/v3/monitor")
 	at.Contains(content, "github.com/gofiber/fiber/v3/middleware/keyauth")
 	at.NotContains(content, "*fiber.Ctx")
 	at.Contains(content, "fiber.Ctx")
