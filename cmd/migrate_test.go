@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -41,7 +42,7 @@ require github.com/valyala/fasthttp v1.0.0`
 	}
 
 	migrations.ExecCommand = func(string, ...string) *exec.Cmd {
-		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "go", "mod", "download") // #nosec G204 -- test helper
+		cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=TestHelperProcess", "--", "go", "mod", "download") // #nosec G204 -- test helper
 		cmd.Env = []string{
 			"GO_WANT_HELPER_PROCESS=1",
 			"GO_HELPER_STDOUT=" + fmt.Sprintf(`{"GoMod":%q}`, filepath.ToSlash(fiberGoMod)),
@@ -215,7 +216,7 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 	var cmds []*exec.Cmd
 	cmdinternal.ExecCommand = func(name string, args ...string) *exec.Cmd {
 		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
-		cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
+		cmd := exec.CommandContext(context.Background(), os.Args[0], cs...) // #nosec G204 -- safe for test
 		env := []string{"GO_WANT_HELPER_PROCESS=1"}
 		if needError {
 			env = append(env, "GO_WANT_HELPER_NEED_ERR=1")
@@ -273,7 +274,7 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		var cmds []*exec.Cmd
 		fake := func(name string, args ...string) *exec.Cmd {
 			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
-			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
+			cmd := exec.CommandContext(context.Background(), os.Args[0], cs...) // #nosec G204 -- safe for test
 			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 			cmds = append(cmds, cmd)
 			return cmd
@@ -299,7 +300,7 @@ require github.com/gofiber/fiber/v3 v3.0.0
 		var cmds []*exec.Cmd
 		fake := func(name string, args ...string) *exec.Cmd {
 			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
-			cmd := exec.Command(os.Args[0], cs...) // #nosec G204 -- safe for test
+			cmd := exec.CommandContext(context.Background(), os.Args[0], cs...) // #nosec G204 -- safe for test
 			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
 			cmds = append(cmds, cmd)
 			return cmd
