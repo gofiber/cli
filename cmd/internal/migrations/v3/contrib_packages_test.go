@@ -119,5 +119,5 @@ require github.com/gofiber/contrib/v3/session v1.2.3`
 
 	assert.Equal(t, first, second)
 	assert.Equal(t, firstMod, secondMod)
-	assert.Equal(t, "", buf.String())
+	assert.Empty(t, buf.String())
 }
