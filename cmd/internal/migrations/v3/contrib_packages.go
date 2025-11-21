@@ -58,6 +58,10 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		if d.Name() != "go.mod" {
 			return nil
 		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
 
 		b, err := os.ReadFile(path) // #nosec G304 -- reading module file
 		if err != nil {
@@ -77,7 +81,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		if updated == content {
 			return nil
 		}
-		if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		modChanged = true
