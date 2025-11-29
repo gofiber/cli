@@ -56,7 +56,8 @@ var _ = session.New(session.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: session.FromCookie("__Host-session"), // comment`)
+	assert.Contains(t, content, `Extractor: extractors.FromCookie("__Host-session"), // comment`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
 
@@ -80,7 +81,8 @@ var _ = session.New(session.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: session.FromCookie("__Host-session")`)
+	assert.Contains(t, content, `Extractor: extractors.FromCookie("__Host-session")`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
 
@@ -103,7 +105,7 @@ var _ = session.New(session.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: session.FromHeader("X-Session-ID")`)
+	assert.Contains(t, content, `Extractor: extractors.FromHeader("X-Session-ID")`)
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
 
@@ -126,7 +128,7 @@ var _ = session.New(session.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: session.FromQuery("session_id")`)
+	assert.Contains(t, content, `Extractor: extractors.FromQuery("session_id")`)
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
 

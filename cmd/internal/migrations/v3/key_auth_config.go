@@ -17,7 +17,7 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	reAuthScheme := regexp.MustCompile(`(?m)\s*AuthScheme:\s*([^,\n]+)`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		return reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
+		updated := reConfig.ReplaceAllStringFunc(content, func(cfg string) string {
 			cfg = replaceKeyLookup(cfg, func(indent, val, comma, comment, newline string) string {
 				scheme := "Bearer"
 				if am := reAuthScheme.FindStringSubmatch(cfg); len(am) > 1 {
@@ -35,18 +35,18 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 					case strings.HasPrefix(p, "header:"):
 						header := strings.TrimPrefix(p, "header:")
 						if strings.EqualFold(header, "Authorization") {
-							extractors = append(extractors, fmt.Sprintf("keyauth.FromAuthHeader(%q, %q)", header, scheme))
+							extractors = append(extractors, fmt.Sprintf("extractors.FromAuthHeader(%q)", scheme))
 						} else {
-							extractors = append(extractors, fmt.Sprintf("keyauth.FromHeader(%q)", header))
+							extractors = append(extractors, fmt.Sprintf("extractors.FromHeader(%q)", header))
 						}
 					case strings.HasPrefix(p, "query:"):
-						extractors = append(extractors, fmt.Sprintf("keyauth.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
 					case strings.HasPrefix(p, "param:"):
-						extractors = append(extractors, fmt.Sprintf("keyauth.FromParam(%q)", strings.TrimPrefix(p, "param:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromParam(%q)", strings.TrimPrefix(p, "param:")))
 					case strings.HasPrefix(p, "form:"):
-						extractors = append(extractors, fmt.Sprintf("keyauth.FromForm(%q)", strings.TrimPrefix(p, "form:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromForm(%q)", strings.TrimPrefix(p, "form:")))
 					case strings.HasPrefix(p, "cookie:"):
-						extractors = append(extractors, fmt.Sprintf("keyauth.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
 					default:
 						if comment != "" {
 							comment = " " + comment
@@ -59,7 +59,7 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 				if len(extractors) == 1 {
 					extractor = extractors[0]
 				} else if len(extractors) > 1 {
-					extractor = fmt.Sprintf("keyauth.Chain(%s)", strings.Join(extractors, ", "))
+					extractor = fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
 				}
 				if extractor == "" {
 					if comment != "" {
@@ -77,6 +77,11 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 			cfg = removeConfigField(cfg, "AuthScheme")
 			return cfg
 		})
+
+		if updated != content {
+			updated = addImport(updated, "github.com/gofiber/fiber/v3/extractors")
+		}
+		return updated
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate keyauth configs: %w", err)
