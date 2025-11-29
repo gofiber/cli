@@ -55,6 +55,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateCORSConfig,
 			v3migrations.MigrateCSRFConfig,
 			v3migrations.MigrateMonitorImport,
+			v3migrations.MigrateSwaggerPackages,
 			v3migrations.MigrateContribPackages,
 			v3migrations.MigrateUtilsImport,
 			v3migrations.MigrateHealthcheckConfig,
