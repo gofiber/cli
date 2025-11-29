@@ -43,6 +43,39 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, buf.String(), "Migrating middleware locals")
 }
 
+func Test_MigrateMiddlewareLocals_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlocals-idem")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    csrfToken, ok := c.Locals("csrf").(string)
+    _ = csrfToken
+    _ = ok
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `csrfToken, ok := csrf.TokenFromContext(c), true`)
+	assert.Contains(t, buf.String(), "Migrating middleware locals")
+
+	buf.Reset()
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content = readFile(t, file)
+	assert.Contains(t, content, `csrfToken, ok := csrf.TokenFromContext(c), true`)
+	assert.NotContains(t, content, `, true, true`)
+	assert.Empty(t, buf.String())
+}
+
 func Test_MigrateMiddlewareLocals_ContextKey(t *testing.T) {
 	t.Parallel()
 
