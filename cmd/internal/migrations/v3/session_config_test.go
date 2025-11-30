@@ -106,6 +106,7 @@ var _ = session.New(session.Config{
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
 	assert.Contains(t, content, `Extractor: extractors.FromHeader("X-Session-ID")`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating session KeyLookup config")
 }
 
