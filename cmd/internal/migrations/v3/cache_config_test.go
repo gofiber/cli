@@ -42,6 +42,16 @@ var _ = cache.New(cache.Config{
 
 var _ = cache.New(cache.Config{
     CacheControl: !cfg.DisableCacheHeaders,
+})
+
+var _ = cache.New(cache.Config{
+    CacheControl: true, // with comment
+})
+
+var _ = cache.New(cache.Config{ CacheControl: !cfg.DisableCacheHeaders }) // no comma
+
+var _ = cache.New(cache.Config{
+    CacheControl: cfg.EnableCache /* block comment */,
 })`)
 
 	var buf bytes.Buffer
@@ -49,10 +59,13 @@ var _ = cache.New(cache.Config{
 	require.NoError(t, v3.MigrateCacheConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "DisableCacheControl: false")
-	assert.Contains(t, content, "DisableCacheControl: true")
-	assert.Contains(t, content, "DisableCacheControl: !(cfg.EnableCache)")
-	assert.Contains(t, content, "DisableCacheControl: cfg.DisableCacheHeaders")
+	assert.Contains(t, content, "DisableCacheControl: false,")
+	assert.Contains(t, content, "DisableCacheControl: true,")
+	assert.Contains(t, content, "DisableCacheControl: !(cfg.EnableCache),")
+	assert.Contains(t, content, "DisableCacheControl: cfg.DisableCacheHeaders,")
+	assert.Contains(t, content, "DisableCacheControl: false, // with comment")
+	assert.Contains(t, content, "DisableCacheControl: cfg.DisableCacheHeaders}) // no comma")
+	assert.Contains(t, content, "DisableCacheControl: !(cfg.EnableCache), /* block comment */")
 	assert.Contains(t, buf.String(), "Migrating cache middleware configs")
 }
 

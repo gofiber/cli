@@ -35,8 +35,37 @@ func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 			s = strings.ReplaceAll(s, "Store:", "Storage:")
 			s = strings.ReplaceAll(s, "Key:", "KeyGenerator:")
 			s = reCacheControl.ReplaceAllStringFunc(s, func(match string) string {
-				value := strings.TrimSpace(strings.TrimPrefix(match, "CacheControl:"))
-				return "DisableCacheControl: " + invertBoolExpr(value)
+				value := strings.TrimPrefix(match, "CacheControl:")
+				value = strings.TrimSpace(value)
+
+				comment := ""
+				if idx := strings.Index(value, "//"); idx != -1 {
+					comment = strings.TrimSpace(value[idx:])
+					value = value[:idx]
+				} else if idx := strings.Index(value, "/*"); idx != -1 {
+					comment = strings.TrimSpace(value[idx:])
+					value = value[:idx]
+				}
+
+				hasComma := strings.HasSuffix(strings.TrimRight(value, " \t"), ",")
+				if hasComma {
+					value = strings.TrimSuffix(strings.TrimRight(value, " \t"), ",")
+				} else if comment != "" && strings.HasSuffix(comment, ",") {
+					hasComma = true
+					comment = strings.TrimSuffix(comment, ",")
+					comment = strings.TrimRight(comment, " \t")
+				}
+
+				value = strings.TrimSpace(value)
+				migrated := "DisableCacheControl: " + invertBoolExpr(value)
+				if hasComma {
+					migrated += ","
+				}
+				if comment != "" {
+					migrated += " " + comment
+				}
+
+				return migrated
 			})
 			return s
 		})
