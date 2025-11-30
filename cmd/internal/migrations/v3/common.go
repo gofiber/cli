@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -152,7 +153,19 @@ func removeConfigField(src, field string) string {
 // fn with the parsed components. If fn returns an empty string, the field is
 // removed entirely.
 func replaceKeyLookup(src string, fn func(indent, val, comma, comment, newline string) string) string {
-	re := regexp.MustCompile(`(?m)(\s*)KeyLookup:\s*([^\n]+)(\n?)`)
+	return replaceStringField(src, "KeyLookup", fn)
+}
+
+func replaceStringField(src, field string, fn func(indent, val, comma, comment, newline string) string) string {
+	return replaceFieldImpl(src, field, true, fn)
+}
+
+func replaceField(src, field string, fn func(indent, val, comma, comment, newline string) string) string {
+	return replaceFieldImpl(src, field, false, fn)
+}
+
+func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comma, comment, newline string) string) string {
+	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(field) + `:\s*([^\n]+)(\n?)`)
 	return re.ReplaceAllStringFunc(src, func(s string) string {
 		sub := re.FindStringSubmatch(s)
 		indent := sub[1]
@@ -174,23 +187,47 @@ func replaceKeyLookup(src string, fn func(indent, val, comma, comment, newline s
 			val = strings.TrimSpace(strings.TrimSuffix(val, ","))
 		}
 
-		if uq, err := strconv.Unquote(val); err == nil {
-			val = uq
-			repl := fn(indent, val, comma, comment, newline)
-			if repl == "" {
+		if unquote {
+			uq, err := strconv.Unquote(val)
+			if err != nil {
 				if comment != "" {
-					return fmt.Sprintf("%s%s%s", indent, comment, newline)
+					return fmt.Sprintf("%s// TODO: migrate %s: %s %s%s", indent, field, val, comment, newline)
 				}
-				return newline
+				return fmt.Sprintf("%s// TODO: migrate %s: %s%s", indent, field, val, newline)
 			}
-			return repl
+			val = uq
 		}
 
-		if comment != "" {
-			return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s %s%s", indent, val, comment, newline)
+		repl := fn(indent, val, comma, comment, newline)
+		if repl == "" {
+			if comment != "" {
+				return fmt.Sprintf("%s%s%s", indent, comment, newline)
+			}
+			return newline
 		}
-		return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s", indent, val, newline)
+		return repl
 	})
+}
+
+func collectAliases(content string, reImport *regexp.Regexp, defaults []string) []string {
+	aliases := map[string]struct{}{}
+	for _, m := range reImport.FindAllStringSubmatch(content, -1) {
+		alias := strings.TrimSpace(m[1])
+		if alias == "" {
+			for _, d := range defaults {
+				aliases[d] = struct{}{}
+			}
+			continue
+		}
+		aliases[alias] = struct{}{}
+	}
+
+	result := make([]string, 0, len(aliases))
+	for alias := range aliases {
+		result = append(result, alias)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // splitArgs splits a comma-separated argument list into its individual arguments
