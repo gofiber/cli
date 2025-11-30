@@ -26,20 +26,6 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			file, err := parser.ParseFile(fset, "", content, parser.ParseComments)
 			if err == nil {
 				modified := false
-				baseIdent := func(expr ast.Expr) *ast.Ident {
-					for {
-						switch e := expr.(type) {
-						case *ast.Ident:
-							return e
-						case *ast.SelectorExpr:
-							expr = e.X
-						case *ast.CallExpr:
-							expr = e.Fun
-						default:
-							return nil
-						}
-					}
-				}
 				ast.Inspect(file, func(n ast.Node) bool {
 					call, ok := n.(*ast.CallExpr)
 					if !ok {
@@ -49,7 +35,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 					if !ok || sel.Sel.Name != "Context" || len(call.Args) != 0 {
 						return true
 					}
-					if ident := baseIdent(sel.X); ident != nil && isFiberCtx(orig, ident.Name) {
+					if ident := GetBaseIdent(sel.X); ident != nil && isFiberCtx(orig, ident.Name) {
 						sel.Sel.Name = "RequestCtx"
 						modified = true
 					}

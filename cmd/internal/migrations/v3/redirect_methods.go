@@ -27,21 +27,6 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 
 		modified := false
 
-		baseIdent := func(expr ast.Expr) *ast.Ident {
-			for {
-				switch e := expr.(type) {
-				case *ast.Ident:
-					return e
-				case *ast.SelectorExpr:
-					expr = e.X
-				case *ast.CallExpr:
-					expr = e.Fun
-				default:
-					return nil
-				}
-			}
-		}
-
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -53,7 +38,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 				return true
 			}
 
-			ident := baseIdent(sel.X)
+			ident := GetBaseIdent(sel.X)
 			if ident == nil || !isFiberCtx(orig, ident.Name) {
 				return true
 			}

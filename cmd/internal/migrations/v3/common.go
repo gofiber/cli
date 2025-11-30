@@ -2,6 +2,7 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
 	"regexp"
 	"sort"
 	"strconv"
@@ -479,4 +480,90 @@ func addImport(content, path string) string {
 	}
 
 	return content
+}
+
+// GetBaseIdent recursively resolves an expression to its base identifier.
+// It handles selector expressions, call expressions, and identifiers.
+// Returns nil if the expression cannot be resolved to a simple identifier.
+func GetBaseIdent(expr ast.Expr) *ast.Ident {
+	for {
+		switch e := expr.(type) {
+		case *ast.Ident:
+			return e
+		case *ast.SelectorExpr:
+			expr = e.X
+		case *ast.CallExpr:
+			expr = e.Fun
+		default:
+			return nil
+		}
+	}
+}
+
+// ExtractCommentAndValue separates a value from its trailing comment.
+// It handles both line comments (//) and block comments (/* */).
+// Returns the value (trimmed) and the comment (with original delimiters).
+func ExtractCommentAndValue(line string) (value, comment string) {
+	value = line
+	if idx := strings.Index(line, "//"); idx >= 0 {
+		comment = strings.TrimSpace(line[idx:])
+		value = strings.TrimSpace(line[:idx])
+	} else if idx := strings.Index(line, "/*"); idx >= 0 {
+		comment = strings.TrimSpace(line[idx:])
+		value = strings.TrimSpace(line[:idx])
+	}
+	return value, comment
+}
+
+// FormatFieldWithComment formats a field assignment with consistent spacing
+// for indentation, value, comma, comment, and newline.
+func FormatFieldWithComment(indent, fieldName, value, comma, comment, newline string) string {
+	if comment != "" {
+		comment = " " + comment
+	}
+	return fmt.Sprintf("%s%s: %s%s%s%s", indent, fieldName, value, comma, comment, newline)
+}
+
+// IterateConfigBlocks finds all occurrences matching the given regex pattern,
+// extracts their config blocks using braces, processes each block with the
+// provided function, and reconstructs the content.
+func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(string) string) string {
+	matches := pattern.FindAllStringIndex(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		if m[0] < last {
+			// Skip matches that fall inside a block we've already processed.
+			continue
+		}
+		b.WriteString(content[last:m[0]]) //nolint:errcheck // WriteString never returns an error
+		start := m[0]
+		end := extractBlock(content, m[1], '{', '}')
+		cfg := content[start:end]
+
+		// Process the config block
+		cfg = processor(cfg)
+
+		b.WriteString(cfg) //nolint:errcheck // WriteString never returns an error
+		last = end
+	}
+	b.WriteString(content[last:]) //nolint:errcheck // WriteString never returns an error
+	return b.String()
+}
+
+// BuildExtractorChain builds an extractor expression from a slice of extractors.
+// Returns a single extractor for one element, Chain() for multiple, or empty for none.
+func BuildExtractorChain(extractors []string) string {
+	switch len(extractors) {
+	case 0:
+		return ""
+	case 1:
+		return extractors[0]
+	default:
+		return fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
+	}
 }
