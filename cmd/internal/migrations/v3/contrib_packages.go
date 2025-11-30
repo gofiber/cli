@@ -68,16 +68,27 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			return fmt.Errorf("read %s: %w", path, err)
 		}
 		content := string(b)
-		if !contribModRe.MatchString(content) {
+		matches := contribModRe.FindAllString(content, -1)
+		if len(matches) == 0 {
 			return nil
 		}
-		updated := contribModRe.ReplaceAllStringFunc(content, func(match string) string {
+
+		updated := content
+
+		for _, match := range matches {
 			rest := strings.TrimPrefix(match, contribPrefix)
 			if rest == match || hasVersionPrefix(rest) {
-				return match
+				continue
 			}
-			return contribV3Prefix + rest
-		})
+
+			version, err := contribV3Version(rest)
+			if err != nil {
+				return fmt.Errorf("fetch contrib %s version: %w", rest, err)
+			}
+
+			updated = updateGoModModule(updated, match, contribV3Prefix+rest, version)
+		}
+
 		if updated == content {
 			return nil
 		}

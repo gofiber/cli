@@ -2,6 +2,7 @@ package v3_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,9 +14,15 @@ import (
 )
 
 func Test_MigrateContribPackages(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		if module != "session" {
+			return "", fmt.Errorf("unexpected module %s", module)
+		}
+		return "v3.1.0", nil
+	})
+	t.Cleanup(restore)
 
 	file := writeTempFile(t, dir, `package main
 import (
@@ -45,16 +52,22 @@ require (
 	assert.NotContains(t, content, "github.com/gofiber/contrib/session")
 
 	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/session v1.2.3")
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/session v3.1.0")
 	assert.NotContains(t, mod, "github.com/gofiber/contrib/session v1.2.3")
 
 	assert.Contains(t, buf.String(), "Migrating contrib packages")
 }
 
 func Test_MigrateContribPackages_Replace(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		if module != "websocket" {
+			return "", fmt.Errorf("unexpected module %s", module)
+		}
+		return "v3.0.0", nil
+	})
+	t.Cleanup(restore)
 
 	file := writeTempFile(t, dir, `package main
 import (
@@ -80,16 +93,19 @@ replace github.com/gofiber/contrib/websocket => ../local`
 	assert.Contains(t, content, "github.com/gofiber/contrib/v3/websocket")
 
 	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/websocket v1.0.0")
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/websocket v3.0.0")
 	assert.Contains(t, mod, "replace github.com/gofiber/contrib/v3/websocket => ../local")
 
 	assert.Contains(t, buf.String(), "Migrating contrib packages")
 }
 
 func Test_MigrateContribPackages_Idempotent(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		return "v3.3.3", nil
+	})
+	t.Cleanup(restore)
 
 	file := writeTempFile(t, dir, `package main
 import (
