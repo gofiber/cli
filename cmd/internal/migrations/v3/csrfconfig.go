@@ -23,16 +23,16 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 				var extractor string
 				switch {
 				case strings.HasPrefix(val, "header:"):
-					extractor = fmt.Sprintf("Extractor: extractors.FromHeader(%q)", strings.TrimPrefix(val, "header:"))
+					extractor = fmt.Sprintf("extractors.FromHeader(%q)", strings.TrimPrefix(val, "header:"))
 				case strings.HasPrefix(val, "form:"):
-					extractor = fmt.Sprintf("Extractor: extractors.FromForm(%q)", strings.TrimPrefix(val, "form:"))
+					extractor = fmt.Sprintf("extractors.FromForm(%q)", strings.TrimPrefix(val, "form:"))
 				case strings.HasPrefix(val, "query:"):
-					extractor = fmt.Sprintf("Extractor: extractors.FromQuery(%q)", strings.TrimPrefix(val, "query:"))
+					extractor = fmt.Sprintf("extractors.FromQuery(%q)", strings.TrimPrefix(val, "query:"))
 				default:
 					return FormatFieldWithComment(indent, "// TODO: migrate KeyLookup", val, "", comment, newline)
 				}
 
-				return FormatFieldWithComment(indent, extractor, "", comma, comment, newline)
+				return FormatFieldWithComment(indent, "Extractor", extractor, comma, comment, newline)
 			})
 		})
 
