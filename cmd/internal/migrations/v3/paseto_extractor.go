@@ -45,10 +45,7 @@ func MigratePasetoExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version
 					lookup = strings.TrimSuffix(lookup, "}")
 					parts := splitArgs(lookup)
 					if len(parts) < 2 {
-						if comment != "" {
-							comment = " " + comment
-						}
-						return fmt.Sprintf("%s// TODO: migrate TokenLookup: %s%s%s", indent, val, comment, newline)
+						return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
 					}
 
 					source := strings.TrimSpace(parts[0])
@@ -99,16 +96,10 @@ func MigratePasetoExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version
 					}
 
 					if extractor == "" {
-						if comment != "" {
-							comment = " " + comment
-						}
-						return fmt.Sprintf("%s// TODO: migrate TokenLookup: %s%s%s", indent, val, comment, newline)
+						return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
 					}
 
-					if comment != "" {
-						comment = " " + comment
-					}
-					return fmt.Sprintf("%sExtractor: %s%s%s%s", indent, extractor, comma, comment, newline)
+					return FormatFieldWithComment(indent, "Extractor", extractor, comma, comment, newline)
 				})
 
 				cfg = removeConfigField(cfg, "TokenPrefix")

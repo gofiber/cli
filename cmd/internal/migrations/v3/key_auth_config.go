@@ -48,10 +48,7 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 					case strings.HasPrefix(p, "cookie:"):
 						extractors = append(extractors, fmt.Sprintf("extractors.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
 					default:
-						if comment != "" {
-							comment = " " + comment
-						}
-						return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s%s", indent, val, comment, newline)
+						return FormatFieldWithComment(indent, "// TODO: migrate KeyLookup", val, "", comment, newline)
 					}
 				}
 
@@ -62,16 +59,10 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 					extractor = fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
 				}
 				if extractor == "" {
-					if comment != "" {
-						comment = " " + comment
-					}
-					return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s%s", indent, val, comment, newline)
+					return FormatFieldWithComment(indent, "// TODO: migrate KeyLookup", val, "", comment, newline)
 				}
 
-				if comment != "" {
-					comment = " " + comment
-				}
-				return fmt.Sprintf("%sExtractor: %s%s%s%s", indent, extractor, comma, comment, newline)
+				return FormatFieldWithComment(indent, "Extractor", extractor, comma, comment, newline)
 			})
 
 			cfg = removeConfigField(cfg, "AuthScheme")

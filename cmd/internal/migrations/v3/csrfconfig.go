@@ -15,24 +15,11 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	reConfig := regexp.MustCompile(`csrf\.Config{`)
 	reSession := regexp.MustCompile(`(?m)\s*SessionKey:\s*[^,\n]+,?\s*(//[^\n]*)?\n`)
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		matches := reConfig.FindAllStringIndex(content, -1)
-		if len(matches) == 0 {
-			return content
-		}
-
-		var b strings.Builder
-		last := 0
-		for _, m := range matches {
-			if _, err := b.WriteString(content[last:m[0]]); err != nil {
-				return content
-			}
-			start := m[0]
-			end := extractBlock(content, m[1], '{', '}')
-			cfg := content[start:end]
+		updated := IterateConfigBlocks(content, reConfig, func(cfg string) string {
 			cfg = strings.ReplaceAll(cfg, "Expiration:", "IdleTimeout:")
 			cfg = reSession.ReplaceAllString(cfg, "")
 
-			cfg = replaceKeyLookup(cfg, func(indent, val, comma, comment, newline string) string {
+			return replaceKeyLookup(cfg, func(indent, val, comma, comment, newline string) string {
 				var extractor string
 				switch {
 				case strings.HasPrefix(val, "header:"):
@@ -42,28 +29,13 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 				case strings.HasPrefix(val, "query:"):
 					extractor = fmt.Sprintf("Extractor: extractors.FromQuery(%q)", strings.TrimPrefix(val, "query:"))
 				default:
-					if comment != "" {
-						comment = " " + comment
-					}
-					return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s%s", indent, val, comment, newline)
+					return FormatFieldWithComment(indent, "// TODO: migrate KeyLookup", val, "", comment, newline)
 				}
 
-				if comment != "" {
-					comment = " " + comment
-				}
-				return fmt.Sprintf("%s%s%s%s%s", indent, extractor, comma, comment, newline)
+				return FormatFieldWithComment(indent, extractor, "", comma, comment, newline)
 			})
+		})
 
-			if _, err := b.WriteString(cfg); err != nil {
-				return content
-			}
-			last = end
-		}
-		if _, err := b.WriteString(content[last:]); err != nil {
-			return content
-		}
-
-		updated := b.String()
 		if updated != content {
 			updated = addImport(updated, "github.com/gofiber/fiber/v3/extractors")
 		}

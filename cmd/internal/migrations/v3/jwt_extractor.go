@@ -60,10 +60,7 @@ func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 						case strings.HasPrefix(p, "form:"):
 							extractors = append(extractors, fmt.Sprintf("extractors.FromForm(%q)", strings.TrimPrefix(p, "form:")))
 						default:
-							if comment != "" {
-								comment = " " + comment
-							}
-							return fmt.Sprintf("%s// TODO: migrate TokenLookup: %s%s%s", indent, val, comment, newline)
+							return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
 						}
 					}
 
@@ -77,16 +74,10 @@ func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 					}
 
 					if extractor == "" {
-						if comment != "" {
-							comment = " " + comment
-						}
-						return fmt.Sprintf("%s// TODO: migrate TokenLookup: %s%s%s", indent, val, comment, newline)
+						return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
 					}
 
-					if comment != "" {
-						comment = " " + comment
-					}
-					return fmt.Sprintf("%sExtractor: %s%s%s%s", indent, extractor, comma, comment, newline)
+					return FormatFieldWithComment(indent, "Extractor", extractor, comma, comment, newline)
 				})
 
 				cfg = reAuthLine.ReplaceAllString(cfg, "")

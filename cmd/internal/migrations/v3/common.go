@@ -2,6 +2,7 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
 	"regexp"
 	"sort"
 	"strconv"
@@ -479,4 +480,143 @@ func addImport(content, path string) string {
 	}
 
 	return content
+}
+
+// GetBaseIdent recursively resolves an expression to its base identifier.
+// It handles selector expressions, call expressions, and identifiers.
+// Returns nil if the expression cannot be resolved to a simple identifier.
+func GetBaseIdent(expr ast.Expr) *ast.Ident {
+	for {
+		switch e := expr.(type) {
+		case *ast.Ident:
+			return e
+		case *ast.SelectorExpr:
+			expr = e.X
+		case *ast.CallExpr:
+			expr = e.Fun
+		default:
+			return nil
+		}
+	}
+}
+
+// ExtractCommentAndValue separates a value from its trailing comment.
+// It handles both line comments (//) and block comments (/* */).
+// Returns the value (trimmed) and the comment (with original delimiters).
+func ExtractCommentAndValue(line string) (value, comment string) {
+	value = line
+	if idx := strings.Index(line, "//"); idx >= 0 {
+		comment = strings.TrimSpace(line[idx:])
+		value = strings.TrimSpace(line[:idx])
+	} else if idx := strings.Index(line, "/*"); idx >= 0 {
+		comment = strings.TrimSpace(line[idx:])
+		value = strings.TrimSpace(line[:idx])
+	}
+	return value, comment
+}
+
+// FormatFieldWithComment formats a field assignment with consistent spacing
+// for indentation, value, comma, comment, and newline.
+func FormatFieldWithComment(indent, fieldName, value, comma, comment, newline string) string {
+	if comment != "" {
+		comment = " " + comment
+	}
+	return fmt.Sprintf("%s%s: %s%s%s%s", indent, fieldName, value, comma, comment, newline)
+}
+
+// LookupMapper defines the mapping from lookup prefixes to extractor calls.
+type LookupMapper struct {
+	// Map of prefix (e.g., "header") to extractor function name (e.g., "FromHeader")
+	Mappings map[string]string
+	// Package name for the extractor (e.g., "extractors")
+	Package string
+	// Whether auth scheme handling is needed (e.g., for JWT "Authorization: Bearer")
+	HasAuthScheme bool
+	// Default auth scheme if applicable (e.g., "Bearer")
+	DefaultAuthScheme string
+}
+
+// ProcessLookupString converts a comma-separated lookup string (e.g., "header:Authorization,query:token")
+// into extractor function calls. Returns the formatted extractor string or empty if no valid mappings found.
+func ProcessLookupString(lookupValue string, mapper LookupMapper) string {
+	parts := strings.Split(lookupValue, ",")
+	var extractors []string
+
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+
+		// Find matching prefix
+		var matched bool
+		for prefix, extractorFunc := range mapper.Mappings {
+			fullPrefix := prefix + ":"
+			if strings.HasPrefix(p, fullPrefix) {
+				name := strings.TrimSpace(strings.TrimPrefix(p, fullPrefix))
+
+				// Special handling for Authorization header with Bearer scheme
+				if mapper.HasAuthScheme && prefix == "header" && name == "Authorization" {
+					scheme := mapper.DefaultAuthScheme
+					if scheme == "" {
+						scheme = "Bearer"
+					}
+					extractors = append(extractors, fmt.Sprintf("%s.%s(%q, %q)", mapper.Package, extractorFunc, name, scheme))
+				} else {
+					extractors = append(extractors, fmt.Sprintf("%s.%s(%q)", mapper.Package, extractorFunc, name))
+				}
+				matched = true
+				break
+			}
+		}
+
+		if !matched {
+			// Return empty to signal that a TODO comment should be added
+			return ""
+		}
+	}
+
+	if len(extractors) == 0 {
+		return ""
+	}
+
+	if len(extractors) == 1 {
+		return extractors[0]
+	}
+
+	// Multiple extractors: use Funcs()
+	return fmt.Sprintf("%s.Funcs(\n\t\t%s,\n\t)", mapper.Package, strings.Join(extractors, ",\n\t\t"))
+}
+
+// IterateConfigBlocks finds all occurrences matching the given regex pattern,
+// extracts their config blocks using braces, processes each block with the
+// provided function, and reconstructs the content.
+func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(string) string) string {
+	matches := pattern.FindAllStringIndex(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		if _, err := b.WriteString(content[last:m[0]]); err != nil {
+			return content
+		}
+		start := m[0]
+		end := extractBlock(content, m[1], '{', '}')
+		cfg := content[start:end]
+
+		// Process the config block
+		cfg = processor(cfg)
+
+		if _, err := b.WriteString(cfg); err != nil {
+			return content
+		}
+		last = end
+	}
+	if _, err := b.WriteString(content[last:]); err != nil {
+		return content
+	}
+	return b.String()
 }
