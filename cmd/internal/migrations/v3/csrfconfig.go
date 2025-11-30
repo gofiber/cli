@@ -36,11 +36,11 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 				var extractor string
 				switch {
 				case strings.HasPrefix(val, "header:"):
-					extractor = fmt.Sprintf("Extractor: csrf.FromHeader(%q)", strings.TrimPrefix(val, "header:"))
+					extractor = fmt.Sprintf("Extractor: extractors.FromHeader(%q)", strings.TrimPrefix(val, "header:"))
 				case strings.HasPrefix(val, "form:"):
-					extractor = fmt.Sprintf("Extractor: csrf.FromForm(%q)", strings.TrimPrefix(val, "form:"))
+					extractor = fmt.Sprintf("Extractor: extractors.FromForm(%q)", strings.TrimPrefix(val, "form:"))
 				case strings.HasPrefix(val, "query:"):
-					extractor = fmt.Sprintf("Extractor: csrf.FromQuery(%q)", strings.TrimPrefix(val, "query:"))
+					extractor = fmt.Sprintf("Extractor: extractors.FromQuery(%q)", strings.TrimPrefix(val, "query:"))
 				default:
 					if comment != "" {
 						comment = " " + comment
@@ -62,7 +62,12 @@ func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 		if _, err := b.WriteString(content[last:]); err != nil {
 			return content
 		}
-		return b.String()
+
+		updated := b.String()
+		if updated != content {
+			updated = addImport(updated, "github.com/gofiber/fiber/v3/extractors")
+		}
+		return updated
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate CSRF configs: %w", err)

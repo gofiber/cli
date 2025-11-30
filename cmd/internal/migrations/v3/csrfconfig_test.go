@@ -85,7 +85,8 @@ var _ = csrf.New(csrf.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: csrf.FromHeader("X-CSRF-Token")`)
+	assert.Contains(t, content, `Extractor: extractors.FromHeader("X-CSRF-Token")`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
 }
 
@@ -110,7 +111,8 @@ var _ = csrf.New(csrf.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: csrf.FromForm("csrf")`)
+	assert.Contains(t, content, `Extractor: extractors.FromForm("csrf")`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating CSRF middleware configs")
 }
 

@@ -35,11 +35,11 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 					p = strings.TrimSpace(p)
 					switch {
 					case strings.HasPrefix(p, "cookie:"):
-						extractors = append(extractors, fmt.Sprintf("session.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
 					case strings.HasPrefix(p, "header:"):
-						extractors = append(extractors, fmt.Sprintf("session.FromHeader(%q)", strings.TrimPrefix(p, "header:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromHeader(%q)", strings.TrimPrefix(p, "header:")))
 					case strings.HasPrefix(p, "query:"):
-						extractors = append(extractors, fmt.Sprintf("session.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
+						extractors = append(extractors, fmt.Sprintf("extractors.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
 					default:
 						if comment != "" {
 							comment = " " + comment
@@ -57,7 +57,7 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 				extractor := extractors[0]
 				if len(extractors) > 1 {
-					extractor = fmt.Sprintf("session.Chain(%s)", strings.Join(extractors, ", "))
+					extractor = fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
 				}
 
 				if comment != "" {
@@ -73,7 +73,12 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		if _, err := b.WriteString(content[last:]); err != nil {
 			return content
 		}
-		return b.String()
+
+		updated := b.String()
+		if updated != content {
+			updated = addImport(updated, "github.com/gofiber/fiber/v3/extractors")
+		}
+		return updated
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate session extractor config: %w", err)

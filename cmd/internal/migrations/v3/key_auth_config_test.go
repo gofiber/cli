@@ -32,7 +32,8 @@ var _ = keyauth.New(keyauth.Config{
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
 	assert.NotContains(t, content, "AuthScheme")
-	assert.Contains(t, content, `Extractor: keyauth.Chain(keyauth.FromAuthHeader("Authorization", "Bearer"), keyauth.FromQuery("api"))`)
+	assert.Contains(t, content, `Extractor: extractors.Chain(extractors.FromAuthHeader("Bearer"), extractors.FromQuery("api"))`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating keyauth middleware configs")
 }
 
@@ -55,7 +56,8 @@ var _ = keyauth.New(keyauth.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "KeyLookup")
-	assert.Contains(t, content, `Extractor: keyauth.Chain(keyauth.FromCookie("__Host-session"), keyauth.FromForm("csrf"))`)
+	assert.Contains(t, content, `Extractor: extractors.Chain(extractors.FromCookie("__Host-session"), extractors.FromForm("csrf"))`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating keyauth middleware configs")
 }
 
