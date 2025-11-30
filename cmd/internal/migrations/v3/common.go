@@ -166,48 +166,143 @@ func replaceField(src, field string, fn func(indent, val, comma, comment, newlin
 }
 
 func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comma, comment, newline string) string) string {
-	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(field) + `:\s*([^\n]+)(\n?)`)
-	return re.ReplaceAllStringFunc(src, func(s string) string {
-		sub := re.FindStringSubmatch(s)
-		indent := sub[1]
-		val := strings.TrimSpace(sub[2])
-		newline := sub[3]
+	re := regexp.MustCompile(regexp.QuoteMeta(field) + `:\s*`)
+	var b strings.Builder
+	pos := 0
 
-		comment := ""
-		if idx := strings.Index(val, "//"); idx >= 0 {
-			comment = strings.TrimSpace(val[idx:])
-			val = strings.TrimSpace(val[:idx])
-		} else if idx := strings.Index(val, "/*"); idx >= 0 {
-			comment = strings.TrimSpace(val[idx:])
-			val = strings.TrimSpace(val[:idx])
+	for {
+		loc := re.FindStringIndex(src[pos:])
+		if loc == nil {
+			break
+		}
+		loc[0] += pos
+		loc[1] += pos
+
+		start := loc[0]
+		valStart := loc[1]
+
+		prefix := ""
+		prefixStart := start
+		if prefixStart > 0 && (src[prefixStart-1] == '{' || src[prefixStart-1] == ',') {
+			prefix = string(src[prefixStart-1])
+			prefixStart--
 		}
 
+		indentStart := prefixStart
+		for indentStart > 0 && (src[indentStart-1] == ' ' || src[indentStart-1] == '\t') {
+			indentStart--
+		}
+		indent := src[indentStart:prefixStart]
+
+		if _, err := b.WriteString(src[pos:indentStart]); err != nil {
+			return src
+		}
+
+		i := valStart
+		depth := 0
+		inString := false
 		comma := ""
+		newline := ""
+		for i < len(src) {
+			ch := src[i]
+			if inString {
+				if ch == '\\' && i+1 < len(src) {
+					i += 2
+					continue
+				}
+				if ch == '"' {
+					inString = false
+				}
+				i++
+				continue
+			}
+
+			switch ch {
+			case '"':
+				inString = true
+			case '(', '{', '[':
+				depth++
+			case ')', ']':
+				if depth > 0 {
+					depth--
+				}
+			case '}':
+				if depth == 0 {
+					goto endValue
+				}
+				depth--
+			case ',':
+				if depth == 0 {
+					comma = ","
+					suffixStart := i
+					i = skipCommaSuffix(src, i)
+					if strings.Contains(src[suffixStart:i], "\n") {
+						newline = "\n"
+					}
+					goto endValue
+				}
+			case '\n':
+				if depth == 0 {
+					newline = "\n"
+					i++
+					goto endValue
+				}
+			default:
+			}
+			i++
+		}
+
+	endValue:
+		end := i
+		val := strings.TrimSpace(src[valStart:end])
+		val, comment := ExtractCommentAndValue(val)
+
 		if strings.HasSuffix(val, ",") {
-			comma = ","
+			if comma == "" {
+				comma = ","
+			}
 			val = strings.TrimSpace(strings.TrimSuffix(val, ","))
 		}
 
 		if unquote {
 			uq, err := strconv.Unquote(val)
 			if err != nil {
+				replacement := fmt.Sprintf("%s%s// TODO: migrate %s: %s", prefix, indent, field, val)
 				if comment != "" {
-					return fmt.Sprintf("%s// TODO: migrate %s: %s %s%s", indent, field, val, comment, newline)
+					replacement = fmt.Sprintf("%s %s", replacement, comment)
 				}
-				return fmt.Sprintf("%s// TODO: migrate %s: %s%s", indent, field, val, newline)
+				replacement += newline
+				if _, err := b.WriteString(replacement); err != nil {
+					return src
+				}
+				pos = end
+				continue
 			}
 			val = uq
 		}
 
 		repl := fn(indent, val, comma, comment, newline)
+		var replacement string
 		if repl == "" {
 			if comment != "" {
-				return fmt.Sprintf("%s%s%s", indent, comment, newline)
+				replacement = fmt.Sprintf("%s%s%s%s", prefix, indent, comment, newline)
+			} else {
+				replacement = prefix + newline
 			}
-			return newline
+		} else {
+			replacement = prefix + repl
 		}
-		return repl
-	})
+
+		if _, err := b.WriteString(replacement); err != nil {
+			return src
+		}
+		pos = end
+	}
+
+	if _, err := b.WriteString(src[pos:]); err != nil {
+		return src
+	}
+	return b.String()
 }
 
 func collectAliases(content string, reImport *regexp.Regexp, defaults []string) []string {

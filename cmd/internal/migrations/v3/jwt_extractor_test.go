@@ -94,6 +94,29 @@ var _ = authjwt.New(authjwt.Config{
 	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
 }
 
+func Test_MigrateJWTExtractor_InlineConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mjwt_inline")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import jwtware "github.com/gofiber/contrib/jwt"
+
+var _ = jwtware.New(jwtware.Config{TokenLookup: "cookie:jwt"})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateJWTExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TokenLookup")
+	assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("jwt"\)`, content)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
+}
+
 func Test_MigrateJWTExtractor_ImportWithComment(t *testing.T) {
 	t.Parallel()
 
@@ -111,6 +134,76 @@ func JWTMiddleware() fiber.Handler {
     return jwtware.New(jwtware.Config{
         TokenLookup: "cookie:jwt",
     })
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateJWTExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TokenLookup")
+	assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("jwt"\)`, content)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
+}
+
+func Test_MigrateJWTExtractor_FiberV2Middleware(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mjwt_fiber_v2")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package auth
+
+import (
+    "os"
+    "strconv"
+
+    jwtware "github.com/gofiber/contrib/jwt"
+    "github.com/gofiber/fiber/v2"
+    "github.com/golang-jwt/jwt/v5"
+)
+
+// JWT error message.
+func jwtError(c *fiber.Ctx, err error) error {
+    if err.Error() == "Missing or malformed JWT" {
+        return c.Status(fiber.StatusBadRequest).JSON(&fiber.Map{
+            "status":  "error",
+            "message": "Missing or malformed JWT!",
+        })
+    }
+
+    return c.Status(fiber.StatusUnauthorized).JSON(&fiber.Map{
+        "status":  "error",
+        "message": "Invalid or expired JWT!",
+    })
+}
+
+// Guards a specific endpoint in the API.
+func JWTMiddleware() fiber.Handler {
+    return jwtware.New(jwtware.Config{
+        ErrorHandler: jwtError,
+        SigningKey:   jwtware.SigningKey{Key: []byte(os.Getenv("JWT_SECRET"))},
+        TokenLookup:  "cookie:jwt",
+    })
+}
+
+// Gets user data (their ID) from the JWT middleware. Should be executed after calling 'JWTMiddleware()'.
+func GetDataFromJWT(c *fiber.Ctx) error {
+    jwtData := c.Locals("user").(*jwt.Token)
+    claims := jwtData.Claims.(jwt.MapClaims)
+    parsedUserID := claims["uid"].(string)
+    userID, err := strconv.Atoi(parsedUserID)
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(&fiber.Map{
+            "status":  "fail",
+            "message": err.Error(),
+        })
+    }
+
+    c.Locals("currentUser", userID)
+    return c.Next()
 }`)
 
 	var buf bytes.Buffer
@@ -145,6 +238,36 @@ func JWTMiddleware() fiber.Handler {
     })
 }
 `)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateJWTExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TokenLookup")
+	assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("jwt"\)`, content)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
+}
+
+func Test_MigrateJWTExtractor_PointerConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mjwt_pointer")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    jwtware "github.com/gofiber/contrib/jwt"
+    "github.com/gofiber/fiber/v2"
+)
+
+func JWTMiddleware() fiber.Handler {
+    return jwtware.New(&jwtware.Config{
+        TokenLookup: "cookie:jwt",
+    })
+}`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
