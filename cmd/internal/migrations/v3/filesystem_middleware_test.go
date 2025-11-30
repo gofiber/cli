@@ -3,6 +3,7 @@ package v3_test
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,18 +113,7 @@ func main() {
 	assert.Equal(t, firstContent, secondContent, "Migration should be idempotent")
 
 	// Verify the TODO comment is only present once
-	assert.Equal(t, 1, countOccurrences(secondContent, "TODO: Migrate to NotFoundHandler"))
+	assert.Equal(t, 1, strings.Count(secondContent, "TODO: Migrate to NotFoundHandler"))
 	// Verify the NotFoundFile comment is only present once
-	assert.Equal(t, 1, countOccurrences(secondContent, "// NotFoundFile:"))
-}
-
-// Helper function to count occurrences of a substring
-func countOccurrences(str, substr string) int {
-	count := 0
-	for i := 0; i <= len(str)-len(substr); i++ {
-		if str[i:i+len(substr)] == substr {
-			count++
-		}
-	}
-	return count
+	assert.Equal(t, 1, strings.Count(secondContent, "// NotFoundFile:"))
 }
