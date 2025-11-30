@@ -75,34 +75,12 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 				}
 				modified = true
 			case "RedirectBack":
-				redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: sel.X, Sel: ast.NewIdent("Redirect")}}
-				args := call.Args
-
-				if len(call.Args) > 1 && isStatusArg(call.Args[len(call.Args)-1]) {
-					statusArg := call.Args[len(call.Args)-1]
-					args = call.Args[:len(call.Args)-1]
-					*call = wrapWithRedirectStatus(sel.X, args[0], statusArg, "Back")
-				} else {
-					*call = ast.CallExpr{
-						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Back")},
-						Args: args,
-					}
-				}
+				transformRedirectCall(call, sel.X, "Back", func(ctx ast.Expr, args []ast.Expr, status ast.Expr) ast.CallExpr {
+					return wrapWithRedirectStatus(ctx, args[0], status, "Back")
+				})
 				modified = true
 			case "RedirectToRoute":
-				redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: sel.X, Sel: ast.NewIdent("Redirect")}}
-				args := call.Args
-
-				if len(call.Args) > 1 && isStatusArg(call.Args[len(call.Args)-1]) {
-					statusArg := call.Args[len(call.Args)-1]
-					args = call.Args[:len(call.Args)-1]
-					*call = wrapRouteWithStatus(sel.X, args, statusArg)
-				} else {
-					*call = ast.CallExpr{
-						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Route")},
-						Args: args,
-					}
-				}
+				transformRedirectCall(call, sel.X, "Route", wrapRouteWithStatus)
 				modified = true
 			default:
 				return true
@@ -131,6 +109,23 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 
 	cmd.Println("Migrating redirect methods")
 	return nil
+}
+
+func transformRedirectCall(call *ast.CallExpr, ctx ast.Expr, method string, statusWrapper func(ast.Expr, []ast.Expr, ast.Expr) ast.CallExpr) {
+	redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: ctx, Sel: ast.NewIdent("Redirect")}}
+	args := call.Args
+
+	if len(call.Args) > 1 && isStatusArg(call.Args[len(call.Args)-1]) {
+		statusArg := call.Args[len(call.Args)-1]
+		args = call.Args[:len(call.Args)-1]
+		*call = statusWrapper(ctx, args, statusArg)
+		return
+	}
+
+	*call = ast.CallExpr{
+		Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent(method)},
+		Args: args,
+	}
 }
 
 func wrapWithRedirectStatus(ctx, target, status ast.Expr, method string) ast.CallExpr {
@@ -203,7 +198,7 @@ func isStatusArg(expr ast.Expr) bool {
 		return (v.Op == token.ADD || v.Op == token.SUB) && isStatusArg(v.X)
 	case *ast.SelectorExpr:
 		if ident, ok := v.X.(*ast.Ident); ok {
-			return (ident.Name == "fiber" || strings.HasPrefix(ident.Name, "http")) && strings.HasPrefix(v.Sel.Name, "Status")
+			return (ident.Name == "fiber" || ident.Name == "http") && strings.HasPrefix(v.Sel.Name, "Status")
 		}
 	}
 

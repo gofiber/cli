@@ -51,6 +51,8 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).Route(__fiberRedirectRouteArg0)")
 	assert.Contains(t, content, "__fiberRedirectRouteArg1 := fiber.Map{}")
 	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).Route(__fiberRedirectRouteArg0, __fiberRedirectRouteArg1)")
+	assert.Contains(t, content, "__fiberRedirectRouteArg0 := \"dashboard\"")
+	assert.Contains(t, content, "__fiberRedirectStatus := 308")
 	assert.Contains(t, buf.String(), "Migrating redirect methods")
 }
 
