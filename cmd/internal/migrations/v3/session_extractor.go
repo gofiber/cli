@@ -32,13 +32,9 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 					}
 				}
 
-				if len(extractors) == 0 {
+				extractor := BuildExtractorChain(extractors)
+				if extractor == "" {
 					return FormatFieldWithComment(indent, "// TODO: migrate KeyLookup", val, "", comment, newline)
-				}
-
-				extractor := extractors[0]
-				if len(extractors) > 1 {
-					extractor = fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
 				}
 
 				return FormatFieldWithComment(indent, "Extractor", extractor, comma, comment, newline)

@@ -52,12 +52,7 @@ func MigrateKeyAuthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 					}
 				}
 
-				extractor := ""
-				if len(extractors) == 1 {
-					extractor = extractors[0]
-				} else if len(extractors) > 1 {
-					extractor = fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
-				}
+				extractor := BuildExtractorChain(extractors)
 				if extractor == "" {
 					return FormatFieldWithComment(indent, "// TODO: migrate KeyLookup", val, "", comment, newline)
 				}

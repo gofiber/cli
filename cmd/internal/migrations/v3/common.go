@@ -620,3 +620,33 @@ func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(
 	}
 	return b.String()
 }
+
+// BuildExtractorChain builds an extractor expression from a slice of extractors.
+// Returns a single extractor for one element, Chain() for multiple, or empty for none.
+func BuildExtractorChain(extractors []string) string {
+	switch len(extractors) {
+	case 0:
+		return ""
+	case 1:
+		return extractors[0]
+	default:
+		return fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
+	}
+}
+
+// ExtractorMapping represents a mapping from lookup prefix to extractor function.
+type ExtractorMapping struct {
+	Prefix    string
+	Extractor string
+}
+
+// StandardExtractorMappings returns the common extractor mappings used across multiple migrations.
+func StandardExtractorMappings() []ExtractorMapping {
+	return []ExtractorMapping{
+		{"header", "extractors.FromHeader"},
+		{"query", "extractors.FromQuery"},
+		{"param", "extractors.FromParam"},
+		{"cookie", "extractors.FromCookie"},
+		{"form", "extractors.FromForm"},
+	}
+}

@@ -64,15 +64,7 @@ func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 						}
 					}
 
-					extractor := ""
-					switch len(extractors) {
-					case 1:
-						extractor = extractors[0]
-					case 0:
-					default:
-						extractor = fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
-					}
-
+					extractor := BuildExtractorChain(extractors)
 					if extractor == "" {
 						return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
 					}
