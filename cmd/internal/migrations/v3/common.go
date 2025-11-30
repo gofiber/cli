@@ -536,9 +536,7 @@ func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(
 	var b strings.Builder
 	last := 0
 	for _, m := range matches {
-		if _, err := b.WriteString(content[last:m[0]]); err != nil {
-			return content
-		}
+		b.WriteString(content[last:m[0]]) //nolint:errcheck // WriteString never returns an error
 		start := m[0]
 		end := extractBlock(content, m[1], '{', '}')
 		cfg := content[start:end]
@@ -546,14 +544,10 @@ func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(
 		// Process the config block
 		cfg = processor(cfg)
 
-		if _, err := b.WriteString(cfg); err != nil {
-			return content
-		}
+		b.WriteString(cfg) //nolint:errcheck // WriteString never returns an error
 		last = end
 	}
-	if _, err := b.WriteString(content[last:]); err != nil {
-		return content
-	}
+	b.WriteString(content[last:]) //nolint:errcheck // WriteString never returns an error
 	return b.String()
 }
 
