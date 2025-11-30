@@ -131,6 +131,37 @@ func handler(c fiber.Ctx) error {
 	assert.Equal(t, 2, strings.Count(second, "SetContext("))
 }
 
+func Test_MigrateContextMethods_UserContextOnlyMultipleRuns(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mcmtestuserctx")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+func handler(c fiber.Ctx) error {
+    ctx := c.UserContext()
+    _ = ctx
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+
+	first := readFile(t, file)
+	require.Contains(t, first, "ctx := c.Context()")
+	require.NotContains(t, first, ".RequestCtx()")
+	require.Contains(t, first, "// fiber:context-methods migrated")
+
+	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+	second := readFile(t, file)
+	assert.Equal(t, first, second)
+	assert.Equal(t, 1, strings.Count(second, "ctx := c.Context()"))
+	assert.Equal(t, 0, strings.Count(second, ".RequestCtx()"))
+}
+
 func Test_MigrateContextMethods_SkipNonFiber(t *testing.T) {
 	t.Parallel()
 

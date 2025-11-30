@@ -19,6 +19,10 @@ import (
 func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		orig := content
+		const migrationMarker = "// fiber:context-methods migrated"
+		if strings.Contains(orig, migrationMarker) {
+			return content
+		}
 
 		// old Context() returned fasthttp.RequestCtx
 		if !strings.Contains(orig, ".SetContext(") {
@@ -77,6 +81,14 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			}
 			return match
 		})
+
+		if content != orig && !strings.Contains(content, migrationMarker) {
+			if strings.HasSuffix(content, "\n") {
+				content += migrationMarker + "\n"
+			} else {
+				content += "\n" + migrationMarker + "\n"
+			}
+		}
 
 		return content
 	})
