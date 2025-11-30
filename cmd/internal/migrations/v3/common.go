@@ -524,70 +524,6 @@ func FormatFieldWithComment(indent, fieldName, value, comma, comment, newline st
 	return fmt.Sprintf("%s%s: %s%s%s%s", indent, fieldName, value, comma, comment, newline)
 }
 
-// LookupMapper defines the mapping from lookup prefixes to extractor calls.
-type LookupMapper struct {
-	// Map of prefix (e.g., "header") to extractor function name (e.g., "FromHeader")
-	Mappings map[string]string
-	// Package name for the extractor (e.g., "extractors")
-	Package string
-	// Whether auth scheme handling is needed (e.g., for JWT "Authorization: Bearer")
-	HasAuthScheme bool
-	// Default auth scheme if applicable (e.g., "Bearer")
-	DefaultAuthScheme string
-}
-
-// ProcessLookupString converts a comma-separated lookup string (e.g., "header:Authorization,query:token")
-// into extractor function calls. Returns the formatted extractor string or empty if no valid mappings found.
-func ProcessLookupString(lookupValue string, mapper LookupMapper) string {
-	parts := strings.Split(lookupValue, ",")
-	var extractors []string
-
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-
-		// Find matching prefix
-		var matched bool
-		for prefix, extractorFunc := range mapper.Mappings {
-			fullPrefix := prefix + ":"
-			if strings.HasPrefix(p, fullPrefix) {
-				name := strings.TrimSpace(strings.TrimPrefix(p, fullPrefix))
-
-				// Special handling for Authorization header with Bearer scheme
-				if mapper.HasAuthScheme && prefix == "header" && name == "Authorization" {
-					scheme := mapper.DefaultAuthScheme
-					if scheme == "" {
-						scheme = "Bearer"
-					}
-					extractors = append(extractors, fmt.Sprintf("%s.%s(%q, %q)", mapper.Package, extractorFunc, name, scheme))
-				} else {
-					extractors = append(extractors, fmt.Sprintf("%s.%s(%q)", mapper.Package, extractorFunc, name))
-				}
-				matched = true
-				break
-			}
-		}
-
-		if !matched {
-			// Return empty to signal that a TODO comment should be added
-			return ""
-		}
-	}
-
-	if len(extractors) == 0 {
-		return ""
-	}
-
-	if len(extractors) == 1 {
-		return extractors[0]
-	}
-
-	// Multiple extractors: use Funcs()
-	return fmt.Sprintf("%s.Funcs(\n\t\t%s,\n\t)", mapper.Package, strings.Join(extractors, ",\n\t\t"))
-}
-
 // IterateConfigBlocks finds all occurrences matching the given regex pattern,
 // extracts their config blocks using braces, processes each block with the
 // provided function, and reconstructs the content.
@@ -631,22 +567,5 @@ func BuildExtractorChain(extractors []string) string {
 		return extractors[0]
 	default:
 		return fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
-	}
-}
-
-// ExtractorMapping represents a mapping from lookup prefix to extractor function.
-type ExtractorMapping struct {
-	Prefix    string
-	Extractor string
-}
-
-// StandardExtractorMappings returns the common extractor mappings used across multiple migrations.
-func StandardExtractorMappings() []ExtractorMapping {
-	return []ExtractorMapping{
-		{"header", "extractors.FromHeader"},
-		{"query", "extractors.FromQuery"},
-		{"param", "extractors.FromParam"},
-		{"cookie", "extractors.FromCookie"},
-		{"form", "extractors.FromForm"},
 	}
 }
