@@ -7,7 +7,6 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
-	"regexp"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -23,7 +22,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "", content, parser.ParseComments)
 		if err != nil {
-			return migrateRedirectStrings(content)
+			return content
 		}
 
 		modified := false
@@ -65,50 +64,44 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 					return true
 				}
 
-				redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: sel.X, Sel: ast.NewIdent("Redirect")}}
-				target := call.Args[0]
 				if len(call.Args) > 1 {
-					redirectCall = &ast.CallExpr{
-						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
-						Args: []ast.Expr{call.Args[1]},
+					*call = wrapWithRedirectStatus(sel.X, call.Args[0], call.Args[1], "To")
+				} else {
+					redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: sel.X, Sel: ast.NewIdent("Redirect")}}
+					*call = ast.CallExpr{
+						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("To")},
+						Args: []ast.Expr{call.Args[0]},
 					}
-				}
-
-				*call = ast.CallExpr{
-					Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("To")},
-					Args: []ast.Expr{target},
 				}
 				modified = true
 			case "RedirectBack":
 				redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: sel.X, Sel: ast.NewIdent("Redirect")}}
 				args := call.Args
-				if len(call.Args) > 1 {
-					redirectCall = &ast.CallExpr{
-						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
-						Args: []ast.Expr{call.Args[len(call.Args)-1]},
-					}
-					args = call.Args[:len(call.Args)-1]
-				}
 
-				*call = ast.CallExpr{
-					Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Back")},
-					Args: args,
+				if len(call.Args) > 1 && isStatusArg(call.Args[len(call.Args)-1]) {
+					statusArg := call.Args[len(call.Args)-1]
+					args = call.Args[:len(call.Args)-1]
+					*call = wrapWithRedirectStatus(sel.X, args[0], statusArg, "Back")
+				} else {
+					*call = ast.CallExpr{
+						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Back")},
+						Args: args,
+					}
 				}
 				modified = true
 			case "RedirectToRoute":
 				redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: sel.X, Sel: ast.NewIdent("Redirect")}}
 				args := call.Args
-				if len(call.Args) > 2 {
-					redirectCall = &ast.CallExpr{
-						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
-						Args: []ast.Expr{call.Args[len(call.Args)-1]},
-					}
-					args = call.Args[:len(call.Args)-1]
-				}
 
-				*call = ast.CallExpr{
-					Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Route")},
-					Args: args,
+				if len(call.Args) > 1 && isStatusArg(call.Args[len(call.Args)-1]) {
+					statusArg := call.Args[len(call.Args)-1]
+					args = call.Args[:len(call.Args)-1]
+					*call = wrapRouteWithStatus(sel.X, args, statusArg)
+				} else {
+					*call = ast.CallExpr{
+						Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Route")},
+						Args: args,
+					}
 				}
 				modified = true
 			default:
@@ -119,7 +112,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		})
 
 		if !modified {
-			return migrateRedirectStrings(content)
+			return content
 		}
 
 		var buf bytes.Buffer
@@ -140,16 +133,79 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-func migrateRedirectStrings(content string) string {
-	replacer := strings.NewReplacer(
-		".RedirectBack(", ".Redirect().Back(",
-		".RedirectToRoute(", ".Redirect().Route(",
-	)
+func wrapWithRedirectStatus(ctx, target, status ast.Expr, method string) ast.CallExpr {
+	redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: ctx, Sel: ast.NewIdent("Redirect")}}
 
-	re := regexp.MustCompile(`\.Redirect\([^)]`)
-	content = re.ReplaceAllStringFunc(content, func(s string) string {
-		return strings.Replace(s, ".Redirect(", ".Redirect().To(", 1)
-	})
+	targetIdent := ast.NewIdent("__fiberRedirectTarget")
+	statusIdent := ast.NewIdent("__fiberRedirectStatus")
 
-	return replacer.Replace(content)
+	redirectStatus := &ast.CallExpr{
+		Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
+		Args: []ast.Expr{statusIdent},
+	}
+
+	redirectWithTarget := &ast.CallExpr{
+		Fun:  &ast.SelectorExpr{X: redirectStatus, Sel: ast.NewIdent(method)},
+		Args: []ast.Expr{targetIdent},
+	}
+
+	return ast.CallExpr{
+		Fun: &ast.FuncLit{
+			Type: &ast.FuncType{Params: &ast.FieldList{}},
+			Body: &ast.BlockStmt{List: []ast.Stmt{
+				&ast.AssignStmt{Lhs: []ast.Expr{targetIdent}, Tok: token.DEFINE, Rhs: []ast.Expr{target}},
+				&ast.AssignStmt{Lhs: []ast.Expr{statusIdent}, Tok: token.DEFINE, Rhs: []ast.Expr{status}},
+				&ast.ReturnStmt{Results: []ast.Expr{redirectWithTarget}},
+			}},
+		},
+	}
+}
+
+func wrapRouteWithStatus(ctx ast.Expr, args []ast.Expr, status ast.Expr) ast.CallExpr {
+	redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: ctx, Sel: ast.NewIdent("Redirect")}}
+	statusIdent := ast.NewIdent("__fiberRedirectStatus")
+
+	var routeArgIdents []ast.Expr
+	var stmts []ast.Stmt
+	for i, arg := range args {
+		ident := ast.NewIdent(fmt.Sprintf("__fiberRedirectRouteArg%d", i))
+		routeArgIdents = append(routeArgIdents, ident)
+		stmts = append(stmts, &ast.AssignStmt{Lhs: []ast.Expr{ident}, Tok: token.DEFINE, Rhs: []ast.Expr{arg}})
+	}
+
+	stmts = append(stmts, &ast.AssignStmt{Lhs: []ast.Expr{statusIdent}, Tok: token.DEFINE, Rhs: []ast.Expr{status}})
+
+	redirectStatus := &ast.CallExpr{
+		Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
+		Args: []ast.Expr{statusIdent},
+	}
+
+	redirectRoute := &ast.CallExpr{
+		Fun:  &ast.SelectorExpr{X: redirectStatus, Sel: ast.NewIdent("Route")},
+		Args: routeArgIdents,
+	}
+
+	stmts = append(stmts, &ast.ReturnStmt{Results: []ast.Expr{redirectRoute}})
+
+	return ast.CallExpr{
+		Fun: &ast.FuncLit{
+			Type: &ast.FuncType{Params: &ast.FieldList{}},
+			Body: &ast.BlockStmt{List: stmts},
+		},
+	}
+}
+
+func isStatusArg(expr ast.Expr) bool {
+	switch v := expr.(type) {
+	case *ast.BasicLit:
+		return v.Kind == token.INT
+	case *ast.UnaryExpr:
+		return (v.Op == token.ADD || v.Op == token.SUB) && isStatusArg(v.X)
+	case *ast.SelectorExpr:
+		if ident, ok := v.X.(*ast.Ident); ok {
+			return (ident.Name == "fiber" || strings.HasPrefix(ident.Name, "http")) && strings.HasPrefix(v.Sel.Name, "Status")
+		}
+	}
+
+	return false
 }

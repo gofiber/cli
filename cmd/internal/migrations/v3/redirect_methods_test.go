@@ -3,6 +3,7 @@ package v3_test
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,7 @@ func handler(c fiber.Ctx) error {
     c.RedirectBack()
     c.RedirectBack("/fallback", 301)
     c.RedirectToRoute("home")
+    c.RedirectToRoute("home-redirect", 301)
     c.RedirectToRoute("dashboard", fiber.Map{}, 308)
     return nil
 }
@@ -37,11 +39,18 @@ func handler(c fiber.Ctx) error {
 
 	content := readFile(t, file)
 	assert.Contains(t, content, ".Redirect().To(\"/foo\")")
-	assert.Contains(t, content, ".Redirect().Status(fiber.StatusPermanentRedirect).To(\"/bar\")")
+	assert.Contains(t, content, "__fiberRedirectTarget := \"/bar\"")
+	assert.Contains(t, content, "__fiberRedirectStatus := fiber.StatusPermanentRedirect")
+	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).To(__fiberRedirectTarget)")
 	assert.Contains(t, content, ".Redirect().Back()")
-	assert.Contains(t, content, ".Redirect().Status(301).Back(\"/fallback\")")
+	assert.Contains(t, content, "__fiberRedirectTarget := \"/fallback\"")
+	assert.Contains(t, content, "__fiberRedirectStatus := 301")
+	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).Back(__fiberRedirectTarget)")
 	assert.Contains(t, content, ".Redirect().Route(\"home\")")
-	assert.Contains(t, content, ".Redirect().Status(308).Route(\"dashboard\", fiber.Map{})")
+	assert.Contains(t, content, "__fiberRedirectRouteArg0 := \"home-redirect\"")
+	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).Route(__fiberRedirectRouteArg0)")
+	assert.Contains(t, content, "__fiberRedirectRouteArg1 := fiber.Map{}")
+	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).Route(__fiberRedirectRouteArg0, __fiberRedirectRouteArg1)")
 	assert.Contains(t, buf.String(), "Migrating redirect methods")
 }
 
@@ -68,6 +77,6 @@ func handler(c fiber.Ctx) error {
 	require.NoError(t, v3.MigrateRedirectMethods(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, ".Redirect().Status(302).To(\"/foo\")")
-	assert.NotContains(t, content, ".Redirect().Status(302).To().To(")
+	assert.Equal(t, 1, strings.Count(content, "__fiberRedirectStatus := 302"))
+	assert.Contains(t, content, "return c.Redirect().Status(__fiberRedirectStatus).To(__fiberRedirectTarget)")
 }
