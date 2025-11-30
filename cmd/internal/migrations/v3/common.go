@@ -536,6 +536,10 @@ func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(
 	var b strings.Builder
 	last := 0
 	for _, m := range matches {
+		if m[0] < last {
+			// Skip matches that fall inside a block we've already processed.
+			continue
+		}
 		b.WriteString(content[last:m[0]]) //nolint:errcheck // WriteString never returns an error
 		start := m[0]
 		end := extractBlock(content, m[1], '{', '}')
