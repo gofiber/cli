@@ -152,7 +152,11 @@ func removeConfigField(src, field string) string {
 // fn with the parsed components. If fn returns an empty string, the field is
 // removed entirely.
 func replaceKeyLookup(src string, fn func(indent, val, comma, comment, newline string) string) string {
-	re := regexp.MustCompile(`(?m)(\s*)KeyLookup:\s*([^\n]+)(\n?)`)
+	return replaceStringField(src, "KeyLookup", fn)
+}
+
+func replaceStringField(src, field string, fn func(indent, val, comma, comment, newline string) string) string {
+	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(field) + `:\s*([^\n]+)(\n?)`)
 	return re.ReplaceAllStringFunc(src, func(s string) string {
 		sub := re.FindStringSubmatch(s)
 		indent := sub[1]
@@ -187,9 +191,43 @@ func replaceKeyLookup(src string, fn func(indent, val, comma, comment, newline s
 		}
 
 		if comment != "" {
-			return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s %s%s", indent, val, comment, newline)
+			return fmt.Sprintf("%s// TODO: migrate %s: %s %s%s", indent, field, val, comment, newline)
 		}
-		return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s", indent, val, newline)
+		return fmt.Sprintf("%s// TODO: migrate %s: %s%s", indent, field, val, newline)
+	})
+}
+
+func replaceField(src, field string, fn func(indent, val, comma, comment, newline string) string) string {
+	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(field) + `:\s*([^\n]+)(\n?)`)
+	return re.ReplaceAllStringFunc(src, func(s string) string {
+		sub := re.FindStringSubmatch(s)
+		indent := sub[1]
+		val := strings.TrimSpace(sub[2])
+		newline := sub[3]
+
+		comment := ""
+		if idx := strings.Index(val, "//"); idx >= 0 {
+			comment = strings.TrimSpace(val[idx:])
+			val = strings.TrimSpace(val[:idx])
+		} else if idx := strings.Index(val, "/*"); idx >= 0 {
+			comment = strings.TrimSpace(val[idx:])
+			val = strings.TrimSpace(val[:idx])
+		}
+
+		comma := ""
+		if strings.HasSuffix(val, ",") {
+			comma = ","
+			val = strings.TrimSpace(strings.TrimSuffix(val, ","))
+		}
+
+		repl := fn(indent, val, comma, comment, newline)
+		if repl == "" {
+			if comment != "" {
+				return fmt.Sprintf("%s%s%s", indent, comment, newline)
+			}
+			return newline
+		}
+		return repl
 	})
 }
 
