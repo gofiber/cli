@@ -155,7 +155,7 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		reTypeAssert := regexp.MustCompile(`([\w\.]+FromContext\([^\)]+\))\.\([^\)]+\)`)
 		content = reTypeAssert.ReplaceAllString(content, "$1")
 
-		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))`)
+		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))(?:\s*,\s*true)*`)
 		content = reComma.ReplaceAllString(content, "$1, $2 := $3, true")
 
 		for alias := range imports {
