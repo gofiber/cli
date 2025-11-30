@@ -34,6 +34,15 @@ func MigrateFilesystemMiddleware(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 		reIndex := regexp.MustCompile(`Index:\s*([^,\n]+)`)
 		content = reIndex.ReplaceAllString(content, `IndexNames: []string{$1}`)
 
+		// Handle NotFoundFile migration - comment it out and add TODO for NotFoundHandler
+		// Only migrate if not already migrated (check for TODO comment)
+		if !strings.Contains(content, "TODO: Migrate to NotFoundHandler") {
+			reNotFoundFile := regexp.MustCompile(`(?m)^(\s*)(NotFoundFile:\s*[^,\n]+)(,?)`)
+			content = reNotFoundFile.ReplaceAllString(content,
+				`$1// TODO: Migrate to NotFoundHandler (fiber.Handler) - NotFoundFile is deprecated
+$1// $2$3`)
+		}
+
 		return content
 	})
 	if err != nil {
