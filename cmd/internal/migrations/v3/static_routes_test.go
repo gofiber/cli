@@ -24,6 +24,7 @@ func main() {
     app := fiber.New()
     app.Static("/", "./public")
     app.Static("/prefix", "./public", Static{Index: "index.htm"})
+    app.Static("/fiber", "./public", fiber.Static{Compress: true})
 }`)
 
 	var buf bytes.Buffer
@@ -34,5 +35,7 @@ func main() {
 	assert.Contains(t, content, "\"github.com/gofiber/fiber/v3/middleware/static\"")
 	assert.Contains(t, content, `.Get("/*", static.New("./public"))`)
 	assert.Contains(t, content, `static.New("./public", static.Config{IndexNames: []string{"index.htm"}})`)
+	assert.Contains(t, content, `static.New("./public", static.Config{Compress: true})`)
+	assert.NotContains(t, content, "fiber.static.Config")
 	assert.Contains(t, buf.String(), "Migrating app.Static usage")
 }
