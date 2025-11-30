@@ -94,6 +94,39 @@ var _ = authjwt.New(authjwt.Config{
 	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
 }
 
+func Test_MigrateJWTExtractor_LegacyImportPath(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mjwt_legacy")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    jwtware "github.com/gofiber/jwt/v2"
+    "github.com/gofiber/fiber/v2"
+)
+
+func JWTMiddleware() fiber.Handler {
+    return jwtware.New(jwtware.Config{
+        ErrorHandler: jwtError,
+        SigningKey:   jwtware.SigningKey{Key: []byte(os.Getenv("JWT_SECRET"))},
+        TokenLookup:  "cookie:jwt",
+    })
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateJWTExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TokenLookup")
+	assert.Contains(t, content, `Extractor: extractors.FromCookie("jwt")`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
+}
+
 func Test_MigrateJWTExtractor_SkipUnrelatedPackage(t *testing.T) {
 	t.Parallel()
 

@@ -13,7 +13,7 @@ import (
 )
 
 func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	reImport := regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w\.]+)\s+)?"github\.com/gofiber/contrib/jwt(?:/v\d+)?"`)
+	reImport := regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w\.]+)\s+)?"github\.com/gofiber/(?:contrib/)?jwt(?:/v\d+)?"`)
 	reAuthScheme := regexp.MustCompile(`(?m)^\s*AuthScheme:\s*([^,\n]+)`)
 	reAuthLine := regexp.MustCompile(`(?m)^\s*AuthScheme:\s*[^\n]+\n?`)
 	reFilter := regexp.MustCompile(`(?m)^(\s*)Filter:\s*`)
