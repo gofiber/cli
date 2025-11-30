@@ -36,7 +36,7 @@ var _ = jwtware.New(jwtware.Config{
 	content := readFile(t, file)
 	assert.NotContains(t, content, "TokenLookup")
 	assert.NotContains(t, content, "AuthScheme")
-	assert.Contains(t, content, `Extractor: extractors.Chain(extractors.FromAuthHeader("Token"), extractors.FromCookie("jwt"))`)
+        assert.Regexp(t, `Extractor:\s*extractors.Chain\(extractors.FromAuthHeader\("Token"\),\s*extractors.FromCookie\("jwt"\)\)`, content)
 	assert.Contains(t, content, "Next:")
 	assert.Contains(t, content, "func(c fiber.Ctx) bool { return false },")
 	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
@@ -89,7 +89,7 @@ var _ = authjwt.New(authjwt.Config{
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "TokenLookup")
-	assert.Contains(t, content, `Extractor: extractors.FromCookie("session")`)
+        assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("session"\)`, content)
 	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
 }
@@ -118,10 +118,10 @@ func JWTMiddleware() fiber.Handler {
 	require.NoError(t, v3.MigrateJWTExtractor(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.NotContains(t, content, "TokenLookup")
-	assert.Contains(t, content, `Extractor: extractors.FromCookie("jwt")`)
-	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
-	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
+        assert.NotContains(t, content, "TokenLookup")
+        assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("jwt"\)`, content)
+        assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+        assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
 }
 
 func Test_MigrateJWTExtractor_LegacyImportPath(t *testing.T) {
@@ -152,7 +152,7 @@ func JWTMiddleware() fiber.Handler {
 
 	content := readFile(t, file)
 	assert.NotContains(t, content, "TokenLookup")
-	assert.Contains(t, content, `Extractor: extractors.FromCookie("jwt")`)
+        assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("jwt"\)`, content)
 	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
 	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
 }
