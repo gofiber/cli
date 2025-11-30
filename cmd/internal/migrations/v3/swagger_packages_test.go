@@ -158,3 +158,48 @@ require (
 	assert.Empty(t, buf.String())
 	assert.Equal(t, 2, calls)
 }
+
+func Test_MigrateSwaggerPackages_PreservesExistingImports(t *testing.T) {
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		switch module {
+		case swaggoModule:
+			return "v3.4.0", nil
+		case swaggerUIModule:
+			return "v3.2.1", nil
+		default:
+			return "", fmt.Errorf("unexpected module %s", module)
+		}
+	})
+	t.Cleanup(restore)
+
+	dir := t.TempDir()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/contrib/v3/swaggo"
+
+func main() {
+    _ = swaggo.Config{}
+}`)
+
+	modContent := `module example
+
+go 1.22
+
+require github.com/gofiber/contrib/v3/swaggo v3.4.0
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
+
+	assert.Equal(t, `package main
+import "github.com/gofiber/contrib/v3/swaggo"
+
+func main() {
+    _ = swaggo.Config{}
+}`, readFile(t, file))
+
+	assert.Equal(t, modContent, readFile(t, filepath.Join(dir, "go.mod")))
+	assert.Empty(t, buf.String())
+}

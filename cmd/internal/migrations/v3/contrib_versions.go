@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const contribV3ProxyPrefix = "https://proxy.golang.org/github.com/gofiber/contrib/v3/"
@@ -15,6 +17,8 @@ var (
 	contribV3VersionMu      sync.Mutex
 	contribV3VersionCache   = make(map[string]string)
 	contribV3VersionFetcher = fetchContribV3Version
+	contribV3VersionGroup   singleflight.Group
+	contribHTTPClient       = &http.Client{}
 )
 
 func contribV3Version(module string) (string, error) {
@@ -26,18 +30,30 @@ func contribV3Version(module string) (string, error) {
 	fetcher := contribV3VersionFetcher
 	contribV3VersionMu.Unlock()
 
-	v, err := fetcher(module)
+	res, err, _ := contribV3VersionGroup.Do(module, func() (any, error) {
+		v, fetchErr := fetcher(module)
+		if fetchErr != nil {
+			return "", fetchErr
+		}
+
+		contribV3VersionMu.Lock()
+		contribV3VersionCache[module] = v
+		contribV3VersionMu.Unlock()
+		return v, nil
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("fetch contrib version: %w", err)
 	}
 
-	contribV3VersionMu.Lock()
-	contribV3VersionCache[module] = v
-	contribV3VersionMu.Unlock()
+	v, ok := res.(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected contrib version type %T", res)
+	}
+
 	return v, nil
 }
 
-func fetchContribV3Version(module string) (string, error) {
+func fetchContribV3Version(module string) (version string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -47,8 +63,7 @@ func fetchContribV3Version(module string) (string, error) {
 		return "", fmt.Errorf("create request: %w", err)
 	}
 
-	client := &http.Client{}
-	res, err := client.Do(req)
+	res, err := contribHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch latest version: %w", err)
 	}

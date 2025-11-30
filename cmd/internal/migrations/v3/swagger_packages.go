@@ -24,7 +24,7 @@ const (
 	contribSwaggerNew   = "github.com/gofiber/contrib/v3/swaggo"
 	fiberSwaggerOld     = "github.com/gofiber/swagger"
 	fiberSwaggerNew     = "github.com/gofiber/contrib/v3/swaggerui"
-	goModVersionPattern = `v[\w.+-]+`
+	goModVersionPattern = `v[a-zA-Z0-9.+-]+`
 )
 
 func MigrateSwaggerPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -135,13 +135,18 @@ func rewriteSwaggerImports(content string) (string, bool) {
 	changed := false
 	for _, imp := range f.Imports {
 		path := strings.Trim(imp.Path.Value, "\"`")
-		newPath := ""
+		var (
+			newPath     string
+			wasMigrated bool
+		)
 
 		switch path {
 		case contribSwaggerOld:
 			newPath = contribSwaggerNew
+			wasMigrated = true
 		case fiberSwaggerOld:
 			newPath = fiberSwaggerNew
+			wasMigrated = true
 		case contribSwaggerNew, fiberSwaggerNew:
 			newPath = path
 		default:
@@ -153,7 +158,7 @@ func rewriteSwaggerImports(content string) (string, bool) {
 			changed = true
 		}
 
-		if imp.Name == nil || imp.Name.Name == "" {
+		if wasMigrated && (imp.Name == nil || imp.Name.Name == "") {
 			imp.Name = ast.NewIdent("swagger")
 			changed = true
 		}
