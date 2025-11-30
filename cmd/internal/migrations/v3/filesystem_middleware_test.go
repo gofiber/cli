@@ -72,7 +72,7 @@ func main() {
 	assert.Contains(t, content, "// TODO: Migrate to NotFoundHandler (fiber.Handler) - NotFoundFile is deprecated")
 	// Check that static migration happened
 	assert.Contains(t, content, `static.New("", static.Config{`)
-	assert.Contains(t, content, "FS:         os.DirFS(\"./dist\")")
+	assert.Contains(t, content, `FS: os.DirFS("./dist")`)
 	assert.Contains(t, content, `IndexNames: []string{"index.html"}`)
 }
 
