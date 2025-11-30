@@ -21,10 +21,18 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	reQueryFloat := regexp.MustCompile(`(\w+)\.QueryFloat\(`)
 	reQueryBool := regexp.MustCompile(`(\w+)\.QueryBool\(`)
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		content = reParamsIntAssign.ReplaceAllString(content, "$1, $2 := fiber.Params[int]($3, $4), nil")
-		content = reQueryIntAssign.ReplaceAllString(content, "$1, $2 := fiber.Query[int]($3, $4), nil")
-		content = reQueryFloatAssign.ReplaceAllString(content, "$1, $2 := fiber.Query[float64]($3, $4), nil")
-		content = reQueryBoolAssign.ReplaceAllString(content, "$1, $2 := fiber.Query[bool]($3, $4), nil")
+		assignReplacements := []struct {
+			re   *regexp.Regexp
+			repl string
+		}{
+			{reParamsIntAssign, "$1, $2 := fiber.Params[int]($3, $4), error(nil)"},
+			{reQueryIntAssign, "$1, $2 := fiber.Query[int]($3, $4), error(nil)"},
+			{reQueryFloatAssign, "$1, $2 := fiber.Query[float64]($3, $4), error(nil)"},
+			{reQueryBoolAssign, "$1, $2 := fiber.Query[bool]($3, $4), error(nil)"},
+		}
+		for _, r := range assignReplacements {
+			content = r.re.ReplaceAllString(content, r.repl)
+		}
 
 		content = reParamsInt.ReplaceAllString(content, "fiber.Params[int]($1, ")
 		content = reQueryInt.ReplaceAllString(content, "fiber.Query[int]($1, ")

@@ -40,8 +40,8 @@ func handler(c fiber.Ctx) error {
 	require.NoError(t, v3.MigrateGenericHelpers(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "targetedUserID, err := fiber.Params[int](c, \"userID\"), nil")
-	assert.Contains(t, content, "targetedAge, err2 := fiber.Query[int](c, \"age\"), nil")
+	assert.Contains(t, content, "targetedUserID, err := fiber.Params[int](c, \"userID\"), error(nil)")
+	assert.Contains(t, content, "targetedAge, err2 := fiber.Query[int](c, \"age\"), error(nil)")
 	assert.Contains(t, content, "fiber.Params[int](c, \"id\"")
 	assert.Contains(t, content, "fiber.Query[int](c, \"level\"")
 	assert.Contains(t, content, "fiber.Query[float64](c, \"score\"")
