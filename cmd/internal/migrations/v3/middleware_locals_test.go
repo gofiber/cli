@@ -63,16 +63,15 @@ func handler(c fiber.Ctx) error {
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `csrfToken, ok := csrf.TokenFromContext(c), true`)
+	contentAfterFirstRun := readFile(t, file)
+	assert.Contains(t, contentAfterFirstRun, `csrfToken, ok := csrf.TokenFromContext(c), true`)
 	assert.Contains(t, buf.String(), "Migrating middleware locals")
 
 	buf.Reset()
 	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
 
-	content = readFile(t, file)
-	assert.Contains(t, content, `csrfToken, ok := csrf.TokenFromContext(c), true`)
-	assert.NotContains(t, content, `, true, true`)
+	contentAfterSecondRun := readFile(t, file)
+	assert.Equal(t, contentAfterFirstRun, contentAfterSecondRun)
 	assert.Empty(t, buf.String())
 }
 
