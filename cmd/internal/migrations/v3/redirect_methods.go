@@ -116,62 +116,22 @@ func transformRedirectCall(call *ast.CallExpr, ctx ast.Expr, method string, stat
 func wrapWithRedirectStatus(ctx, target, status ast.Expr, method string) ast.CallExpr {
 	redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: ctx, Sel: ast.NewIdent("Redirect")}}
 
-	targetIdent := ast.NewIdent("__fiberRedirectTarget")
-	statusIdent := ast.NewIdent("__fiberRedirectStatus")
-
-	redirectStatus := &ast.CallExpr{
-		Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
-		Args: []ast.Expr{statusIdent},
-	}
-
-	redirectWithTarget := &ast.CallExpr{
-		Fun:  &ast.SelectorExpr{X: redirectStatus, Sel: ast.NewIdent(method)},
-		Args: []ast.Expr{targetIdent},
-	}
+	redirectStatus := &ast.CallExpr{Fun: &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")}, Args: []ast.Expr{status}}
 
 	return ast.CallExpr{
-		Fun: &ast.FuncLit{
-			Type: &ast.FuncType{Params: &ast.FieldList{}},
-			Body: &ast.BlockStmt{List: []ast.Stmt{
-				&ast.AssignStmt{Lhs: []ast.Expr{targetIdent}, Tok: token.DEFINE, Rhs: []ast.Expr{target}},
-				&ast.AssignStmt{Lhs: []ast.Expr{statusIdent}, Tok: token.DEFINE, Rhs: []ast.Expr{status}},
-				&ast.ReturnStmt{Results: []ast.Expr{redirectWithTarget}},
-			}},
-		},
+		Fun:  &ast.SelectorExpr{X: redirectStatus, Sel: ast.NewIdent(method)},
+		Args: []ast.Expr{target},
 	}
 }
 
 func wrapRouteWithStatus(ctx ast.Expr, args []ast.Expr, status ast.Expr) ast.CallExpr {
 	redirectCall := &ast.CallExpr{Fun: &ast.SelectorExpr{X: ctx, Sel: ast.NewIdent("Redirect")}}
-	statusIdent := ast.NewIdent("__fiberRedirectStatus")
 
-	var routeArgIdents []ast.Expr
-	var stmts []ast.Stmt
-	for i, arg := range args {
-		ident := ast.NewIdent(fmt.Sprintf("__fiberRedirectRouteArg%d", i))
-		routeArgIdents = append(routeArgIdents, ident)
-		stmts = append(stmts, &ast.AssignStmt{Lhs: []ast.Expr{ident}, Tok: token.DEFINE, Rhs: []ast.Expr{arg}})
-	}
-
-	stmts = append(stmts, &ast.AssignStmt{Lhs: []ast.Expr{statusIdent}, Tok: token.DEFINE, Rhs: []ast.Expr{status}})
-
-	redirectStatus := &ast.CallExpr{
-		Fun:  &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")},
-		Args: []ast.Expr{statusIdent},
-	}
-
-	redirectRoute := &ast.CallExpr{
-		Fun:  &ast.SelectorExpr{X: redirectStatus, Sel: ast.NewIdent("Route")},
-		Args: routeArgIdents,
-	}
-
-	stmts = append(stmts, &ast.ReturnStmt{Results: []ast.Expr{redirectRoute}})
+	redirectStatus := &ast.CallExpr{Fun: &ast.SelectorExpr{X: redirectCall, Sel: ast.NewIdent("Status")}, Args: []ast.Expr{status}}
 
 	return ast.CallExpr{
-		Fun: &ast.FuncLit{
-			Type: &ast.FuncType{Params: &ast.FieldList{}},
-			Body: &ast.BlockStmt{List: stmts},
-		},
+		Fun:  &ast.SelectorExpr{X: redirectStatus, Sel: ast.NewIdent("Route")},
+		Args: args,
 	}
 }
 
