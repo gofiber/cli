@@ -14,8 +14,6 @@ import (
 )
 
 func Test_MigrateContribPackages(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 
 	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
@@ -61,8 +59,6 @@ require (
 }
 
 func Test_MigrateContribPackages_Replace(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 
 	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
@@ -104,8 +100,6 @@ replace github.com/gofiber/contrib/websocket => ../local`
 }
 
 func Test_MigrateContribPackages_Idempotent(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 
 	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {

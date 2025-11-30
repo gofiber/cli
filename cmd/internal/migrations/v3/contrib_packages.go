@@ -74,7 +74,6 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		}
 
 		updated := content
-		versions := make(map[string]string)
 
 		for _, match := range matches {
 			rest := strings.TrimPrefix(match, contribPrefix)
@@ -82,13 +81,9 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 				continue
 			}
 
-			version, ok := versions[rest]
-			if !ok {
-				version, err = contribV3Version(rest)
-				if err != nil {
-					return fmt.Errorf("fetch contrib %s version: %w", rest, err)
-				}
-				versions[rest] = version
+			version, err := contribV3Version(rest)
+			if err != nil {
+				return fmt.Errorf("fetch contrib %s version: %w", rest, err)
 			}
 
 			updated = updateGoModModule(updated, match, contribV3Prefix+rest, version)
