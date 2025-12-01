@@ -2,6 +2,7 @@ package v3_test
 
 import (
 	"bytes"
+	"go/format"
 	"os"
 	"testing"
 
@@ -76,28 +77,81 @@ func getSomething(c *fiber.Ctx) (err error) {
         "fourth":   structBody,
         "combined": structured,
     })
-}
-`)
+}`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "\"github.com/gofiber/fiber/v3/client\"")
-	assert.Contains(t, content, "agent, err := client.Get(\"https://example.com\")")
-	assert.Contains(t, content, "statusCode := agent.StatusCode()")
-	assert.Contains(t, content, "body := agent.Body()")
-	assert.Contains(t, content, "postAgent, err := client.Post(\"https://example.com\", client.Config{Body: \"{\\\"name\\\":\\\"fiber\\\"}\"})")
-	assert.Contains(t, content, "postCode := postAgent.StatusCode()")
-	assert.Contains(t, content, "postBody := postAgent.Body()")
-	assert.Contains(t, content, "text, err := client.Get(\"https://example.com/text\")")
-	assert.Contains(t, content, "textBody := text.String()")
-	assert.Contains(t, content, "structAgent, err := client.Get(\"https://example.com/json\")")
-	assert.Contains(t, content, "structBody := structAgent.Body()")
-	assert.Contains(t, content, "err = structAgent.JSON(&structured)")
-	assert.NotContains(t, content, "errs := agent.Bytes")
-	assert.NotContains(t, content, "len(errs)")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "encoding/json"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func getSomething(c *fiber.Ctx) (err error) {
+    agent, err := client.Get("https://example.com")
+    statusCode := agent.StatusCode()
+    body := agent.Body()
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "err": err,
+        })
+    }
+
+    var something fiber.Map
+    err = json.Unmarshal(body, &something)
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "err": err,
+        })
+    }
+
+    postAgent, err := client.Post("https://example.com", client.Config{Body: "{\"name\":\"fiber\"}"})
+    postCode := postAgent.StatusCode()
+    postBody := postAgent.Body()
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "err": err,
+        })
+    }
+
+    text, err := client.Get("https://example.com/text")
+    textStatus := text.StatusCode()
+    textBody := text.String()
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "err": err,
+        })
+    }
+
+    var structured map[string]any
+    structAgent, err := client.Get("https://example.com/json")
+    structStatus := structAgent.StatusCode()
+    structBody := structAgent.Body()
+    if err == nil {
+        err = structAgent.JSON(&structured)
+    }
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "err": err,
+        })
+    }
+
+    return c.Status(statusCode + postCode + textStatus + structStatus).JSON(fiber.Map{
+        "first":    something,
+        "second":   string(postBody),
+        "third":    textBody,
+        "fourth":   structBody,
+        "combined": structured,
+    })
+}`)
+
+	assert.Equal(t, expected, content)
 	assert.Contains(t, buf.String(), "Migrating client usage")
 }
 
@@ -114,15 +168,22 @@ import "github.com/gofiber/fiber/v3"
 
 func handler(c *fiber.Ctx) error {
     return c.SendStatus(fiber.StatusOK)
-}
-`)
+}`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "SendStatus")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func handler(c *fiber.Ctx) error {
+    return c.SendStatus(fiber.StatusOK)
+}`)
+
+	assert.Equal(t, expected, content)
 	assert.Empty(t, buf.String())
 }
 
@@ -146,20 +207,32 @@ func deleteSomething() {
 
     _ = statusCode
     _ = body
-}
-`)
+}`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "github.com/gofiber/fiber/v3/client")
-	assert.Contains(t, content, "agent, err := client.Delete(\"https://example.com/delete\")")
-	assert.Contains(t, content, "statusCode := agent.StatusCode()")
-	assert.Contains(t, content, "body := agent.Body()")
-	assert.NotContains(t, content, "errs := agent.Bytes()")
-	assert.Contains(t, content, "if err != nil {")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func deleteSomething() {
+    agent, err := client.Delete("https://example.com/delete")
+    statusCode := agent.StatusCode()
+    body := agent.Body()
+    if err != nil {
+        panic(err)
+    }
+
+    _ = statusCode
+    _ = body
+}`)
+
+	assert.Equal(t, expected, content)
 }
 
 func Test_MigrateClientUsage_RewritesAcquireAgentStruct(t *testing.T) {
@@ -209,13 +282,45 @@ func handler(ctx *fiber.Ctx, code string) error {
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "\"github.com/gofiber/fiber/v3/client\"")
-	assert.Contains(t, content, "resp, err := client.Post(fmt.Sprintf(\"https://github.com/login/oauth/access_token?code=%s\", code), client.Config{Header: map[string]string{\"accept\": \"application/json\"}})")
-	assert.Contains(t, content, "retCode = resp.StatusCode()")
-	assert.Contains(t, content, "retBody = resp.Body()")
-	assert.Contains(t, content, "err = resp.JSON(&t)")
-	assert.Contains(t, content, "if err != nil {")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+    var (
+        retCode int
+        retBody []byte
+        err     []error
+        t       map[string]any
+    )
+
+    resp, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    if err != nil {
+        return err
+    }
+    retCode = resp.StatusCode()
+    retBody = resp.Body()
+    if err == nil {
+        err = resp.JSON(&t)
+    }
+    if err != nil {
+        return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "err": err,
+        })
+    }
+
+    _ = retCode
+    _ = retBody
+    return nil
+}`)
+
+	assert.Equal(t, expected, content)
 }
 
 func Test_MigrateClientUsage_RewritesHeadersQueriesAndTimeout(t *testing.T) {
@@ -264,25 +369,55 @@ func demo() {
     _ = postBody
     _ = slowStatus
     _ = slowBody
-}
-`)
+}`)
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "agent, err := client.Get(\"https://api.example.com/data\", client.Config{Header: map[string]string{\"X-Custom-Header\": \"my-value\"}, Param: map[string]string{\"active\": \"true\", \"user\": \"john\"}})")
-	assert.Contains(t, content, "statusCode := agent.StatusCode()")
-	assert.Contains(t, content, "body := agent.Body()")
-	assert.Contains(t, content, "poster, err := client.Post(\"https://api.example.com/users\", client.Config{Body: data})")
-	assert.Contains(t, content, "postStatus := poster.StatusCode()")
-	assert.Contains(t, content, "postBody := poster.Body()")
-	assert.Contains(t, content, "slow, err := client.Get(\"https://api.example.com/slow-data\", client.Config{Timeout: 2 * time.Second})")
-	assert.Contains(t, content, "slowStatus := slow.StatusCode()")
-	assert.Contains(t, content, "slowBody := slow.String()")
-	assert.NotContains(t, content, "QueryString(")
-	assert.NotContains(t, content, "Timeout(")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+    "time"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func demo() {
+    agent, err := client.Get("https://api.example.com/data", client.Config{Header: map[string]string{"X-Custom-Header": "my-value"}, Param: map[string]string{"active": "true", "user": "john"}})
+    statusCode := agent.StatusCode()
+    body := agent.Body()
+    if err != nil {
+        fmt.Println("Request failed:", err)
+    }
+
+    data := fiber.Map{"name": "Alice", "age": 30}
+    poster, err := client.Post("https://api.example.com/users", client.Config{Body: data})
+    postStatus := poster.StatusCode()
+    postBody := poster.Body()
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+
+    slow, err := client.Get("https://api.example.com/slow-data", client.Config{Timeout: 2 * time.Second})
+    slowStatus := slow.StatusCode()
+    slowBody := slow.String()
+    if err != nil {
+        fmt.Println("Request timed out or failed:", err)
+    }
+
+    _ = statusCode
+    _ = body
+    _ = postStatus
+    _ = postBody
+    _ = slowStatus
+    _ = slowBody
+}`)
+
+	assert.Equal(t, expected, content)
 }
 
 func Test_MigrateClientUsage_RewritesParseBytesFlow(t *testing.T) {
@@ -331,12 +466,37 @@ func main() {
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "resp, err := client.Get(\"https://httpbin.org/json\")")
-	assert.Contains(t, content, "status := resp.StatusCode()")
-	assert.Contains(t, content, "body := resp.Body()")
-	assert.Contains(t, content, "err := json.Unmarshal(body, &out)")
-	assert.Contains(t, content, "if err != nil {")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "encoding/json"
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    resp, err := client.Get("https://httpbin.org/json")
+    if err != nil {
+        panic(err)
+    }
+    status := resp.StatusCode()
+    body := resp.Body()
+    if err != nil {
+        panic(err)
+    }
+
+    var out map[string]any
+    if err := json.Unmarshal(body, &out); err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Title:", out["slideshow"])
+}`)
+
+	assert.Equal(t, expected, content)
 }
 
 func Test_MigrateClientUsage_RewritesBasicAuth(t *testing.T) {
@@ -370,10 +530,28 @@ func main() {
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "agent, err := client.Get(\"http://localhost:3000\", client.Config{Header: map[string]string{\"Authorization\": \"Basic am9objpkb2U=\"}})")
-	assert.Contains(t, content, "github.com/gofiber/fiber/v3/client")
-	assert.Contains(t, content, "Status:")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000", client.Config{Header: map[string]string{"Authorization": "Basic am9objpkb2U="}})
+    status := agent.StatusCode()
+    body := agent.Body()
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
 }
 
 func Test_MigrateClientUsage_RewritesTLSConfig(t *testing.T) {
@@ -414,9 +592,42 @@ func main() {
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "client.C().SetTLSConfig(&tls.Config{RootCAs: pool})")
-	assert.Contains(t, content, "agent, err := client.Get(\"https://localhost:3000\")")
-	assert.Contains(t, content, "status := agent.StatusCode()")
-	assert.Contains(t, content, "body := agent.Body()")
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "fmt"
+    "os"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    pool, _ := x509.SystemCertPool()
+    cert, _ := os.ReadFile("ssl.cert")
+    pool.AppendCertsFromPEM(cert)
+
+    client.C().SetTLSConfig(&tls.Config{RootCAs: pool})
+    agent, err := client.Get("https://localhost:3000")
+    status := agent.StatusCode()
+    body := agent.Body()
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func gofmtSource(t *testing.T, src string) string {
+	t.Helper()
+
+	formatted, err := format.Source([]byte(src))
+	require.NoError(t, err)
+	return string(formatted)
 }
