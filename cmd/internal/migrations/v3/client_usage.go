@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"sort"
@@ -33,6 +34,8 @@ var (
 	requestURIPattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.SetRequestURI\((.*)\)\s*$`)
 	parseCallPattern    = regexp.MustCompile(`^([ \t]*)if\s+err\s*:=\s*(\w+)\.Parse\(\);\s*err\s*!=\s*nil\s*{\s*$`)
 	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+(.+?)\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
+	bytesAssignPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
+	stringAssignPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
 )
 
 var (
@@ -42,6 +45,8 @@ var (
 	timeoutPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
 	jsonBodyPattern        = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
 	bodyPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
+	basicAuthPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
+	tlsConfigPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
 	agentBytesCallPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	agentStringCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
 	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
@@ -86,13 +91,22 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		indent := acquire[1]
 		agentVar := acquire[2]
 
-		if i+1 >= len(lines) {
-			out = append(out, line)
-			continue
+		reqLine := -1
+		var reqMatch []string
+		for j := i + 1; j < len(lines); j++ {
+			trimmed := strings.TrimSpace(lines[j])
+			if trimmed == "" || strings.Contains(lines[j], "ReleaseAgent("+agentVar+")") {
+				continue
+			}
+
+			if m := requestFromAgent.FindStringSubmatch(lines[j]); len(m) > 0 && m[3] == agentVar {
+				reqMatch = m
+				reqLine = j
+			}
+			break
 		}
 
-		reqMatch := requestFromAgent.FindStringSubmatch(lines[i+1])
-		if len(reqMatch) == 0 || reqMatch[3] != agentVar {
+		if reqLine == -1 {
 			out = append(out, line)
 			continue
 		}
@@ -102,7 +116,7 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		uriExpr := ""
 		headers := make(map[string]string)
 
-		j := i + 2
+		j := reqLine + 1
 		for ; j < len(lines); j++ {
 			l := lines[j]
 			if m := headerMethodPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
@@ -160,64 +174,106 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		}
 
 		structMatch := structAssignPattern.FindStringSubmatch(lines[structStart])
-		if len(structMatch) == 0 || structMatch[4] != agentVar {
-			out = append(out, line)
-			continue
-		}
-
-		statusVar, bodyVar := "", ""
-		assigns := strings.Split(structMatch[2], ",")
-		if len(assigns) >= 2 {
-			statusVar = strings.TrimSpace(assigns[0])
-			bodyVar = strings.TrimSpace(assigns[1])
-		}
-		assignOp := structMatch[3]
-		if assignOp == "" {
-			assignOp = "="
-		}
-		structTarget := strings.TrimSpace(structMatch[5])
-
-		structBody := []string{}
-		braceDepth = 0
-		for k := structStart + 1; k < len(lines); k++ {
-			structBody = append(structBody, lines[k])
-			braceDepth += strings.Count(lines[k], "{")
-			braceDepth -= strings.Count(lines[k], "}")
-			if braceDepth < 0 {
-				structStart = k
-				break
-			}
-		}
-		if len(structBody) == 0 {
-			out = append(out, line)
-			continue
-		}
-
+		bytesMatch := bytesAssignPattern.FindStringSubmatch(lines[structStart])
+		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
 		methodName := methodFromExpr(methodExpr)
 		configLine := buildConfig(headers)
-		respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
 
-		out = append(out, respLine)
-		out = append(out, parseIndent+"if err != nil {")
-		out = append(out, parseBody[:len(parseBody)-1]...)
-		out = append(out, parseIndent+"}")
+		switch {
+		case len(structMatch) > 0 && structMatch[4] == agentVar:
+			statusVar, bodyVar := "", ""
+			assigns := strings.Split(structMatch[2], ",")
+			if len(assigns) >= 2 {
+				statusVar = strings.TrimSpace(assigns[0])
+				bodyVar = strings.TrimSpace(assigns[1])
+			}
+			assignOp := structMatch[3]
+			if assignOp == "" {
+				assignOp = "="
+			}
+			structTarget := strings.TrimSpace(structMatch[5])
 
-		if statusVar != "" {
+			structBody := []string{}
+			braceDepth = 0
+			for k := structStart + 1; k < len(lines); k++ {
+				structBody = append(structBody, lines[k])
+				braceDepth += strings.Count(lines[k], "{")
+				braceDepth -= strings.Count(lines[k], "}")
+				if braceDepth < 0 {
+					structStart = k
+					break
+				}
+			}
+			if len(structBody) == 0 {
+				out = append(out, line)
+				continue
+			}
+
+			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+
+			out = append(out, respLine)
+			out = append(out, parseIndent+"if err != nil {")
+			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, parseIndent+"}")
+
+			if statusVar != "" {
+				out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
+			}
+			if bodyVar != "" {
+				out = append(out, fmt.Sprintf("%s%s %s resp.Body()", indent, bodyVar, assignOp))
+			}
+			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%s\terr = resp.JSON(%s)", indent, structTarget))
+			out = append(out, indent+"}")
+			out = append(out, structMatch[1]+"if err != nil {")
+			out = append(out, structBody[:len(structBody)-1]...)
+			out = append(out, structMatch[1]+"}")
+
+			i = structStart
+			changed = true
+			continue
+		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
+			statusVar := strings.TrimSpace(bytesMatch[2])
+			bodyVar := strings.TrimSpace(bytesMatch[3])
+			assignOp := bytesMatch[4]
+			if assignOp == "" {
+				assignOp = "="
+			}
+
+			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			out = append(out, respLine)
+			out = append(out, parseIndent+"if err != nil {")
+			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, parseIndent+"}")
 			out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
-		}
-		if bodyVar != "" {
 			out = append(out, fmt.Sprintf("%s%s %s resp.Body()", indent, bodyVar, assignOp))
-		}
-		out = append(out, indent+"if err == nil {")
-		out = append(out, fmt.Sprintf("%s\terr = resp.JSON(%s)", indent, structTarget))
-		out = append(out, indent+"}")
-		out = append(out, structMatch[1]+"if err != nil {")
-		out = append(out, structBody[:len(structBody)-1]...)
-		out = append(out, structMatch[1]+"}")
 
-		i = structStart
-		changed = true
-		continue
+			i = structStart
+			changed = true
+			continue
+		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
+			statusVar := strings.TrimSpace(stringMatch[2])
+			bodyVar := strings.TrimSpace(stringMatch[3])
+			assignOp := stringMatch[4]
+			if assignOp == "" {
+				assignOp = "="
+			}
+
+			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			out = append(out, respLine)
+			out = append(out, parseIndent+"if err != nil {")
+			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, parseIndent+"}")
+			out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
+			out = append(out, fmt.Sprintf("%s%s %s resp.String()", indent, bodyVar, assignOp))
+
+			i = structStart
+			changed = true
+			continue
+		default:
+			out = append(out, line)
+			continue
+		}
 	}
 
 	if changed {
@@ -296,11 +352,17 @@ func rewriteClientExamples(content string) (string, bool) {
 }
 
 type simpleAgentConfig struct {
-	headers map[string]string
-	params  map[string]string
-	body    string
-	timeout string
-	config  bool
+	headers   map[string]headerValue
+	params    map[string]string
+	body      string
+	timeout   string
+	tlsConfig string
+	config    bool
+}
+
+type headerValue struct {
+	value string
+	raw   bool
 }
 
 func rewriteSimpleAgentBlocks(content string) (string, bool) {
@@ -322,7 +384,7 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 		method := match[3]
 		urlExpr := strings.TrimSpace(match[4])
 
-		cfg := simpleAgentConfig{headers: map[string]string{}, params: map[string]string{}}
+		cfg := simpleAgentConfig{headers: map[string]headerValue{}, params: map[string]string{}}
 		callFound := false
 		failed := false
 		callIndex := i
@@ -342,7 +404,7 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 					failed = true
 					break
 				}
-				cfg.headers[key] = val
+				cfg.headers[key] = headerValue{value: val}
 				cfg.config = true
 				continue
 			}
@@ -360,6 +422,26 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 			}
 			if m := timeoutPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
 				cfg.timeout = strings.TrimSpace(m[3])
+				cfg.config = true
+				continue
+			}
+			if m := basicAuthPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				userExpr := strings.TrimSpace(m[3])
+				passExpr := strings.TrimSpace(m[4])
+				if user, ok := unquoteLiteral(userExpr); ok {
+					if pass, okp := unquoteLiteral(passExpr); okp {
+						cfg.headers["Authorization"] = headerValue{value: "Basic " + basicAuthLiteral(user, pass)}
+						cfg.config = true
+						continue
+					}
+				}
+
+				cfg.headers["Authorization"] = headerValue{value: "\"Basic \" + base64.StdEncoding.EncodeToString([]byte(" + userExpr + " + \":\" + " + passExpr + "))", raw: true}
+				cfg.config = true
+				continue
+			}
+			if m := tlsConfigPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				cfg.tlsConfig = strings.TrimSpace(m[3])
 				cfg.config = true
 				continue
 			}
@@ -412,6 +494,11 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 
 func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent string) []string {
 	config := buildSimpleConfig(cfg)
+	var lines []string
+	if cfg.tlsConfig != "" {
+		lines = append(lines, fmt.Sprintf("%sclient.C().SetTLSConfig(%s)", indent, cfg.tlsConfig))
+	}
+
 	respLine := fmt.Sprintf("%s%s, err := client.%s(%s%s)", indent, varName, method, urlExpr, config)
 	status := fmt.Sprintf("%s%s %s %s.StatusCode()", callIndent, strings.TrimSpace(statusVar), assignOp, varName)
 	bodyCall := "Body()"
@@ -420,7 +507,7 @@ func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgent
 	}
 	body := fmt.Sprintf("%s%s %s %s.%s", callIndent, strings.TrimSpace(bodyVar), assignOp, varName, bodyCall)
 
-	lines := []string{respLine, status, body}
+	lines = append(lines, respLine, status, body)
 	if callType == "struct" {
 		lines = append(lines, callIndent+"if err == nil {")
 		lines = append(lines, fmt.Sprintf("%s\terr = %s.JSON(%s)", callIndent, varName, structTarget))
@@ -440,7 +527,13 @@ func buildSimpleConfig(cfg simpleAgentConfig) string {
 		sort.Strings(keys)
 		var items []string
 		for _, k := range keys {
-			items = append(items, fmt.Sprintf("%q: %q", k, cfg.headers[k]))
+			hv := cfg.headers[k]
+			if hv.raw {
+				items = append(items, fmt.Sprintf("%q: %s", k, hv.value))
+				continue
+			}
+
+			items = append(items, fmt.Sprintf("%q: %q", k, hv.value))
 		}
 		fields = append(fields, fmt.Sprintf("Header: map[string]string{%s}", strings.Join(items, ", ")))
 	}
@@ -499,6 +592,10 @@ func unquoteLiteral(expr string) (string, bool) {
 		return unquoted, true
 	}
 	return val, false
+}
+
+func basicAuthLiteral(user, pass string) string {
+	return base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 }
 
 func buildBytesWithBodyReplacement(parts []string) (string, bool) {
@@ -585,17 +682,43 @@ func buildStructReplacement(parts []string) (string, bool) {
 	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%s%s := %s.StatusCode()\n%s%s := %s.Body()\n%sif err == nil {\n%s\terr = %s.JSON(%s)\n%s}", indent, varInit, method, urlArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent, callIndent, varInit, target, callIndent), true
 }
 
-func ensureClientImport(content string) string {
-	if strings.Contains(content, "\"github.com/gofiber/fiber/v3/client\"") {
+func ensureImport(content, pkg string) string {
+	importLiteral := fmt.Sprintf("%q", pkg)
+	if strings.Contains(content, importLiteral) {
 		return content
+	}
+
+	blockRegex := regexp.MustCompile(`(?m)^import \(([^)]*)\)`) // import block
+	if blockRegex.MatchString(content) {
+		return blockRegex.ReplaceAllStringFunc(content, func(m string) string {
+			return strings.Replace(m, ")", "\t"+importLiteral+"\n)", 1)
+		})
+	}
+
+	singleImport := regexp.MustCompile(`(?m)^import\s+\"([^\"]+)\"`)
+	if matches := singleImport.FindStringSubmatch(content); len(matches) == 2 {
+		existing := matches[1]
+		if existing == pkg {
+			return content
+		}
+		return singleImport.ReplaceAllString(content, fmt.Sprintf("import (\n\t%q\n\t%q\n)", existing, pkg))
 	}
 
 	packageRegex := regexp.MustCompile(`(?m)^package\s+\w+`)
 	if match := packageRegex.FindString(content); match != "" {
-		return strings.Replace(content, match, match+"\n\nimport \"github.com/gofiber/fiber/v3/client\"", 1)
+		return strings.Replace(content, match, match+"\n\nimport \""+pkg+"\"", 1)
 	}
 
-	return "import \"github.com/gofiber/fiber/v3/client\"\n" + content
+	return "import \"" + pkg + "\"\n" + content
+}
+
+func ensureClientImport(content string) string {
+	updated := ensureImport(content, "github.com/gofiber/fiber/v3/client")
+	if strings.Contains(updated, "base64.StdEncoding") {
+		updated = ensureImport(updated, "encoding/base64")
+	}
+
+	return updated
 }
 
 func rewriteClientErrorHandling(content string) string {

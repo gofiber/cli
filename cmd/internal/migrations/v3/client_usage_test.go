@@ -154,7 +154,7 @@ func deleteSomething() {
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "import \"github.com/gofiber/fiber/v3/client\"")
+	assert.Contains(t, content, "github.com/gofiber/fiber/v3/client")
 	assert.Contains(t, content, "agent, err := client.Delete(\"https://example.com/delete\")")
 	assert.Contains(t, content, "statusCode := agent.StatusCode()")
 	assert.Contains(t, content, "body := agent.Body()")
@@ -283,4 +283,140 @@ func demo() {
 	assert.Contains(t, content, "slowBody := slow.String()")
 	assert.NotContains(t, content, "QueryString(")
 	assert.NotContains(t, content, "Timeout(")
+}
+
+func Test_MigrateClientUsage_RewritesParseBytesFlow(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientparse")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "encoding/json"
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    a := fiber.AcquireAgent()
+    defer fiber.ReleaseAgent(a)
+
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodGet)
+    req.SetRequestURI("https://httpbin.org/json")
+
+    if err := a.Parse(); err != nil {
+        panic(err)
+    }
+
+    status, body, errs := a.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    var out map[string]any
+    if err := json.Unmarshal(body, &out); err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Title:", out["slideshow"])
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "resp, err := client.Get(\"https://httpbin.org/json\")")
+	assert.Contains(t, content, "status := resp.StatusCode()")
+	assert.Contains(t, content, "body := resp.Body()")
+	assert.Contains(t, content, "err := json.Unmarshal(body, &out)")
+	assert.Contains(t, content, "if err != nil {")
+}
+
+func Test_MigrateClientUsage_RewritesBasicAuth(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientbasic")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    agent := fiber.Get("http://localhost:3000")
+    agent.BasicAuth("john", "doe")
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "agent, err := client.Get(\"http://localhost:3000\", client.Config{Header: map[string]string{\"Authorization\": \"Basic am9objpkb2U=\"}})")
+	assert.Contains(t, content, "github.com/gofiber/fiber/v3/client")
+	assert.Contains(t, content, "Status:")
+}
+
+func Test_MigrateClientUsage_RewritesTLSConfig(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclienttls")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "fmt"
+    "os"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    pool, _ := x509.SystemCertPool()
+    cert, _ := os.ReadFile("ssl.cert")
+    pool.AppendCertsFromPEM(cert)
+
+    agent := fiber.Get("https://localhost:3000")
+    agent.TLSConfig(&tls.Config{RootCAs: pool})
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "client.C().SetTLSConfig(&tls.Config{RootCAs: pool})")
+	assert.Contains(t, content, "agent, err := client.Get(\"https://localhost:3000\")")
+	assert.Contains(t, content, "status := agent.StatusCode()")
+	assert.Contains(t, content, "body := agent.Body()")
 }
