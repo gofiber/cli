@@ -154,7 +154,7 @@ func deleteSomething() {
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "import (\n\t\"github.com/gofiber/fiber/v3/client\"\n)")
+	assert.Contains(t, content, "import \"github.com/gofiber/fiber/v3/client\"")
 	assert.Contains(t, content, "agent, err := client.Delete(\"https://example.com/delete\")")
 	assert.Contains(t, content, "statusCode := agent.StatusCode()")
 	assert.Contains(t, content, "body := agent.Body()")

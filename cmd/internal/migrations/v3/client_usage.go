@@ -125,14 +125,10 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		braceDepth := 0
 		for j++; j < len(lines); j++ {
 			parseBody = append(parseBody, lines[j])
-			if strings.Contains(lines[j], "{") {
-				braceDepth++
-			}
-			if strings.TrimSpace(lines[j]) == "}" {
-				if braceDepth == 0 {
-					break
-				}
-				braceDepth--
+			braceDepth += strings.Count(lines[j], "{")
+			braceDepth -= strings.Count(lines[j], "}")
+			if braceDepth < 0 {
+				break
 			}
 		}
 		if j >= len(lines) || len(parseBody) == 0 {
@@ -172,15 +168,11 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		braceDepth = 0
 		for k := structStart + 1; k < len(lines); k++ {
 			structBody = append(structBody, lines[k])
-			if strings.Contains(lines[k], "{") {
-				braceDepth++
-			}
-			if strings.TrimSpace(lines[k]) == "}" {
-				if braceDepth == 0 {
-					structStart = k
-					break
-				}
-				braceDepth--
+			braceDepth += strings.Count(lines[k], "{")
+			braceDepth -= strings.Count(lines[k], "}")
+			if braceDepth < 0 {
+				structStart = k
+				break
 			}
 		}
 		if len(structBody) == 0 {
@@ -201,7 +193,7 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 			out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
 		}
 		if bodyVar != "" {
-			out = append(out, fmt.Sprintf("%s%s = resp.Body()", indent, bodyVar))
+			out = append(out, fmt.Sprintf("%s%s %s resp.Body()", indent, bodyVar, assignOp))
 		}
 		out = append(out, indent+"if err == nil {")
 		out = append(out, fmt.Sprintf("%s\terr = resp.JSON(%s)", indent, structTarget))
@@ -379,26 +371,12 @@ func ensureClientImport(content string) string {
 		return content
 	}
 
-	blockRe := regexp.MustCompile(`import\s*\(([^)]*)\)`)
-	if blockRe.MatchString(content) {
-		return blockRe.ReplaceAllStringFunc(content, func(block string) string {
-			if strings.Contains(block, "github.com/gofiber/fiber/v3/client") {
-				return block
-			}
-			lines := strings.Split(block, "\n")
-			if len(lines) == 1 {
-				return block
-			}
-			return strings.Join(append(lines[:1], append([]string{"\t\"github.com/gofiber/fiber/v3/client\""}, lines[1:]...)...), "\n")
-		})
+	packageRegex := regexp.MustCompile(`(?m)^package\s+\w+`)
+	if match := packageRegex.FindString(content); match != "" {
+		return strings.Replace(content, match, match+"\n\nimport \"github.com/gofiber/fiber/v3/client\"", 1)
 	}
 
-	singleImportRe := regexp.MustCompile(`import\s+\"([^\"]+)\"`)
-	if singleImportRe.MatchString(content) {
-		return singleImportRe.ReplaceAllString(content, "import (\n\t\"$1\"\n\t\"github.com/gofiber/fiber/v3/client\"\n)")
-	}
-
-	return content
+	return "import \"github.com/gofiber/fiber/v3/client\"\n" + content
 }
 
 func rewriteClientErrorHandling(content string) string {
