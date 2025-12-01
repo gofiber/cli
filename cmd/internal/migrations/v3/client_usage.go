@@ -494,9 +494,6 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent string) []string {
 	config := buildSimpleConfig(cfg)
 	var lines []string
-	if cfg.tlsConfig != "" {
-		lines = append(lines, fmt.Sprintf("%sclient.C().SetTLSConfig(%s)", indent, cfg.tlsConfig))
-	}
 
 	respLine := fmt.Sprintf("%s%s, err := client.%s(%s%s)", indent, varName, method, urlExpr, config)
 	lines = append(lines, respLine)
@@ -570,6 +567,9 @@ func buildSimpleConfig(cfg simpleAgentConfig) string {
 	}
 	if cfg.timeout != "" {
 		fields = append(fields, "Timeout: "+cfg.timeout)
+	}
+	if cfg.tlsConfig != "" {
+		fields = append(fields, "TLSConfig: "+cfg.tlsConfig)
 	}
 
 	if len(fields) == 0 {

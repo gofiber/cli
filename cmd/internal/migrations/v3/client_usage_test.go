@@ -643,8 +643,7 @@ func main() {
     cert, _ := os.ReadFile("ssl.cert")
     pool.AppendCertsFromPEM(cert)
 
-    client.C().SetTLSConfig(&tls.Config{RootCAs: pool})
-    agent, err := client.Get("https://localhost:3000")
+    agent, err := client.Get("https://localhost:3000", client.Config{TLSConfig: &tls.Config{RootCAs: pool}})
     var status int
     var body []byte
     if err == nil {
