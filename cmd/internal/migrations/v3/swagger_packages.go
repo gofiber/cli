@@ -21,9 +21,9 @@ import (
 
 const (
 	contribSwaggerOld   = "github.com/gofiber/contrib/swagger"
-	contribSwaggerNew   = "github.com/gofiber/contrib/v3/swaggo"
+	contribSwaggerNew   = "github.com/gofiber/contrib/v3/swaggerui"
 	fiberSwaggerOld     = "github.com/gofiber/swagger"
-	fiberSwaggerNew     = "github.com/gofiber/contrib/v3/swaggerui"
+	fiberSwaggerNew     = "github.com/gofiber/contrib/v3/swaggo"
 	goModVersionPattern = `v[a-zA-Z0-9.+-]+`
 )
 
@@ -81,31 +81,31 @@ func migrateSwaggerModules(cwd string) (bool, error) {
 		}
 		content := string(b)
 
-		needsSwaggo := strings.Contains(content, contribSwaggerOld) || strings.Contains(content, contribSwaggerNew)
-		needsSwaggerUI := strings.Contains(content, fiberSwaggerOld) || strings.Contains(content, fiberSwaggerNew)
+		needsSwaggerUI := strings.Contains(content, contribSwaggerOld) || strings.Contains(content, contribSwaggerNew)
+		needsSwaggo := strings.Contains(content, fiberSwaggerOld) || strings.Contains(content, fiberSwaggerNew)
 		if !needsSwaggo && !needsSwaggerUI {
 			return nil
 		}
 
-		if needsSwaggo && swaggoVersion == "" {
-			swaggoVersion, err = contribV3Version("swaggo")
-			if err != nil {
-				return fmt.Errorf("fetch swaggo version: %w", err)
-			}
-		}
 		if needsSwaggerUI && swaggerUIVersion == "" {
 			swaggerUIVersion, err = contribV3Version("swaggerui")
 			if err != nil {
 				return fmt.Errorf("fetch swaggerui version: %w", err)
 			}
 		}
+		if needsSwaggo && swaggoVersion == "" {
+			swaggoVersion, err = contribV3Version("swaggo")
+			if err != nil {
+				return fmt.Errorf("fetch swaggo version: %w", err)
+			}
+		}
 
 		updated := content
-		if needsSwaggo {
-			updated = updateGoModModule(updated, contribSwaggerOld, contribSwaggerNew, swaggoVersion)
-		}
 		if needsSwaggerUI {
-			updated = updateGoModModule(updated, fiberSwaggerOld, fiberSwaggerNew, swaggerUIVersion)
+			updated = updateGoModModule(updated, contribSwaggerOld, contribSwaggerNew, swaggerUIVersion)
+		}
+		if needsSwaggo {
+			updated = updateGoModModule(updated, fiberSwaggerOld, fiberSwaggerNew, swaggoVersion)
 		}
 
 		if updated == content {
