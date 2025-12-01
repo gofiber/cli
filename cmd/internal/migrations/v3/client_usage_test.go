@@ -296,7 +296,7 @@ func handler(ctx *fiber.Ctx, code string) error {
     var (
         retCode int
         retBody []byte
-        err     []error
+        err     error
         t       map[string]any
     )
 

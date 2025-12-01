@@ -26,6 +26,7 @@ var (
 	clientErrComparePattern     = regexp.MustCompile(`err\s*!=\s*nil\s*>\s*0`)
 	clientErrMapPattern         = regexp.MustCompile(`"errs"\s*:\s*errs`)
 	clientErrVarPattern         = regexp.MustCompile(`\berrs\b`)
+	clientErrsDeclPattern       = regexp.MustCompile(`\berrs\s+\[]error\b`)
 
 	acquireAgentPattern = regexp.MustCompile(`(?m)^([ \t]*)(\w+)\s*:=\s*fiber\.AcquireAgent\(\)\s*$`)
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
@@ -33,7 +34,7 @@ var (
 	headerSetPattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
 	requestURIPattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.SetRequestURI\((.*)\)\s*$`)
 	parseCallPattern    = regexp.MustCompile(`^([ \t]*)if\s+err\s*:=\s*(\w+)\.Parse\(\);\s*err\s*!=\s*nil\s*{\s*$`)
-	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+(.+?)\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
+	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+([^,]+?)\s*,\s*([^,]+?)\s*,\s*errs\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
 	bytesAssignPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	stringAssignPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
 )
@@ -95,7 +96,7 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		var reqMatch []string
 		for j := i + 1; j < len(lines); j++ {
 			trimmed := strings.TrimSpace(lines[j])
-			if trimmed == "" || strings.Contains(lines[j], "ReleaseAgent("+agentVar+")") {
+			if trimmed == "" || strings.Contains(lines[j], "ReleaseAgent("+agentVar+")") || strings.HasPrefix(trimmed, "//") {
 				continue
 			}
 
@@ -180,18 +181,14 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		configLine := buildConfig(headers)
 
 		switch {
-		case len(structMatch) > 0 && structMatch[4] == agentVar:
-			statusVar, bodyVar := "", ""
-			assigns := strings.Split(structMatch[2], ",")
-			if len(assigns) >= 2 {
-				statusVar = strings.TrimSpace(assigns[0])
-				bodyVar = strings.TrimSpace(assigns[1])
-			}
-			assignOp := structMatch[3]
+		case len(structMatch) > 0 && structMatch[5] == agentVar:
+			statusVar := strings.TrimSpace(structMatch[2])
+			bodyVar := strings.TrimSpace(structMatch[3])
+			assignOp := structMatch[4]
 			if assignOp == "" {
 				assignOp = "="
 			}
-			structTarget := strings.TrimSpace(structMatch[5])
+			structTarget := strings.TrimSpace(structMatch[6])
 
 			structBody := []string{}
 			braceDepth = 0
@@ -722,7 +719,8 @@ func ensureClientImport(content string) string {
 }
 
 func rewriteClientErrorHandling(content string) string {
-	updated := clientErrIfPattern.ReplaceAllString(content, "if err != nil {")
+	updated := clientErrsDeclPattern.ReplaceAllString(content, "err error")
+	updated = clientErrIfPattern.ReplaceAllString(updated, "if err != nil {")
 	updated = clientErrLenPattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrComparePattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrMapPattern.ReplaceAllString(updated, `"err": err`)
