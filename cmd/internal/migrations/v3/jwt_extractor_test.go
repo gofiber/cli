@@ -94,6 +94,30 @@ var _ = authjwt.New(authjwt.Config{
 	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
 }
 
+func Test_MigrateJWTExtractor_ContribV3Import(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mjwt_v3import")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import jwtware "github.com/gofiber/contrib/v3/jwt"
+var _ = jwtware.New(jwtware.Config{
+    TokenLookup: "cookie:jwt",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateJWTExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TokenLookup")
+	assert.Regexp(t, `Extractor:\s*extractors.FromCookie\("jwt"\)`, content)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+	assert.Contains(t, buf.String(), "Migrating jwt middleware configs")
+}
+
 func Test_MigrateJWTExtractor_InlineConfig(t *testing.T) {
 	t.Parallel()
 

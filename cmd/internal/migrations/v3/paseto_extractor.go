@@ -13,7 +13,8 @@ import (
 )
 
 func MigratePasetoExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	reImport := regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w\.]+)\s+)?"github\.com/gofiber/contrib/paseto(?:/v\d+)?"`)
+	// Keep matching even if contrib imports were already migrated to github.com/gofiber/contrib/v3/...
+	reImport := regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w\.]+)\s+)?"github\.com/gofiber/contrib/(?:v\d+/)?paseto(?:/v\d+)?"`)
 	reTokenPrefix := regexp.MustCompile(`(?m)\s*TokenPrefix:\s*([^,\n]+)`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
