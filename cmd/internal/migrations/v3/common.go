@@ -194,9 +194,7 @@ func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comm
 		}
 		indent := src[indentStart:prefixStart]
 
-		if _, err := b.WriteString(src[pos:indentStart]); err != nil {
-			return src
-		}
+		b.WriteString(src[pos:indentStart]) //nolint:errcheck // WriteString never returns an error
 
 		i := valStart
 		depth := 0
@@ -272,9 +270,7 @@ func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comm
 					replacement = fmt.Sprintf("%s %s", replacement, comment)
 				}
 				replacement += newline
-				if _, err := b.WriteString(replacement); err != nil {
-					return src
-				}
+				b.WriteString(replacement) //nolint:errcheck // WriteString never returns an error
 				pos = end
 				continue
 			}
@@ -293,15 +289,11 @@ func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comm
 			replacement = prefix + repl
 		}
 
-		if _, err := b.WriteString(replacement); err != nil {
-			return src
-		}
+		b.WriteString(replacement) //nolint:errcheck // WriteString never returns an error
 		pos = end
 	}
 
-	if _, err := b.WriteString(src[pos:]); err != nil {
-		return src
-	}
+	b.WriteString(src[pos:]) //nolint:errcheck // WriteString never returns an error
 	return b.String()
 }
 
