@@ -22,9 +22,9 @@ func Test_MigrateSwaggerPackages(t *testing.T) {
 	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
 		switch module {
 		case swaggoModule:
-			return "v3.0.1", nil
-		case swaggerUIModule:
 			return "v3.1.0", nil
+		case swaggerUIModule:
+			return "v3.0.1", nil
 		default:
 			return "", fmt.Errorf("unexpected module %s", module)
 		}
@@ -54,11 +54,11 @@ replace github.com/gofiber/contrib/swagger => ../local`
 	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `swagger "github.com/gofiber/contrib/v3/swaggo"`)
+	assert.Contains(t, content, `swagger "github.com/gofiber/contrib/v3/swaggerui"`)
 
 	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggo v3.0.1")
-	assert.Contains(t, mod, "replace github.com/gofiber/contrib/v3/swaggo => ../local")
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggerui v3.0.1")
+	assert.Contains(t, mod, "replace github.com/gofiber/contrib/v3/swaggerui => ../local")
 
 	assert.Contains(t, buf.String(), "Migrating swagger packages")
 }
@@ -67,9 +67,9 @@ func Test_MigrateSwaggerPackages_FiberSwagger(t *testing.T) {
 	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
 		switch module {
 		case swaggoModule:
-			return "v3.0.0", nil
-		case swaggerUIModule:
 			return "v3.2.0", nil
+		case swaggerUIModule:
+			return "v3.0.0", nil
 		default:
 			return "", fmt.Errorf("unexpected module %s", module)
 		}
@@ -101,10 +101,10 @@ require github.com/gofiber/swagger v1.1.0
 	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `swagger "github.com/gofiber/contrib/v3/swaggerui"`)
+	assert.Contains(t, content, `swagger "github.com/gofiber/contrib/v3/swaggo"`)
 
 	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggerui v3.2.0")
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggo v3.2.0")
 
 	assert.Contains(t, buf.String(), "Migrating swagger packages")
 }
