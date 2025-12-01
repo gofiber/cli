@@ -110,6 +110,30 @@ var _ = authpaseto.New(authpaseto.Config{
 	assert.Contains(t, buf.String(), "Migrating paseto middleware configs")
 }
 
+func Test_MigratePasetoExtractor_ContribV3Import(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mpaseto_v3import")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import pasetoware "github.com/gofiber/contrib/v3/paseto"
+var _ = pasetoware.New(pasetoware.Config{
+    TokenLookup: [2]string{"cookie", "session"},
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigratePasetoExtractor(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "TokenLookup")
+	assert.Contains(t, content, `Extractor: extractors.FromCookie("session")`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)
+	assert.Contains(t, buf.String(), "Migrating paseto middleware configs")
+}
+
 func Test_MigratePasetoExtractor_SkipUnrelatedPackage(t *testing.T) {
 	t.Parallel()
 
