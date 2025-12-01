@@ -217,3 +217,70 @@ func handler(ctx *fiber.Ctx, code string) error {
 	assert.Contains(t, content, "err = resp.JSON(&t)")
 	assert.Contains(t, content, "if err != nil {")
 }
+
+func Test_MigrateClientUsage_RewritesHeadersQueriesAndTimeout(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientheaders")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+    "time"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func demo() {
+    agent := fiber.Get("https://api.example.com/data")
+    agent.Set("X-Custom-Header", "my-value")
+    agent.QueryString("user=john&active=true")
+    statusCode, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        fmt.Println("Request failed:", errs)
+    }
+
+    data := fiber.Map{"name": "Alice", "age": 30}
+    poster := fiber.Post("https://api.example.com/users")
+    poster.JSON(data)
+    postStatus, postBody, errs := poster.Bytes()
+    if len(errs) > 0 {
+        fmt.Println("Error:", errs)
+    }
+
+    slow := fiber.Get("https://api.example.com/slow-data")
+    slow.Timeout(2 * time.Second)
+    slowStatus, slowBody, errs := slow.String()
+    if len(errs) > 0 {
+        fmt.Println("Request timed out or failed:", errs)
+    }
+
+    _ = statusCode
+    _ = body
+    _ = postStatus
+    _ = postBody
+    _ = slowStatus
+    _ = slowBody
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "agent, err := client.Get(\"https://api.example.com/data\", client.Config{Header: map[string]string{\"X-Custom-Header\": \"my-value\"}, Param: map[string]string{\"active\": \"true\", \"user\": \"john\"}})")
+	assert.Contains(t, content, "statusCode := agent.StatusCode()")
+	assert.Contains(t, content, "body := agent.Body()")
+	assert.Contains(t, content, "poster, err := client.Post(\"https://api.example.com/users\", client.Config{Body: data})")
+	assert.Contains(t, content, "postStatus := poster.StatusCode()")
+	assert.Contains(t, content, "postBody := poster.Body()")
+	assert.Contains(t, content, "slow, err := client.Get(\"https://api.example.com/slow-data\", client.Config{Timeout: 2 * time.Second})")
+	assert.Contains(t, content, "slowStatus := slow.StatusCode()")
+	assert.Contains(t, content, "slowBody := slow.String()")
+	assert.NotContains(t, content, "QueryString(")
+	assert.NotContains(t, content, "Timeout(")
+}

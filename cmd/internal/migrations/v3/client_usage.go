@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -32,6 +33,18 @@ var (
 	requestURIPattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.SetRequestURI\((.*)\)\s*$`)
 	parseCallPattern    = regexp.MustCompile(`^([ \t]*)if\s+err\s*:=\s*(\w+)\.Parse\(\);\s*err\s*!=\s*nil\s*{\s*$`)
 	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+(.+?)\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
+)
+
+var (
+	simpleAgentPattern     = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\((.*)\)\s*$`)
+	headerSetSimplePattern = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
+	queryStringPattern     = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
+	timeoutPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
+	jsonBodyPattern        = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
+	bodyPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
+	agentBytesCallPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
+	agentStringCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
+	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
 )
 
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -250,8 +263,8 @@ func buildConfig(headers map[string]string) string {
 }
 
 func rewriteClientExamples(content string) (string, bool) {
-	updated := content
-	changed := false
+	updated, changedSimple := rewriteSimpleAgentBlocks(content)
+	changed := changedSimple
 
 	for _, replace := range []struct {
 		pattern *regexp.Regexp
@@ -280,6 +293,212 @@ func rewriteClientExamples(content string) (string, bool) {
 	}
 
 	return updated, changed
+}
+
+type simpleAgentConfig struct {
+	headers map[string]string
+	params  map[string]string
+	body    string
+	timeout string
+	config  bool
+}
+
+func rewriteSimpleAgentBlocks(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	var out []string
+	changed := false
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		match := simpleAgentPattern.FindStringSubmatch(line)
+		if match == nil {
+			out = append(out, line)
+			continue
+		}
+
+		original := []string{line}
+		indent := match[1]
+		varName := match[2]
+		method := match[3]
+		urlExpr := strings.TrimSpace(match[4])
+
+		cfg := simpleAgentConfig{headers: map[string]string{}, params: map[string]string{}}
+		callFound := false
+		failed := false
+		callIndex := i
+		var replacement []string
+
+		for j := i + 1; j < len(lines); j++ {
+			l := lines[j]
+			original = append(original, l)
+			if m := headerSetSimplePattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				key, ok := unquoteLiteral(strings.TrimSpace(m[3]))
+				if !ok {
+					failed = true
+					break
+				}
+				val, vok := unquoteLiteral(strings.TrimSpace(m[4]))
+				if !vok {
+					failed = true
+					break
+				}
+				cfg.headers[key] = val
+				cfg.config = true
+				continue
+			}
+			if m := queryStringPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				params, ok := parseQueryParams(strings.TrimSpace(m[3]))
+				if !ok {
+					failed = true
+					break
+				}
+				for k, v := range params {
+					cfg.params[k] = v
+				}
+				cfg.config = true
+				continue
+			}
+			if m := timeoutPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				cfg.timeout = strings.TrimSpace(m[3])
+				cfg.config = true
+				continue
+			}
+			if m := jsonBodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				cfg.body = strings.TrimSpace(m[3])
+				cfg.config = true
+				continue
+			}
+			if m := bodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				cfg.body = strings.TrimSpace(m[4])
+				cfg.config = true
+				continue
+			}
+			if m := agentBytesCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1])
+				callFound = true
+				callIndex = j
+				break
+			}
+			if m := agentStringCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1])
+				callFound = true
+				callIndex = j
+				break
+			}
+			if m := agentStructCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1])
+				callFound = true
+				callIndex = j
+				break
+			}
+
+			failed = true
+			break
+		}
+
+		if !callFound || failed {
+			out = append(out, original...)
+			i = i + len(original) - 1
+			continue
+		}
+
+		out = append(out, replacement...)
+		changed = true
+		i = callIndex
+	}
+
+	return strings.Join(out, "\n"), changed
+}
+
+func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent string) []string {
+	config := buildSimpleConfig(cfg)
+	respLine := fmt.Sprintf("%s%s, err := client.%s(%s%s)", indent, varName, method, urlExpr, config)
+	status := fmt.Sprintf("%s%s %s %s.StatusCode()", callIndent, strings.TrimSpace(statusVar), assignOp, varName)
+	bodyCall := "Body()"
+	if callType == "string" {
+		bodyCall = "String()"
+	}
+	body := fmt.Sprintf("%s%s %s %s.%s", callIndent, strings.TrimSpace(bodyVar), assignOp, varName, bodyCall)
+
+	lines := []string{respLine, status, body}
+	if callType == "struct" {
+		lines = append(lines, callIndent+"if err == nil {")
+		lines = append(lines, fmt.Sprintf("%s\terr = %s.JSON(%s)", callIndent, varName, structTarget))
+		lines = append(lines, callIndent+"}")
+	}
+
+	return lines
+}
+
+func buildSimpleConfig(cfg simpleAgentConfig) string {
+	var fields []string
+	if len(cfg.headers) > 0 {
+		var keys []string
+		for k := range cfg.headers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var items []string
+		for _, k := range keys {
+			items = append(items, fmt.Sprintf("%q: %q", k, cfg.headers[k]))
+		}
+		fields = append(fields, fmt.Sprintf("Header: map[string]string{%s}", strings.Join(items, ", ")))
+	}
+	if len(cfg.params) > 0 {
+		var keys []string
+		for k := range cfg.params {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var items []string
+		for _, k := range keys {
+			items = append(items, fmt.Sprintf("%q: %q", k, cfg.params[k]))
+		}
+		fields = append(fields, fmt.Sprintf("Param: map[string]string{%s}", strings.Join(items, ", ")))
+	}
+	if cfg.body != "" {
+		fields = append(fields, "Body: "+cfg.body)
+	}
+	if cfg.timeout != "" {
+		fields = append(fields, "Timeout: "+cfg.timeout)
+	}
+
+	if len(fields) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(", client.Config{%s}", strings.Join(fields, ", "))
+}
+
+func parseQueryParams(expr string) (map[string]string, bool) {
+	value, ok := unquoteLiteral(expr)
+	if !ok {
+		return nil, false
+	}
+	result := make(map[string]string)
+	for _, pair := range strings.Split(value, "&") {
+		if pair == "" {
+			continue
+		}
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) != 2 {
+			return nil, false
+		}
+		result[kv[0]] = kv[1]
+	}
+	return result, true
+}
+
+func unquoteLiteral(expr string) (string, bool) {
+	val := strings.TrimSpace(expr)
+	if strings.HasPrefix(val, "\"") || strings.HasPrefix(val, "`") {
+		unquoted, err := strconv.Unquote(val)
+		if err != nil {
+			return "", false
+		}
+		return unquoted, true
+	}
+	return val, false
 }
 
 func buildBytesWithBodyReplacement(parts []string) (string, bool) {
