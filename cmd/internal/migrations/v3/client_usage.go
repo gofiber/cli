@@ -53,6 +53,8 @@ var (
 	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
 )
 
+const callTypeString = "string"
+
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		updated, modified := rewriteClientExamples(content)
@@ -497,19 +499,36 @@ func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgent
 	}
 
 	respLine := fmt.Sprintf("%s%s, err := client.%s(%s%s)", indent, varName, method, urlExpr, config)
-	status := fmt.Sprintf("%s%s %s %s.StatusCode()", callIndent, strings.TrimSpace(statusVar), assignOp, varName)
+	lines = append(lines, respLine)
+
+	statusName := strings.TrimSpace(statusVar)
+	bodyName := strings.TrimSpace(bodyVar)
+	statusInit := fmt.Sprintf("%svar %s int", callIndent, statusName)
+	bodyInit := fmt.Sprintf("%svar %s []byte", callIndent, bodyName)
+	if callType == callTypeString {
+		bodyInit = fmt.Sprintf("%svar %s string", callIndent, bodyName)
+	}
+	if assignOp == "=" {
+		statusInit = fmt.Sprintf("%s%s = 0", callIndent, statusName)
+		if callType == callTypeString {
+			bodyInit = fmt.Sprintf("%s%s = \"\"", callIndent, bodyName)
+		} else {
+			bodyInit = fmt.Sprintf("%s%s = nil", callIndent, bodyName)
+		}
+	}
+	lines = append(lines, statusInit, bodyInit)
+	lines = append(lines, callIndent+"if err == nil {")
+	status := fmt.Sprintf("%s\t%s = %s.StatusCode()", callIndent, strings.TrimSpace(statusVar), varName)
 	bodyCall := "Body()"
-	if callType == "string" {
+	if callType == callTypeString {
 		bodyCall = "String()"
 	}
-	body := fmt.Sprintf("%s%s %s %s.%s", callIndent, strings.TrimSpace(bodyVar), assignOp, varName, bodyCall)
-
-	lines = append(lines, respLine, status, body)
+	body := fmt.Sprintf("%s\t%s = %s.%s", callIndent, strings.TrimSpace(bodyVar), varName, bodyCall)
+	lines = append(lines, status, body)
 	if callType == "struct" {
-		lines = append(lines, callIndent+"if err == nil {")
 		lines = append(lines, fmt.Sprintf("%s\terr = %s.JSON(%s)", callIndent, varName, structTarget))
-		lines = append(lines, callIndent+"}")
 	}
+	lines = append(lines, callIndent+"}")
 
 	return lines
 }
@@ -606,7 +625,7 @@ func buildBytesWithBodyReplacement(parts []string) (string, bool) {
 		return "", false
 	}
 
-	return fmt.Sprintf("%s%s, err := client.%s(%s, client.Config{Body: %s})\n%s%s := %s.StatusCode()\n%s%s := %s.Body()", indent, varInit, method, urlArg, bodyArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit), true
+	return fmt.Sprintf("%s%s, err := client.%s(%s, client.Config{Body: %s})\n%svar %s int\n%svar %s []byte\n%sif err == nil {\n%s\t%s = %s.StatusCode()\n%s\t%s = %s.Body()\n%s}", indent, varInit, method, urlArg, bodyArg, callIndent, statusVar, callIndent, bodyVar, callIndent, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent), true
 }
 
 func buildBytesReplacement(parts []string) (string, bool) {
@@ -620,7 +639,7 @@ func buildBytesReplacement(parts []string) (string, bool) {
 		return "", false
 	}
 
-	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%s%s := %s.StatusCode()\n%s%s := %s.Body()", indent, varInit, method, urlArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit), true
+	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%svar %s int\n%svar %s []byte\n%sif err == nil {\n%s\t%s = %s.StatusCode()\n%s\t%s = %s.Body()\n%s}", indent, varInit, method, urlArg, callIndent, statusVar, callIndent, bodyVar, callIndent, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent), true
 }
 
 func buildStringWithBodyReplacement(parts []string) (string, bool) {
@@ -634,7 +653,7 @@ func buildStringWithBodyReplacement(parts []string) (string, bool) {
 		return "", false
 	}
 
-	return fmt.Sprintf("%s%s, err := client.%s(%s, client.Config{Body: %s})\n%s%s := %s.StatusCode()\n%s%s := %s.String()", indent, varInit, method, urlArg, bodyArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit), true
+	return fmt.Sprintf("%s%s, err := client.%s(%s, client.Config{Body: %s})\n%svar %s int\n%svar %s string\n%sif err == nil {\n%s\t%s = %s.StatusCode()\n%s\t%s = %s.String()\n%s}", indent, varInit, method, urlArg, bodyArg, callIndent, statusVar, callIndent, bodyVar, callIndent, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent), true
 }
 
 func buildStringReplacement(parts []string) (string, bool) {
@@ -648,7 +667,7 @@ func buildStringReplacement(parts []string) (string, bool) {
 		return "", false
 	}
 
-	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%s%s := %s.StatusCode()\n%s%s := %s.String()", indent, varInit, method, urlArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit), true
+	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%svar %s int\n%svar %s string\n%sif err == nil {\n%s\t%s = %s.StatusCode()\n%s\t%s = %s.String()\n%s}", indent, varInit, method, urlArg, callIndent, statusVar, callIndent, bodyVar, callIndent, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent), true
 }
 
 func buildStructWithBodyReplacement(parts []string) (string, bool) {
@@ -662,7 +681,7 @@ func buildStructWithBodyReplacement(parts []string) (string, bool) {
 		return "", false
 	}
 
-	return fmt.Sprintf("%s%s, err := client.%s(%s, client.Config{Body: %s})\n%s%s := %s.StatusCode()\n%s%s := %s.Body()\n%sif err == nil {\n%s\terr = %s.JSON(%s)\n%s}", indent, varInit, method, urlArg, bodyArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent, callIndent, varInit, target, callIndent), true
+	return fmt.Sprintf("%s%s, err := client.%s(%s, client.Config{Body: %s})\n%svar %s int\n%svar %s []byte\n%sif err == nil {\n%s\t%s = %s.StatusCode()\n%s\t%s = %s.Body()\n%s\terr = %s.JSON(%s)\n%s}", indent, varInit, method, urlArg, bodyArg, callIndent, statusVar, callIndent, bodyVar, callIndent, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent, varInit, target, callIndent), true
 }
 
 func buildStructReplacement(parts []string) (string, bool) {
@@ -676,7 +695,7 @@ func buildStructReplacement(parts []string) (string, bool) {
 		return "", false
 	}
 
-	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%s%s := %s.StatusCode()\n%s%s := %s.Body()\n%sif err == nil {\n%s\terr = %s.JSON(%s)\n%s}", indent, varInit, method, urlArg, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent, callIndent, varInit, target, callIndent), true
+	return fmt.Sprintf("%s%s, err := client.%s(%s)\n%svar %s int\n%svar %s []byte\n%sif err == nil {\n%s\t%s = %s.StatusCode()\n%s\t%s = %s.Body()\n%s\terr = %s.JSON(%s)\n%s}", indent, varInit, method, urlArg, callIndent, statusVar, callIndent, bodyVar, callIndent, callIndent, statusVar, varInit, callIndent, bodyVar, varInit, callIndent, varInit, target, callIndent), true
 }
 
 func ensureImport(content, pkg string) string {

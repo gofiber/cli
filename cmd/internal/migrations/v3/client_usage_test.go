@@ -95,8 +95,12 @@ import (
 
 func getSomething(c *fiber.Ctx) (err error) {
     agent, err := client.Get("https://example.com")
-    statusCode := agent.StatusCode()
-    body := agent.Body()
+    var statusCode int
+    var body []byte
+    if err == nil {
+        statusCode = agent.StatusCode()
+        body = agent.Body()
+    }
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "err": err,
@@ -112,8 +116,12 @@ func getSomething(c *fiber.Ctx) (err error) {
     }
 
     postAgent, err := client.Post("https://example.com", client.Config{Body: "{\"name\":\"fiber\"}"})
-    postCode := postAgent.StatusCode()
-    postBody := postAgent.Body()
+    var postCode int
+    var postBody []byte
+    if err == nil {
+        postCode = postAgent.StatusCode()
+        postBody = postAgent.Body()
+    }
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "err": err,
@@ -121,8 +129,12 @@ func getSomething(c *fiber.Ctx) (err error) {
     }
 
     text, err := client.Get("https://example.com/text")
-    textStatus := text.StatusCode()
-    textBody := text.String()
+    var textStatus int
+    var textBody string
+    if err == nil {
+        textStatus = text.StatusCode()
+        textBody = text.String()
+    }
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "err": err,
@@ -131,9 +143,11 @@ func getSomething(c *fiber.Ctx) (err error) {
 
     var structured map[string]any
     structAgent, err := client.Get("https://example.com/json")
-    structStatus := structAgent.StatusCode()
-    structBody := structAgent.Body()
+    var structStatus int
+    var structBody []byte
     if err == nil {
+        structStatus = structAgent.StatusCode()
+        structBody = structAgent.Body()
         err = structAgent.JSON(&structured)
     }
     if err != nil {
@@ -222,8 +236,12 @@ import (
 
 func deleteSomething() {
     agent, err := client.Delete("https://example.com/delete")
-    statusCode := agent.StatusCode()
-    body := agent.Body()
+    var statusCode int
+    var body []byte
+    if err == nil {
+        statusCode = agent.StatusCode()
+        body = agent.Body()
+    }
     if err != nil {
         panic(err)
     }
@@ -388,23 +406,35 @@ import (
 
 func demo() {
     agent, err := client.Get("https://api.example.com/data", client.Config{Header: map[string]string{"X-Custom-Header": "my-value"}, Param: map[string]string{"active": "true", "user": "john"}})
-    statusCode := agent.StatusCode()
-    body := agent.Body()
+    var statusCode int
+    var body []byte
+    if err == nil {
+        statusCode = agent.StatusCode()
+        body = agent.Body()
+    }
     if err != nil {
         fmt.Println("Request failed:", err)
     }
 
     data := fiber.Map{"name": "Alice", "age": 30}
     poster, err := client.Post("https://api.example.com/users", client.Config{Body: data})
-    postStatus := poster.StatusCode()
-    postBody := poster.Body()
+    var postStatus int
+    var postBody []byte
+    if err == nil {
+        postStatus = poster.StatusCode()
+        postBody = poster.Body()
+    }
     if err != nil {
         fmt.Println("Error:", err)
     }
 
     slow, err := client.Get("https://api.example.com/slow-data", client.Config{Timeout: 2 * time.Second})
-    slowStatus := slow.StatusCode()
-    slowBody := slow.String()
+    var slowStatus int
+    var slowBody string
+    if err == nil {
+        slowStatus = slow.StatusCode()
+        slowBody = slow.String()
+    }
     if err != nil {
         fmt.Println("Request timed out or failed:", err)
     }
@@ -541,8 +571,12 @@ import (
 
 func main() {
     agent, err := client.Get("http://localhost:3000", client.Config{Header: map[string]string{"Authorization": "Basic am9objpkb2U="}})
-    status := agent.StatusCode()
-    body := agent.Body()
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
     if err != nil {
         panic(err)
     }
@@ -611,8 +645,12 @@ func main() {
 
     client.C().SetTLSConfig(&tls.Config{RootCAs: pool})
     agent, err := client.Get("https://localhost:3000")
-    status := agent.StatusCode()
-    body := agent.Body()
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
     if err != nil {
         panic(err)
     }
