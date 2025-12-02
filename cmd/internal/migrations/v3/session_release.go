@@ -76,8 +76,9 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 					break
 				}
 				// Stop searching if we hit a closing brace at the same or lower indent level
+				// Only stop on lines that are purely closing braces (possibly with trailing comments)
 				trimmed := strings.TrimSpace(lines[j])
-				if trimmed == "}" || (strings.HasPrefix(trimmed, "}") && !strings.Contains(trimmed, "{")) {
+				if strings.HasPrefix(trimmed, "}") && !strings.Contains(trimmed, "{") && !strings.Contains(trimmed, "else") {
 					break
 				}
 			}
@@ -122,7 +123,9 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 }
 
 // findErrorBlockEnd finds the end of an error handling block
-// Returns the line index after the closing brace, or -1 if not found
+// Returns the line index of the closing brace, or -1 if not found
+// Note: This uses simple brace counting and may not handle braces in strings/comments,
+// but is sufficient for migration purposes with typical Go error handling patterns.
 func findErrorBlockEnd(lines []string, startIdx int, _ string) int {
 	if startIdx >= len(lines) {
 		return -1
