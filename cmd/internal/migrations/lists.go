@@ -39,6 +39,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateViewBind,
 			v3migrations.MigrateParserMethods,
 			v3migrations.MigrateRedirectMethods,
+			v3migrations.MigrateClientUsage,
 			v3migrations.MigrateGenericHelpers,
 			v3migrations.MigrateAddMethod,
 			v3migrations.MigrateMimeConstants,
