@@ -10,6 +10,14 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// reStorageImport matches storage imports with or without version suffix.
+// Examples:
+//
+//	"github.com/gofiber/storage/sqlite3"
+//	"github.com/gofiber/storage/redis/v2"
+//	"github.com/gofiber/storage/postgres/v3"
+var reStorageImport = regexp.MustCompile(`"github\.com/gofiber/storage/([a-zA-Z0-9_-]+)(?:/v(\d+))?"`)
+
 // storageMinimumVersions maps storage package names to their minimum required major version
 // for Fiber v3 compatibility. These represent the target versions that storage packages
 // should be migrated to based on their latest stable releases in the gofiber/storage repository.
@@ -45,13 +53,6 @@ var storageMinimumVersions = map[string]string{
 // MigrateStorageVersions updates storage package imports to use the correct latest version.
 // This migration handles storage packages from github.com/gofiber/storage/*.
 func MigrateStorageVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	// Regex to match storage imports with or without version suffix
-	// Examples:
-	//   "github.com/gofiber/storage/sqlite3"
-	//   "github.com/gofiber/storage/redis/v2"
-	//   "github.com/gofiber/storage/postgres/v3"
-	reStorageImport := regexp.MustCompile(`"github\.com/gofiber/storage/([a-zA-Z0-9_-]+)(?:/v(\d+))?"`)
-
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		// Replace storage imports to add or update the version suffix
 		return reStorageImport.ReplaceAllStringFunc(content, func(match string) string {
@@ -89,6 +90,6 @@ func MigrateStorageVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		return nil
 	}
 
-	cmd.Println("Migrating storage package versions")
+	cmd.Println("Migrated storage package versions")
 	return nil
 }

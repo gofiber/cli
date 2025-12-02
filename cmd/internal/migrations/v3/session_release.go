@@ -11,6 +11,8 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+const releaseComment = "// Important: Manual cleanup required"
+
 // MigrateSessionRelease adds defer sess.Release() after store.Get() calls
 // when using the Store Pattern (legacy pattern).
 // This is required in v3 for manual session lifecycle management.
@@ -57,7 +59,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			}
 
 			// Find where the error block ends
-			blockEnd := findErrorBlockEnd(lines, nextLineIdx, indent)
+			blockEnd := findErrorBlockEnd(lines, nextLineIdx)
 
 			// Insert defer after the error block
 			if blockEnd < 0 || blockEnd >= len(lines) {
@@ -95,7 +97,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			}
 
 			// Insert the defer statement after the error block
-			deferLine := indent + "defer " + sessVar + ".Release() // Important: Manual cleanup required"
+			deferLine := indent + "defer " + sessVar + ".Release() " + releaseComment
 
 			// Skip ahead in the loop to include all lines up to blockEnd
 			for i < blockEnd {
@@ -126,7 +128,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 // Returns the line index of the closing brace, or -1 if not found
 // Note: This uses simple brace counting and may not handle braces in strings/comments,
 // but is sufficient for migration purposes with typical Go error handling patterns.
-func findErrorBlockEnd(lines []string, startIdx int, _ string) int {
+func findErrorBlockEnd(lines []string, startIdx int) int {
 	if startIdx >= len(lines) {
 		return -1
 	}
