@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -159,30 +160,25 @@ func isSessionStoreInFunction(src, varName string, fset *token.FileSet, assign *
 
 	fnStart, fnEnd := findFunctionBoundaries(src, assignLine)
 	if fnStart == -1 || fnEnd == -1 {
-		for _, alias := range aliases {
-			if identHasType(src, varName, alias+".Store") {
-				return true
-			}
-			if identAssignedFrom(src, varName, alias+"\\.NewStore\\(\\)") {
-				return true
-			}
-		}
-		return false
+		return checkStoreAssignment(src, varName, aliases)
 	}
 
 	lines := strings.Split(src, "\n")
 	fnLines := lines[fnStart:fnEnd]
 	fnSrc := strings.Join(fnLines, "\n")
 
+	return checkStoreAssignment(fnSrc, varName, aliases)
+}
+
+// checkStoreAssignment verifies the variable is assigned from session.NewStore()
+func checkStoreAssignment(src, varName string, aliases []string) bool {
 	for _, alias := range aliases {
-		if identHasType(fnSrc, varName, alias+".Store") {
-			return true
-		}
-		if identAssignedFrom(fnSrc, varName, alias+"\\.NewStore\\(\\)") {
+		// Match: store := session.NewStore() or var store = session.NewStore()
+		pattern := regexp.MustCompile(fmt.Sprintf(`\b%s\b\s*(?::=|=)\s*%s\.NewStore\(`, regexp.QuoteMeta(varName), regexp.QuoteMeta(alias)))
+		if pattern.MatchString(src) {
 			return true
 		}
 	}
-
 	return false
 }
 
