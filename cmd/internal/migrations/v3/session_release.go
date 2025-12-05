@@ -379,11 +379,7 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 
 			// Handle string literals
 			if inString {
-				if ch == stringChar {
-					if j > 0 && line[j-1] == '\\' {
-						// Escaped quote, continue in string
-						continue
-					}
+				if ch == stringChar && (j == 0 || line[j-1] != '\\') {
 					inString = false
 				}
 				continue
@@ -391,16 +387,12 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 
 			// Handle comments
 			if inComment {
-				if isLineComment {
-					if ch == '\n' {
-						inComment = false
-						isLineComment = false
-					}
-				} else { // block comment
-					if ch == '*' && j+1 < len(line) && line[j+1] == '/' {
-						inComment = false
-						j++ // skip the '/'
-					}
+				if isLineComment && ch == '\n' {
+					inComment = false
+					isLineComment = false
+				} else if !isLineComment && ch == '*' && j+1 < len(line) && line[j+1] == '/' {
+					inComment = false
+					j++ // skip the '/'
 				}
 				continue
 			}
@@ -411,16 +403,20 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 				inString = true
 				stringChar = ch
 			case '/':
-				if j+1 < len(line) {
-					if line[j+1] == '/' {
-						inComment = true
-						isLineComment = true
-						j++ // skip the second '/'
-					} else if line[j+1] == '*' {
-						inComment = true
-						isLineComment = false
-						j++ // skip the '*'
-					}
+				if j+1 >= len(line) {
+					continue
+				}
+				switch line[j+1] {
+				case '/':
+					inComment = true
+					isLineComment = true
+					j++ // skip the second '/'
+				case '*':
+					inComment = true
+					isLineComment = false
+					j++ // skip the '*'
+				default:
+					// Not a comment, continue
 				}
 			case '{':
 				braceCount++
@@ -429,6 +425,8 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 				if braceCount == 0 {
 					return i
 				}
+			default:
+				// Ignore other characters
 			}
 		}
 	}
