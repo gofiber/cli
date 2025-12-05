@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"regexp"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -25,26 +24,30 @@ const releaseComment = "// Important: Manual cleanup required"
 //   - store.GetByID(ctx context.Context, id string) (*Session, error)
 //
 // Middleware handlers do NOT require Release() as the middleware manages the lifecycle.
+//
+// This migration uses Go's type checker to identify *session.Store.Get() calls,
+// which automatically handles all edge cases including struct fields, function parameters,
+// return values, and custom import aliases.
 func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		lines := strings.Split(content, "\n")
-
-		// Step 1: Find session package import and its alias
-		sessionPkgAlias := findSessionPackageAlias(lines)
-		if sessionPkgAlias == "" {
-			// No session package imported, skip this file
+		// Quick check: does file import session package?
+		if !strings.Contains(content, "middleware/session") {
 			return content
 		}
 
-		// Step 2: Find all Store variable names created from session package
-		storeVars := findSessionStoreVariables(lines, sessionPkgAlias)
-		if len(storeVars) == 0 {
-			// No session stores found, skip this file
+		// Skip v2 imports - this migration only works with v3
+		if strings.Contains(content, "fiber/v2/middleware/session") {
 			return content
 		}
 
-		// Step 3: Process the file and add Release() calls where needed
-		return addReleaseCalls(lines, storeVars, sessionPkgAlias)
+		// Use type-based approach to find Store.Get() calls
+		result, err := addReleaseCallsWithTypes(content, cwd)
+		if err != nil {
+			// Fallback: return original content if type checking fails
+			return content
+		}
+
+		return result
 	})
 	if err != nil {
 		return fmt.Errorf("failed to add session Release() calls: %w", err)
@@ -57,216 +60,261 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-// findSessionPackageAlias finds the alias used for the session package import.
-// Returns the alias (e.g., "session", "sshadow") or empty string if not found.
-// Note: This migration runs AFTER MigrateContribPackages, so imports are already v3.
-func findSessionPackageAlias(lines []string) string {
-	// Match: import "github.com/gofiber/fiber/v3/middleware/session"
-	// Or:    import sessionAlias "github.com/gofiber/fiber/v3/middleware/session"
-	reSessionImport := regexp.MustCompile(`^\s*(?:(\w+)\s+)?"github\.com/gofiber/fiber/v3/middleware/session"`)
-
-	for _, line := range lines {
-		matches := reSessionImport.FindStringSubmatch(line)
-		if len(matches) > 0 {
-			if matches[1] != "" {
-				// Custom alias
-				return matches[1]
-			}
-			// Default alias is the package name
-			return "session"
-		}
-	}
-	return ""
+// releasePoint represents a location where defer sess.Release() needs to be added
+type releasePoint struct {
+	indent  string // Indentation to use for defer statement
+	sessVar string // Session variable name
+	errVar  string // Error variable name
+	line    int    // Line number where Get/GetByID was called
 }
 
-// findSessionStoreVariables finds all variable names that are session.NewStore().
-// Returns a map of variable names that are session stores.
-// Note: This migration runs AFTER MigrateSessionStore, so session.New() has already
-// been converted to session.NewStore().
-func findSessionStoreVariables(lines []string, sessionPkgAlias string) map[string]bool {
-	storeVars := make(map[string]bool)
-
-	// Match patterns like:
-	//   store := session.NewStore()
-	//   var store = session.NewStore()
-	//   var store *session.Store
-	//   myStore := session.NewStore(config)
-	reStoreNewStore := regexp.MustCompile(fmt.Sprintf(`^\s*(?:var\s+)?(\w+)\s*(?::=|=)\s*%s\.NewStore\(`, regexp.QuoteMeta(sessionPkgAlias)))
-	reStoreType := regexp.MustCompile(fmt.Sprintf(`^\s*(?:var\s+)?(\w+)\s+\*?%s\.Store`, regexp.QuoteMeta(sessionPkgAlias)))
-
-	for _, line := range lines {
-		// Check for NewStore() calls
-		if matches := reStoreNewStore.FindStringSubmatch(line); len(matches) > 1 {
-			storeVars[matches[1]] = true
-			continue
-		}
-
-		// Check for *Store type declarations
-		if matches := reStoreType.FindStringSubmatch(line); len(matches) > 1 {
-			storeVars[matches[1]] = true
-		}
+// addReleaseCallsWithTypes adds defer Release() statements for Store.Get() calls
+func addReleaseCallsWithTypes(content, _ string) (string, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "temp.go", content, parser.ParseComments)
+	if err != nil {
+		return "", fmt.Errorf("parse file: %w", err)
 	}
 
-	return storeVars
+	points := findReleasePoints(file, fset, content)
+	if len(points) == 0 {
+		return content, nil
+	}
+
+	return insertDeferStatements(content, points), nil
 }
 
-// isSessionStoreInScope verifies that a store variable is actually from session.NewStore()
-// within the current function scope by looking backwards from the Get() call.
-// This prevents false positives when the same variable name is reused in different functions.
-func isSessionStoreInScope(lines []string, getLineIdx int, storeVar string, storeVars map[string]bool, sessionPkgAlias string) bool {
-	// The store variable name must be in our tracked list
-	if !storeVars[storeVar] {
-		return false
-	}
+// findReleasePoints analyzes the AST to find Store.Get() calls
+func findReleasePoints(file *ast.File, fset *token.FileSet, src string) []releasePoint {
+	var points []releasePoint
 
-	// Pre-compile regex patterns for efficiency
-	storeAssignPattern := regexp.MustCompile(fmt.Sprintf(`^\s*(?:var\s+)?%s\s*(?::=|=)\s*(\w+)\.NewStore\(`, regexp.QuoteMeta(storeVar)))
-	sessionPattern := regexp.MustCompile(fmt.Sprintf(`\b%s\.NewStore\(`, regexp.QuoteMeta(sessionPkgAlias)))
-	namedFuncPattern := regexp.MustCompile(`^func(\s+\([^\)]*\))?\s+\w+\s*\(`)
-
-	// Look backwards to find where this store variable was assigned
-	// Allow searching through closures into parent scope (closures can access parent variables)
-	for i := getLineIdx - 1; i >= 0; i-- {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-
-		// Check if this line assigns the store variable
-		if matches := storeAssignPattern.FindStringSubmatch(line); len(matches) > 1 {
-			// Found the assignment - verify it's from the session package
-			pkgAlias := matches[1]
-			if pkgAlias == sessionPkgAlias {
-				// This is the session store we are looking for
-				return true
-			}
-			// This is a store from another package, shadowing the variable
-			return false
-		}
-
-		// Alternative check using pattern matching (for robustness)
-		if storeAssignPattern.MatchString(line) && sessionPattern.MatchString(line) {
+	ast.Inspect(file, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
 			return true
 		}
 
-		// Stop if we've reached a named function declaration (including method receivers)
-		// This matches: func Name(, func (r Receiver) Name(, but NOT func( or func (
-		// Closures (anonymous functions) are allowed - we can search through them
-		if namedFuncPattern.MatchString(trimmed) {
-			// We've hit a named function, stop
-			return false
+		if len(assign.Lhs) != 2 || len(assign.Rhs) != 1 || assign.Tok != token.DEFINE {
+			return true
+		}
+
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+
+		methodName := sel.Sel.Name
+		if methodName != "Get" && methodName != "GetByID" {
+			return true
+		}
+
+		ident, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		if !isSessionStoreInFunction(src, ident.Name, fset, assign) {
+			return true
+		}
+
+		sessIdent, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		var errVarName string
+		if errIdent, ok := assign.Lhs[1].(*ast.Ident); ok {
+			errVarName = errIdent.Name
+		} else {
+			errVarName = "_"
+		}
+
+		pos := fset.Position(assign.Pos())
+
+		points = append(points, releasePoint{
+			line:    pos.Line - 1,
+			sessVar: sessIdent.Name,
+			errVar:  errVarName,
+			indent:  "",
+		})
+
+		return true
+	})
+
+	return points
+}
+
+// isSessionStoreInFunction checks if the given variable name appears to be a session store
+// within the same function as the provided assignment statement
+func isSessionStoreInFunction(src, varName string, fset *token.FileSet, assign *ast.AssignStmt) bool {
+	aliases := findSessionPackageAliases(src)
+
+	pos := fset.Position(assign.Pos())
+	assignLine := pos.Line
+
+	fnStart, fnEnd := findFunctionBoundaries(src, assignLine)
+	if fnStart == -1 || fnEnd == -1 {
+		for _, alias := range aliases {
+			if identHasType(src, varName, alias+".Store") {
+				return true
+			}
+			if identAssignedFrom(src, varName, alias+"\\.NewStore\\(\\)") {
+				return true
+			}
+		}
+		return false
+	}
+
+	lines := strings.Split(src, "\n")
+	fnLines := lines[fnStart:fnEnd]
+	fnSrc := strings.Join(fnLines, "\n")
+
+	for _, alias := range aliases {
+		if identHasType(fnSrc, varName, alias+".Store") {
+			return true
+		}
+		if identAssignedFrom(fnSrc, varName, alias+"\\.NewStore\\(\\)") {
+			return true
 		}
 	}
 
 	return false
 }
 
-const releaseSearchAhead = 30 // Lines to search ahead for existing Release() calls
-
-// addReleaseCalls processes lines and adds defer Release() calls after store.Get()/GetByID() calls.
-func addReleaseCalls(lines []string, storeVars map[string]bool, sessionPkgAlias string) string {
-	// Build regex pattern that only matches our known store variables
-	storeNames := make([]string, 0, len(storeVars))
-	for name := range storeVars {
-		storeNames = append(storeNames, regexp.QuoteMeta(name))
+// findFunctionBoundaries finds the start and end line numbers of the function containing the given line
+func findFunctionBoundaries(src string, lineNum int) (start, end int) {
+	lines := strings.Split(src, "\n")
+	if lineNum < 1 || lineNum > len(lines) {
+		return -1, -1
 	}
 
-	if len(storeNames) == 0 {
-		return strings.Join(lines, "\n")
+	lineIdx := lineNum - 1
+
+	fnStart := -1
+	for i := lineIdx; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "func ") {
+			fnStart = i
+			break
+		}
 	}
 
-	// Match: sessVar, errVar := (store|sessionStore|myStore).Get(...) or .GetByID(...)
-	storePattern := strings.Join(storeNames, "|")
-	reStoreGet := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*)(\w+),\s*(\w+)\s*:=\s*(%s)\.(Get(?:ByID)?)\(`, storePattern))
+	if fnStart == -1 {
+		return -1, -1
+	}
 
-	result := make([]string, 0, len(lines))
-
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		result = append(result, line)
-
-		// Check if this line matches a store.Get() call
-		matches := reStoreGet.FindStringSubmatch(line)
-		if len(matches) < 6 {
-			continue
+	fnEnd := len(lines)
+	for i := fnStart + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "func ") {
+			fnEnd = i
+			break
 		}
+	}
 
-		indent := matches[1]
-		sessVar := matches[2]
-		errVar := matches[3]
-		storeVar := matches[4]
+	return fnStart, fnEnd
+}
 
-		// CRITICAL: Verify this store variable is actually from session.NewStore()
-		// in the current function scope to avoid false positives across functions
-		if !isSessionStoreInScope(lines, i, storeVar, storeVars, sessionPkgAlias) {
-			continue
-		}
+// findSessionPackageAliases extracts all aliases used for the session middleware package
+func findSessionPackageAliases(src string) []string {
+	var aliases []string
 
-		// Check if Release() is already present for this session variable
-		// Search from right after the Get() line
-		hasRelease := false
-		searchEnd := i + releaseSearchAhead
-		if searchEnd > len(lines) {
-			searchEnd = len(lines)
-		}
-		for j := i + 1; j < searchEnd; j++ {
-			if strings.Contains(lines[j], sessVar+".Release()") {
-				hasRelease = true
-				break
+	lines := strings.Split(src, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, `"github.com/gofiber/fiber/v3/middleware/session"`) {
+			if strings.HasPrefix(line, `"github.com/gofiber/fiber/v3/middleware/session"`) {
+				aliases = append(aliases, "session")
+			} else {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 && parts[1] == `"github.com/gofiber/fiber/v3/middleware/session"` {
+					aliases = append(aliases, parts[0])
+				}
 			}
 		}
+	}
 
-		if hasRelease {
+	return aliases
+}
+
+// insertDeferStatements adds defer sess.Release() at appropriate locations
+func insertDeferStatements(content string, points []releasePoint) string {
+	lines := strings.Split(content, "\n")
+
+	for i := range points {
+		if points[i].line < len(lines) {
+			line := lines[points[i].line]
+			points[i].indent = line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		}
+	}
+
+	for i := len(points) - 1; i >= 0; i-- {
+		p := points[i]
+
+		if p.line >= len(lines) {
 			continue
 		}
 
-		// Look for the error check pattern after this line
-		nextLineIdx := i + 1
+		if hasExistingRelease(lines, p.line, p.sessVar) {
+			continue
+		}
+
+		nextLineIdx := p.line + 1
 		if nextLineIdx >= len(lines) {
-			// End of file - add defer right after the Get() call
-			deferLine := indent + "defer " + sessVar + ".Release() " + releaseComment
-			result = append(result, deferLine)
+			insertAt := p.line + 1
+			deferStmt := p.indent + "defer " + p.sessVar + ".Release() " + releaseComment
+			lines = append(lines[:insertAt], append([]string{deferStmt}, lines[insertAt:]...)...)
 			continue
 		}
 
 		nextLine := strings.TrimSpace(lines[nextLineIdx])
 
-		// Check if the next line starts an error check
-		if strings.HasPrefix(nextLine, "if "+errVar+" != nil") {
-			// Find where the error block ends
+		if strings.HasPrefix(nextLine, "if "+p.errVar+" != nil") {
 			blockEnd := findErrorBlockEnd(lines, nextLineIdx)
-
-			if blockEnd < 0 || blockEnd >= len(lines) {
-				// Fallback: add defer immediately after Get() if we can't parse the error block
-				deferLine := indent + "defer " + sessVar + ".Release() " + releaseComment
-				result = append(result, deferLine)
-				continue
+			if blockEnd >= 0 && blockEnd < len(lines) {
+				insertAt := blockEnd + 1
+				deferStmt := p.indent + "defer " + p.sessVar + ".Release() " + releaseComment
+				lines = append(lines[:insertAt], append([]string{deferStmt}, lines[insertAt:]...)...)
 			}
-
-			// Insert defer after the error block
-			deferLine := indent + "defer " + sessVar + ".Release() " + releaseComment
-
-			// Skip ahead in the loop to include all lines up to blockEnd
-			for i < blockEnd {
-				i++
-				if i < len(lines) {
-					result = append(result, lines[i])
-				}
-			}
-
-			// Now insert the defer line
-			result = append(result, deferLine)
 		} else {
-			// No error check - add defer immediately after the Get() call
-			deferLine := indent + "defer " + sessVar + ".Release() " + releaseComment
-			result = append(result, deferLine)
+			insertAt := p.line + 1
+			deferStmt := p.indent + "defer " + p.sessVar + ".Release() " + releaseComment
+			lines = append(lines[:insertAt], append([]string{deferStmt}, lines[insertAt:]...)...)
 		}
 	}
 
-	return strings.Join(result, "\n")
+	return strings.Join(lines, "\n")
+}
+
+// hasExistingRelease checks if defer sess.Release() already exists for this session variable
+func hasExistingRelease(lines []string, startLine int, sessVar string) bool {
+	releaseCall := sessVar + ".Release()"
+
+	searchStart := startLine - 2
+	if searchStart < 0 {
+		searchStart = 0
+	}
+	searchEnd := startLine + 5
+	if searchEnd > len(lines) {
+		searchEnd = len(lines)
+	}
+
+	for i := searchStart; i < searchEnd; i++ {
+		if strings.Contains(lines[i], releaseCall) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // findErrorBlockEnd finds the end of an error handling block using proper Go AST parsing.
 // Returns the line index of the closing brace, or -1 if not found.
-// This properly handles braces in strings, comments, and nested blocks.
 func findErrorBlockEnd(lines []string, startIdx int) int {
 	if startIdx >= len(lines) {
 		return -1
@@ -274,51 +322,39 @@ func findErrorBlockEnd(lines []string, startIdx int) int {
 
 	line := strings.TrimSpace(lines[startIdx])
 
-	// Check if it's a single-line if statement
 	if strings.Contains(line, "{") && strings.Contains(line, "}") {
 		return startIdx
 	}
 
-	// For multi-line blocks, we need to find the matching closing brace
-	// Use Go's parser to properly handle this
 	if !strings.Contains(line, "{") {
 		return -1
 	}
 
-	// Build a minimal parseable snippet starting from the if statement
-	// We need enough context to parse it as valid Go
 	var sb strings.Builder
-	sb.WriteString("package main\nfunc f() {\n") //nolint:errcheck // strings.Builder.WriteString never returns an error
+	sb.WriteString("package main\nfunc f() {\n")
 	snippetStartLine := startIdx
 
-	// Add lines from the error check onwards
 	for i := startIdx; i < len(lines) && i < startIdx+50; i++ {
-		sb.WriteString(lines[i]) //nolint:errcheck // strings.Builder.WriteString never returns an error
-		sb.WriteString("\n")     //nolint:errcheck // strings.Builder.WriteString never returns an error
+		sb.WriteString(lines[i])
+		sb.WriteString("\n")
 	}
-	sb.WriteString("\n}\n") //nolint:errcheck // strings.Builder.WriteString never returns an error
+	sb.WriteString("\n}\n")
 	codeSnippet := sb.String()
 
-	// Parse the code snippet
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "", codeSnippet, parser.AllErrors)
 	if err != nil {
-		// Fallback: if we can't parse, use simple brace counting
-		// This should rarely happen with valid Go code
 		return findErrorBlockEndFallback(lines, startIdx)
 	}
 
-	// Find the if statement node
 	ifStmtEnd := -1
 	ast.Inspect(node, func(n ast.Node) bool {
 		if ifStmt, ok := n.(*ast.IfStmt); ok {
-			// Get the position of the closing brace of the if block
 			pos := fset.Position(ifStmt.Body.End())
-			// Subtract the offset we added (package main + func f() {)
-			lineNum := pos.Line - 3 // 3 lines: package, blank, func
+			lineNum := pos.Line - 3
 			if lineNum >= 0 {
 				ifStmtEnd = snippetStartLine + lineNum - 1
-				return false // Found it, stop searching
+				return false
 			}
 		}
 		return true
@@ -332,12 +368,11 @@ func findErrorBlockEnd(lines []string, startIdx int) int {
 }
 
 // findErrorBlockEndFallback is a simple fallback that counts braces.
-// Only used when AST parsing fails (which should be rare with valid Go code).
+// Only used when AST parsing fails.
 func findErrorBlockEndFallback(lines []string, startIdx int) int {
 	braceCount := 1
 	for i := startIdx + 1; i < len(lines); i++ {
 		line := lines[i]
-		// Simple character-by-character scan (doesn't handle strings/comments)
 		for _, ch := range line {
 			switch ch {
 			case '{':
@@ -347,8 +382,6 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 				if braceCount == 0 {
 					return i
 				}
-			default:
-				// Ignore other characters
 			}
 		}
 	}

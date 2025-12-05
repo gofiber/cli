@@ -11,11 +11,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// setupTestModule creates a temporary directory within the project for testing
+// This ensures packages.Load() can access proper go.mod and type information
+func setupTestModule(t *testing.T) string {
+	t.Helper()
+
+	// Create temp dir inside the project so it inherits go.mod
+	dir, err := os.MkdirTemp(".", "test_migration_")
+	require.NoError(t, err)
+
+	// Ensure it's absolute path
+	absDir, err := filepath.Abs(dir)
+	require.NoError(t, err)
+
+	return absDir
+}
+
 func Test_MigrateSessionRelease(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	content := `package main
@@ -44,7 +61,7 @@ func handler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -53,9 +70,10 @@ func handler(c fiber.Ctx) error {
 
 func Test_MigrateSessionRelease_AlreadyHasDefer(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	content := `package main
@@ -85,7 +103,7 @@ func handler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -97,9 +115,10 @@ func handler(c fiber.Ctx) error {
 
 func Test_MigrateSessionRelease_GetByID(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	content := `package main
@@ -128,7 +147,7 @@ func backgroundTask(sessionID string) {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -137,9 +156,10 @@ func backgroundTask(sessionID string) {
 
 func Test_MigrateSessionRelease_MultilineErrorCheck(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	content := `package main
@@ -169,7 +189,7 @@ func handler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -185,9 +205,10 @@ func handler(c fiber.Ctx) error {
 
 func Test_MigrateSessionRelease_MiddlewarePattern_NoRelease(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Middleware pattern - should NOT get Release() call
@@ -223,7 +244,7 @@ func main() {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -233,9 +254,10 @@ func main() {
 
 func Test_MigrateSessionRelease_OtherGetMethods_NoRelease(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Various Get/GetByID methods that are NOT session stores
@@ -278,7 +300,7 @@ func handler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -290,9 +312,10 @@ func handler(c fiber.Ctx) error {
 
 func Test_MigrateSessionRelease_SessionStoreVariableName(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Test various store variable naming patterns
@@ -334,7 +357,7 @@ func handler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -347,9 +370,10 @@ func handler(c fiber.Ctx) error {
 
 func Test_MigrateSessionRelease_V2Import_NoRelease(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// v2 session import - should NOT get Release() since migration only processes v3 imports
@@ -381,7 +405,7 @@ func handler(c *fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -394,9 +418,10 @@ func handler(c *fiber.Ctx) error {
 // https://github.com/gofiber/recipes/blob/master/csrf-with-session/main.go
 func Test_MigrateSessionRelease_CSRFWithSession(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Simplified version of csrf-with-session from recipes
@@ -451,7 +476,7 @@ func main() {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -467,9 +492,10 @@ func main() {
 // https://github.com/gofiber/recipes/blob/master/ent-mysql/ent/client.go
 func Test_MigrateSessionRelease_EntMySQL(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Simplified version of ent-mysql client.go from recipes
@@ -545,7 +571,7 @@ func (c *BookClient) GetX(ctx context.Context, id int) *Book {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "client.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "client.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -560,9 +586,10 @@ func (c *BookClient) GetX(ctx context.Context, id int) *Book {
 // Note: sess.Release() has a nil check, so it's safe to defer even if store.Get() returns nil.
 func Test_MigrateSessionRelease_NoErrorCheck(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	content := `package main
@@ -597,7 +624,7 @@ func handler2(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -612,9 +639,10 @@ func handler2(c fiber.Ctx) error {
 // New, NewStore, Get, GetByID methods don't trigger false positives
 func Test_MigrateSessionRelease_OtherPackagesWithNew(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Various packages with similar method names but NOT session
@@ -663,7 +691,7 @@ func handler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -679,9 +707,10 @@ func handler(c fiber.Ctx) error {
 // where the same variable name "store" is used in different functions for different types
 func Test_MigrateSessionRelease_SameVarNameDifferentFunctions(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// CRITICAL: "store" variable reused in different contexts
@@ -724,7 +753,7 @@ func cacheHandler(c fiber.Ctx) error {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
@@ -756,9 +785,10 @@ func cacheHandler(c fiber.Ctx) error {
 // This is critical because the scope verification needs to match the actual alias used.
 func Test_MigrateSessionRelease_AliasedImport(t *testing.T) {
 	t.Parallel()
+	var err error
+	var data []byte
 
-	dir, err := os.MkdirTemp("", "msessionrelease")
-	require.NoError(t, err)
+	dir := setupTestModule(t)
 	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
 
 	// Test with custom alias "sess" for session package
@@ -799,7 +829,7 @@ func backgroundTask(sessionID string) {
 	err = MigrateSessionRelease(cmd, dir, nil, nil)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	data, err = os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
 	require.NoError(t, err)
 
 	result := string(data)
