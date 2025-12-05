@@ -108,7 +108,7 @@ func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	return nil
 }
 
-func rewriteAcquireAgentBlocksWithAlias(content string, alias string) (string, bool) {
+func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 	patterns := buildAliasPatterns(alias)
 	acquireAgentPattern := patterns["acquireAgent"]
 	releaseAgentPattern := patterns["releaseAgent"]
@@ -239,10 +239,6 @@ func rewriteAcquireAgentBlocksWithAlias(content string, alias string) (string, b
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
-			assignOp := structMatch[4]
-			if assignOp == "" {
-				assignOp = "="
-			}
 			structTarget := strings.TrimSpace(structMatch[6])
 
 			structBody := []string{}
@@ -293,10 +289,6 @@ func rewriteAcquireAgentBlocksWithAlias(content string, alias string) (string, b
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
-			assignOp := bytesMatch[4]
-			if assignOp == "" {
-				assignOp = "="
-			}
 
 			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
 			out = append(out, respLine)
@@ -382,7 +374,7 @@ func buildConfig(headers map[string]string) string {
 	return fmt.Sprintf(", client.Config{Header: map[string]string{%s}}", strings.Join(parts, ", "))
 }
 
-func rewriteClientExamplesWithAlias(content string, alias string) (string, bool) {
+func rewriteClientExamplesWithAlias(content, alias string) (string, bool) {
 	patterns := buildAliasPatterns(alias)
 
 	updated, changedSimple := rewriteSimpleAgentBlocksWithAlias(content, alias)
@@ -431,7 +423,7 @@ type headerValue struct {
 	raw   bool
 }
 
-func rewriteSimpleAgentBlocksWithAlias(content string, alias string) (string, bool) {
+func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 	patterns := buildAliasPatterns(alias)
 	simpleAgentPattern := patterns["simpleAgent"]
 
