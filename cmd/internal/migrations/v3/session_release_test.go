@@ -175,10 +175,12 @@ func handler(c fiber.Ctx) error {
 	result := string(data)
 	assert.Contains(t, result, "defer sess.Release() // Important: Manual cleanup required")
 
-	// Verify defer comes after the error block
+	// Verify defer comes after the error block (check defer appears after the error return)
+	errorReturnIdx := strings.Index(result, "return err")
 	deferIdx := strings.Index(result, "defer sess.Release()")
-	errorBlockEnd := strings.Index(result, "}")
-	assert.Greater(t, deferIdx, errorBlockEnd, "defer should come after error block")
+	assert.Positive(t, errorReturnIdx, "should find error return")
+	assert.Positive(t, deferIdx, "should find defer Release()")
+	assert.Greater(t, deferIdx, errorReturnIdx, "defer should come after error return")
 }
 
 func Test_MigrateSessionRelease_MiddlewarePattern_NoRelease(t *testing.T) {
@@ -748,4 +750,62 @@ func cacheHandler(c fiber.Ctx) error {
 			t.Error("Should NOT add defer data.Release() for cache store")
 		}
 	}
+}
+
+// Test_MigrateSessionRelease_AliasedImport tests that custom session package aliases work correctly.
+// This is critical because the scope verification needs to match the actual alias used.
+func Test_MigrateSessionRelease_AliasedImport(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionrelease")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	// Test with custom alias "sess" for session package
+	content := `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	sess "github.com/gofiber/fiber/v3/middleware/session"
+)
+
+func handler(c fiber.Ctx) error {
+	store := sess.NewStore()
+	session, err := store.Get(c)
+	if err != nil {
+		return err
+	}
+
+	session.Set("key", "value")
+	return session.Save()
+}
+
+func backgroundTask(sessionID string) {
+	store := sess.NewStore()
+	sess, err := store.GetByID(context.Background(), sessionID)
+	if err != nil {
+		return
+	}
+
+	sess.Set("last_task", "value")
+	sess.Save()
+}
+`
+
+	err = os.WriteFile(filepath.Join(dir, "main.go"), []byte(content), 0o600)
+	require.NoError(t, err)
+
+	cmd := &cobra.Command{}
+	err = MigrateSessionRelease(cmd, dir, nil, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	require.NoError(t, err)
+
+	result := string(data)
+
+	// Should add Release() for both Get() and GetByID() with aliased import
+	assert.Contains(t, result, "defer session.Release() // Important: Manual cleanup required", "Should add Release() for store.Get() with aliased import")
+	assert.Contains(t, result, "defer sess.Release() // Important: Manual cleanup required", "Should add Release() for store.GetByID() with aliased import")
+	assert.Equal(t, 2, strings.Count(result, "defer "), "Should add exactly 2 defer Release() calls")
 }

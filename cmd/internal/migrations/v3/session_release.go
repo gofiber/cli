@@ -2,6 +2,9 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"strings"
 
@@ -41,7 +44,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 		}
 
 		// Step 3: Process the file and add Release() calls where needed
-		return addReleaseCalls(lines, storeVars)
+		return addReleaseCalls(lines, storeVars, sessionPkgAlias)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to add session Release() calls: %w", err)
@@ -110,36 +113,45 @@ func findSessionStoreVariables(lines []string, sessionPkgAlias string) map[strin
 // isSessionStoreInScope verifies that a store variable is actually from session.NewStore()
 // within the current function scope by looking backwards from the Get() call.
 // This prevents false positives when the same variable name is reused in different functions.
-func isSessionStoreInScope(lines []string, getLineIdx int, storeVar string, storeVars map[string]bool) bool {
+func isSessionStoreInScope(lines []string, getLineIdx int, storeVar string, storeVars map[string]bool, sessionPkgAlias string) bool {
 	// The store variable name must be in our tracked list
 	if !storeVars[storeVar] {
 		return false
 	}
 
-	// Look backwards to find where this store variable was assigned
-	// Track depth to handle nested scopes (closures can access parent scope)
-	braceDepth := 0
+	// Pre-compile regex patterns for efficiency
+	storeAssignPattern := regexp.MustCompile(fmt.Sprintf(`^\s*(?:var\s+)?%s\s*(?::=|=)\s*(\w+)\.NewStore\(`, regexp.QuoteMeta(storeVar)))
+	sessionPattern := regexp.MustCompile(fmt.Sprintf(`\b%s\.NewStore\(`, regexp.QuoteMeta(sessionPkgAlias)))
+	namedFuncPattern := regexp.MustCompile(`^func(\s+\([^\)]*\))?\s+\w+\s*\(`)
 
+	// Look backwards to find where this store variable was assigned
+	// Allow searching through closures into parent scope (closures can access parent variables)
 	for i := getLineIdx - 1; i >= 0; i-- {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 
-		// Count braces to track nesting depth
-		braceDepth += strings.Count(line, "{")
-		braceDepth -= strings.Count(line, "}")
-
-		// Check if this line assigns the store variable from session.NewStore()
-		storeAssignPattern := regexp.MustCompile(fmt.Sprintf(`^\s*(?:var\s+)?%s\s*(?::=|=)\s*\w+\.NewStore\(`, regexp.QuoteMeta(storeVar)))
-		if storeAssignPattern.MatchString(line) {
-			// Found the assignment - verify it's from session.NewStore()
-			sessionPattern := regexp.MustCompile(`\bsession\.NewStore\(`)
-			return sessionPattern.MatchString(line)
+		// Check if this line assigns the store variable
+		if matches := storeAssignPattern.FindStringSubmatch(line); len(matches) > 1 {
+			// Found the assignment - verify it's from the session package
+			pkgAlias := matches[1]
+			if pkgAlias == sessionPkgAlias {
+				// This is the session store we are looking for
+				return true
+			}
+			// This is a store from another package, shadowing the variable
+			return false
 		}
 
-		// Stop if we've reached a named function declaration (not a closure)
-		// Named functions start with "func FuncName(" not "func("
-		if strings.HasPrefix(trimmed, "func ") && !strings.HasPrefix(trimmed, "func(") && !strings.HasPrefix(trimmed, "func (") {
-			// We've hit a different named function, stop
+		// Alternative check using pattern matching (for robustness)
+		if storeAssignPattern.MatchString(line) && sessionPattern.MatchString(line) {
+			return true
+		}
+
+		// Stop if we've reached a named function declaration (including method receivers)
+		// This matches: func Name(, func (r Receiver) Name(, but NOT func( or func (
+		// Closures (anonymous functions) are allowed - we can search through them
+		if namedFuncPattern.MatchString(trimmed) {
+			// We've hit a named function, stop
 			return false
 		}
 	}
@@ -147,8 +159,10 @@ func isSessionStoreInScope(lines []string, getLineIdx int, storeVar string, stor
 	return false
 }
 
+const releaseSearchAhead = 30 // Lines to search ahead for existing Release() calls
+
 // addReleaseCalls processes lines and adds defer Release() calls after store.Get()/GetByID() calls.
-func addReleaseCalls(lines []string, storeVars map[string]bool) string {
+func addReleaseCalls(lines []string, storeVars map[string]bool, sessionPkgAlias string) string {
 	// Build regex pattern that only matches our known store variables
 	storeNames := make([]string, 0, len(storeVars))
 	for name := range storeVars {
@@ -182,26 +196,20 @@ func addReleaseCalls(lines []string, storeVars map[string]bool) string {
 
 		// CRITICAL: Verify this store variable is actually from session.NewStore()
 		// in the current function scope to avoid false positives across functions
-		if !isSessionStoreInScope(lines, i, storeVar, storeVars) {
+		if !isSessionStoreInScope(lines, i, storeVar, storeVars, sessionPkgAlias) {
 			continue
 		}
 
 		// Check if Release() is already present for this session variable
 		// Search from right after the Get() line
 		hasRelease := false
-		searchEnd := i + 30 // Look ahead up to 30 lines
+		searchEnd := i + releaseSearchAhead
 		if searchEnd > len(lines) {
 			searchEnd = len(lines)
 		}
 		for j := i + 1; j < searchEnd; j++ {
 			if strings.Contains(lines[j], sessVar+".Release()") {
 				hasRelease = true
-				break
-			}
-			// Stop searching if we hit a closing brace at root function level
-			// (avoid searching beyond the current function scope)
-			trimmed := strings.TrimSpace(lines[j])
-			if trimmed == "}" && len(indent) == 0 {
 				break
 			}
 		}
@@ -227,6 +235,9 @@ func addReleaseCalls(lines []string, storeVars map[string]bool) string {
 			blockEnd := findErrorBlockEnd(lines, nextLineIdx)
 
 			if blockEnd < 0 || blockEnd >= len(lines) {
+				// Fallback: add defer immediately after Get() if we can't parse the error block
+				deferLine := indent + "defer " + sessVar + ".Release() " + releaseComment
+				result = append(result, deferLine)
 				continue
 			}
 
@@ -253,10 +264,9 @@ func addReleaseCalls(lines []string, storeVars map[string]bool) string {
 	return strings.Join(result, "\n")
 }
 
-// findErrorBlockEnd finds the end of an error handling block
-// Returns the line index of the closing brace, or -1 if not found
-// Note: This uses simple brace counting and may not handle braces in strings/comments,
-// but is sufficient for migration purposes with typical Go error handling patterns.
+// findErrorBlockEnd finds the end of an error handling block using proper Go AST parsing.
+// Returns the line index of the closing brace, or -1 if not found.
+// This properly handles braces in strings, comments, and nested blocks.
 func findErrorBlockEnd(lines []string, startIdx int) int {
 	if startIdx >= len(lines) {
 		return -1
@@ -269,19 +279,78 @@ func findErrorBlockEnd(lines []string, startIdx int) int {
 		return startIdx
 	}
 
-	// Multi-line block: find the matching closing brace
-	if strings.Contains(line, "{") {
-		braceCount := 1
-		for i := startIdx + 1; i < len(lines); i++ {
-			currLine := lines[i]
-			braceCount += strings.Count(currLine, "{")
-			braceCount -= strings.Count(currLine, "}")
+	// For multi-line blocks, we need to find the matching closing brace
+	// Use Go's parser to properly handle this
+	if !strings.Contains(line, "{") {
+		return -1
+	}
 
-			if braceCount == 0 {
-				return i
+	// Build a minimal parseable snippet starting from the if statement
+	// We need enough context to parse it as valid Go
+	var sb strings.Builder
+	sb.WriteString("package main\nfunc f() {\n") //nolint:errcheck // strings.Builder.WriteString never returns an error
+	snippetStartLine := startIdx
+
+	// Add lines from the error check onwards
+	for i := startIdx; i < len(lines) && i < startIdx+50; i++ {
+		sb.WriteString(lines[i]) //nolint:errcheck // strings.Builder.WriteString never returns an error
+		sb.WriteString("\n")     //nolint:errcheck // strings.Builder.WriteString never returns an error
+	}
+	sb.WriteString("\n}\n") //nolint:errcheck // strings.Builder.WriteString never returns an error
+	codeSnippet := sb.String()
+
+	// Parse the code snippet
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "", codeSnippet, parser.AllErrors)
+	if err != nil {
+		// Fallback: if we can't parse, use simple brace counting
+		// This should rarely happen with valid Go code
+		return findErrorBlockEndFallback(lines, startIdx)
+	}
+
+	// Find the if statement node
+	ifStmtEnd := -1
+	ast.Inspect(node, func(n ast.Node) bool {
+		if ifStmt, ok := n.(*ast.IfStmt); ok {
+			// Get the position of the closing brace of the if block
+			pos := fset.Position(ifStmt.Body.End())
+			// Subtract the offset we added (package main + func f() {)
+			lineNum := pos.Line - 3 // 3 lines: package, blank, func
+			if lineNum >= 0 {
+				ifStmtEnd = snippetStartLine + lineNum - 1
+				return false // Found it, stop searching
+			}
+		}
+		return true
+	})
+
+	if ifStmtEnd >= 0 && ifStmtEnd < len(lines) {
+		return ifStmtEnd
+	}
+
+	return findErrorBlockEndFallback(lines, startIdx)
+}
+
+// findErrorBlockEndFallback is a simple fallback that counts braces.
+// Only used when AST parsing fails (which should be rare with valid Go code).
+func findErrorBlockEndFallback(lines []string, startIdx int) int {
+	braceCount := 1
+	for i := startIdx + 1; i < len(lines); i++ {
+		line := lines[i]
+		// Simple character-by-character scan (doesn't handle strings/comments)
+		for _, ch := range line {
+			switch ch {
+			case '{':
+				braceCount++
+			case '}':
+				braceCount--
+				if braceCount == 0 {
+					return i
+				}
+			default:
+				// Ignore other characters
 			}
 		}
 	}
-
 	return -1
 }
