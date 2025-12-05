@@ -661,6 +661,264 @@ func main() {
 	assert.Equal(t, expected, content)
 }
 
+func Test_MigrateClientUsage_RewritesDebugAndReuse(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientdebug")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    agent := fiber.Get("http://localhost:3000")
+    agent.Debug()
+    agent.Reuse()
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	// Debug() and Reuse() are removed as they don't exist in v3
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000")
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_RemovesFiberImportWhenUnused(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientimport")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    agent := fiber.Get("http://localhost:3000")
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	// fiber import should be removed as it's no longer used
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000")
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_KeepsFiberImportWhenUsed(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientkeep")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    agent := fiber.Get("http://localhost:3000")
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+    fmt.Println("StatusOK:", fiber.StatusOK)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	// fiber import should be kept as fiber.StatusOK is still used
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000")
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+    fmt.Println("StatusOK:", fiber.StatusOK)
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_AcquireAgentWithoutParseBlock(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientacquire")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	// This is the exact example from the user's request
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+var (
+    ClientID     = "id"
+    ClientSecret = "secret"
+)
+
+func handler(code string) {
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodPost)
+    req.Header.Set("accept", "application/json")
+    req.SetRequestURI(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    if err := a.Parse(); err != nil {
+        fmt.Printf("could not create HTTP request: %v", err)
+    }
+
+    status, body, errs := a.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+var (
+    ClientID     = "id"
+    ClientSecret = "secret"
+)
+
+func handler(code string) {
+    resp, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    if err != nil {
+        fmt.Printf("could not create HTTP request: %v", err)
+    }
+    status := resp.StatusCode()
+    body := resp.Body()
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
 func gofmtSource(t *testing.T, src string) string {
 	t.Helper()
 

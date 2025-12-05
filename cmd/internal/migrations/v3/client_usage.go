@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	// Multi-line patterns for simple agent usage
 	clientBytesWithBodyPattern  = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Bytes\(\)`)
 	clientBytesPattern          = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Bytes\(\)`)
 	clientStringWithBodyPattern = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.String\(\)`)
@@ -28,7 +29,9 @@ var (
 	clientErrVarPattern         = regexp.MustCompile(`\berrs\b`)
 	clientErrsDeclPattern       = regexp.MustCompile(`\berrs\s+\[]error\b`)
 
+	// AcquireAgent patterns
 	acquireAgentPattern = regexp.MustCompile(`(?m)^([ \t]*)(\w+)\s*:=\s*fiber\.AcquireAgent\(\)\s*$`)
+	releaseAgentPattern = regexp.MustCompile(`(?m)^([ \t]*)defer\s+fiber\.ReleaseAgent\((\w+)\)\s*$`)
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
 	headerMethodPattern = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.SetMethod\(([^)]*)\)\s*$`)
 	headerSetPattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
@@ -48,6 +51,8 @@ var (
 	bodyPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
 	basicAuthPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
 	tlsConfigPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
+	debugPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
+	reusePattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
 	agentBytesCallPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	agentStringCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
 	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
@@ -65,6 +70,7 @@ func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 		}
 
 		updated = rewriteClientErrorHandling(updated)
+		updated = removeUnusedFiberImport(updated)
 		return updated
 	})
 	if err != nil {
@@ -82,8 +88,21 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 	lines := strings.Split(content, "\n")
 	var out []string
 	changed := false
+	skipLines := make(map[int]bool)
+
+	// First pass: mark ReleaseAgent defer lines for removal
+	for i, line := range lines {
+		if releaseAgentPattern.MatchString(line) {
+			skipLines[i] = true
+		}
+	}
 
 	for i := 0; i < len(lines); i++ {
+		if skipLines[i] {
+			changed = true
+			continue
+		}
+
 		line := lines[i]
 		acquire := acquireAgentPattern.FindStringSubmatch(line)
 		if acquire == nil {
@@ -97,8 +116,11 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		reqLine := -1
 		var reqMatch []string
 		for j := i + 1; j < len(lines); j++ {
+			if skipLines[j] {
+				continue
+			}
 			trimmed := strings.TrimSpace(lines[j])
-			if trimmed == "" || strings.Contains(lines[j], "ReleaseAgent("+agentVar+")") || strings.HasPrefix(trimmed, "//") {
+			if trimmed == "" || strings.HasPrefix(trimmed, "//") {
 				continue
 			}
 
@@ -121,6 +143,9 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 
 		j := reqLine + 1
 		for ; j < len(lines); j++ {
+			if skipLines[j] {
+				continue
+			}
 			l := lines[j]
 			if m := headerMethodPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
 				methodExpr = strings.TrimSpace(m[3])
@@ -356,6 +381,7 @@ type simpleAgentConfig struct {
 	body      string
 	timeout   string
 	tlsConfig string
+	debug     bool
 	config    bool
 }
 
@@ -452,6 +478,15 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 			if m := bodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
 				cfg.body = strings.TrimSpace(m[4])
 				cfg.config = true
+				continue
+			}
+			// Handle Debug() - will be removed as v3 uses hooks instead
+			if m := debugPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				cfg.debug = true
+				continue
+			}
+			// Handle Reuse() - not needed in v3, just skip
+			if m := reusePattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
 				continue
 			}
 			if m := agentBytesCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
@@ -745,4 +780,43 @@ func rewriteClientErrorHandling(content string) string {
 	updated = clientErrMapPattern.ReplaceAllString(updated, `"err": err`)
 	updated = clientErrVarPattern.ReplaceAllString(updated, "err")
 	return updated
+}
+
+// removeUnusedFiberImport removes unused fiber/v2 or fiber/v3 imports
+// when they are no longer needed after migration to the client package
+func removeUnusedFiberImport(content string) string {
+	// Check if fiber is still used somewhere in the code (excluding imports)
+	fiberUsagePattern := regexp.MustCompile(`\bfiber\.(Get|Head|Post|Put|Patch|Delete|AcquireAgent|ReleaseAgent)\b`)
+	if fiberUsagePattern.MatchString(content) {
+		return content
+	}
+
+	// Remove import line for fiber/v2 or fiber/v3 if no longer used
+	// But only remove if there's no other usage of 'fiber.' in the code
+	fiberAnyUsage := regexp.MustCompile(`\bfiber\.`)
+	importContent := extractImportSection(content)
+
+	// Check if fiber is used outside of imports
+	contentWithoutImports := strings.Replace(content, importContent, "", 1)
+	if fiberAnyUsage.MatchString(contentWithoutImports) {
+		return content
+	}
+
+	// Remove the fiber import line
+	fiberImportLine := regexp.MustCompile(`(?m)^\s*"github\.com/gofiber/fiber/v[23]"\s*\n?`)
+	return fiberImportLine.ReplaceAllString(content, "")
+}
+
+func extractImportSection(content string) string {
+	blockRegex := regexp.MustCompile(`(?ms)^import \([^)]*\)`)
+	if match := blockRegex.FindString(content); match != "" {
+		return match
+	}
+
+	singleImport := regexp.MustCompile(`(?m)^import\s+"[^"]+"\s*$`)
+	if match := singleImport.FindString(content); match != "" {
+		return match
+	}
+
+	return ""
 }
