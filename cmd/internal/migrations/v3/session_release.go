@@ -349,7 +349,7 @@ func findErrorBlockEnd(lines []string, startIdx int) int {
 			pos := fset.Position(ifStmt.Body.End())
 			lineNum := pos.Line - 3
 			if lineNum >= 0 {
-				ifStmtEnd = snippetStartLine + lineNum - 1
+				ifStmtEnd = snippetStartLine + lineNum
 				return false
 			}
 		}
