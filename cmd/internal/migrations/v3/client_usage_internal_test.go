@@ -88,6 +88,51 @@ func handler(ctx *fiber.Ctx, code string) error {
 	assert.Equal(t, expected, formatted)
 }
 
+func Test_rewriteAcquireAgentBlocks_NoResponseUsage(t *testing.T) {
+	content := `package main
+
+import (
+"fmt"
+
+"github.com/gofiber/fiber/v3"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+a := fiber.AcquireAgent()
+req := a.Request()
+req.Header.SetMethod(fiber.MethodPost)
+req.Header.Set("accept", "application/json")
+req.SetRequestURI(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", models.ClientID, models.ClientSecret, code))
+if err := a.Parse(); err != nil {
+models.SYSLOG.Errorf("could not create HTTP request: %v", err)
+}
+
+return nil
+}`
+
+	updated, changed := rewriteAcquireAgentBlocks(content)
+	require.True(t, changed, "expected rewrite")
+	formatted := gofmtSource(t, updated)
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+    _, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", models.ClientID, models.ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    if err != nil {
+        models.SYSLOG.Errorf("could not create HTTP request: %v", err)
+    }
+    return nil
+}`)
+
+	assert.Equal(t, expected, formatted)
+}
+
 func gofmtSource(t *testing.T, src string) string {
 	t.Helper()
 

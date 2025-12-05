@@ -341,6 +341,59 @@ func handler(ctx *fiber.Ctx, code string) error {
 	assert.Equal(t, expected, content)
 }
 
+func Test_MigrateClientUsage_RewritesAcquireAgentWithoutResponse(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientagent")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodPost)
+    req.Header.Set("accept", "application/json")
+    req.SetRequestURI(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", models.ClientID, models.ClientSecret, code))
+    if err := a.Parse(); err != nil {
+        models.SYSLOG.Errorf("could not create HTTP request: %v", err)
+    }
+
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+    _, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", models.ClientID, models.ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    if err != nil {
+        models.SYSLOG.Errorf("could not create HTTP request: %v", err)
+    }
+    return nil
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
 func Test_MigrateClientUsage_RewritesHeadersQueriesAndTimeout(t *testing.T) {
 	t.Parallel()
 

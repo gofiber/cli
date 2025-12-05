@@ -171,16 +171,34 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		for structStart < len(lines) && strings.TrimSpace(lines[structStart]) == "" {
 			structStart++
 		}
+		methodName := methodFromExpr(methodExpr)
+		configLine := buildConfig(headers)
 		if structStart >= len(lines) {
-			out = append(out, line)
+			respLine := fmt.Sprintf("%s_, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			out = append(out, respLine)
+			out = append(out, parseIndent+"if err != nil {")
+			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, parseIndent+"}")
+
+			i = parseEnd
+			changed = true
 			continue
 		}
 
 		structMatch := structAssignPattern.FindStringSubmatch(lines[structStart])
 		bytesMatch := bytesAssignPattern.FindStringSubmatch(lines[structStart])
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
-		methodName := methodFromExpr(methodExpr)
-		configLine := buildConfig(headers)
+		if len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0 {
+			respLine := fmt.Sprintf("%s_, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			out = append(out, respLine)
+			out = append(out, parseIndent+"if err != nil {")
+			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, parseIndent+"}")
+
+			i = structStart - 1
+			changed = true
+			continue
+		}
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
