@@ -195,12 +195,11 @@ func handler(c fiber.Ctx) error {
 	result := string(data)
 	assert.Contains(t, result, "defer sess.Release() // Important: Manual cleanup required")
 
-	// Verify defer comes after the error block (check defer appears after the error return)
-	errorReturnIdx := strings.Index(result, "return err")
+	// Verify defer comes after the error block (find the "return err" followed by "}")
+	errorBlockPattern := "return err\n    }"
+	errorBlockEnd := strings.Index(result, errorBlockPattern) + len(errorBlockPattern)
 	deferIdx := strings.Index(result, "defer sess.Release()")
-	assert.Positive(t, errorReturnIdx, "should find error return")
-	assert.Positive(t, deferIdx, "should find defer Release()")
-	assert.Greater(t, deferIdx, errorReturnIdx, "defer should come after error return")
+	assert.Greater(t, deferIdx, errorBlockEnd, "defer should come after error block")
 }
 
 func Test_MigrateSessionRelease_MiddlewarePattern_NoRelease(t *testing.T) {

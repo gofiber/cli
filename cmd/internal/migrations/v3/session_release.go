@@ -331,14 +331,14 @@ func findErrorBlockEnd(lines []string, startIdx int) int {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("package main\nfunc f() {\n")
+	sb.WriteString("package main\nfunc f() {\n") //nolint:errcheck // strings.Builder.WriteString never fails
 	snippetStartLine := startIdx
 
 	for i := startIdx; i < len(lines) && i < startIdx+50; i++ {
-		sb.WriteString(lines[i])
-		sb.WriteString("\n")
+		sb.WriteString(lines[i]) //nolint:errcheck // strings.Builder.WriteString never fails
+		sb.WriteString("\n")     //nolint:errcheck // strings.Builder.WriteString never fails
 	}
-	sb.WriteString("\n}\n")
+	sb.WriteString("\n}\n") //nolint:errcheck // strings.Builder.WriteString never fails
 	codeSnippet := sb.String()
 
 	fset := token.NewFileSet()
@@ -382,6 +382,8 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 				if braceCount == 0 {
 					return i
 				}
+			default:
+				// Ignore other characters
 			}
 		}
 	}
