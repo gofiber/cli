@@ -26,9 +26,10 @@ const releaseComment = "// Important: Manual cleanup required"
 //
 // Middleware handlers do NOT require Release() as the middleware manages the lifecycle.
 //
-// This migration uses Go's type checker to identify *session.Store.Get() calls,
-// which automatically handles all edge cases including struct fields, function parameters,
-// return values, and custom import aliases.
+// This migration parses the Go AST and uses source-level heuristics to identify
+// session.Store.Get/GetByID calls on variables initialized via session.NewStore(),
+// including support for custom import aliases. It does not currently track stores
+// that are passed via parameters, returned from functions, or stored in structs.
 func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		// Quick check: does file import session package?
