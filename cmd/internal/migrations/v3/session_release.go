@@ -367,10 +367,61 @@ func findErrorBlockEnd(lines []string, startIdx int) int {
 // Only used when AST parsing fails.
 func findErrorBlockEndFallback(lines []string, startIdx int) int {
 	braceCount := 1
+	inString := false
+	var stringChar byte
+	inComment := false
+	isLineComment := false
+
 	for i := startIdx + 1; i < len(lines); i++ {
 		line := lines[i]
-		for _, ch := range line {
+		for j := 0; j < len(line); j++ {
+			ch := line[j]
+
+			// Handle string literals
+			if inString {
+				if ch == stringChar {
+					if j > 0 && line[j-1] == '\\' {
+						// Escaped quote, continue in string
+						continue
+					}
+					inString = false
+				}
+				continue
+			}
+
+			// Handle comments
+			if inComment {
+				if isLineComment {
+					if ch == '\n' {
+						inComment = false
+						isLineComment = false
+					}
+				} else { // block comment
+					if ch == '*' && j+1 < len(line) && line[j+1] == '/' {
+						inComment = false
+						j++ // skip the '/'
+					}
+				}
+				continue
+			}
+
+			// Check for start of string or comment
 			switch ch {
+			case '"', '\'', '`':
+				inString = true
+				stringChar = ch
+			case '/':
+				if j+1 < len(line) {
+					if line[j+1] == '/' {
+						inComment = true
+						isLineComment = true
+						j++ // skip the second '/'
+					} else if line[j+1] == '*' {
+						inComment = true
+						isLineComment = false
+						j++ // skip the '*'
+					}
+				}
 			case '{':
 				braceCount++
 			case '}':
@@ -378,8 +429,6 @@ func findErrorBlockEndFallback(lines []string, startIdx int) int {
 				if braceCount == 0 {
 					return i
 				}
-			default:
-				// Ignore other characters
 			}
 		}
 	}
