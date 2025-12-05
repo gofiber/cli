@@ -322,9 +322,11 @@ func handler(ctx *fiber.Ctx, code string) error {
     if err != nil {
         return err
     }
-    retCode = resp.StatusCode()
-    retBody = resp.Body()
+    var retCode int
+    var retBody []byte
     if err == nil {
+        retCode = resp.StatusCode()
+        retBody = resp.Body()
         err = resp.JSON(&t)
     }
     if err != nil {
@@ -511,8 +513,12 @@ func main() {
     if err != nil {
         panic(err)
     }
-    status := resp.StatusCode()
-    body := resp.Body()
+    var status int
+    var body []byte
+    if err == nil {
+        status = resp.StatusCode()
+        body = resp.Body()
+    }
     if err != nil {
         panic(err)
     }
@@ -906,14 +912,185 @@ func handler(code string) {
     if err != nil {
         fmt.Printf("could not create HTTP request: %v", err)
     }
-    status := resp.StatusCode()
-    body := resp.Body()
+    var status int
+    var body []byte
+    if err == nil {
+        status = resp.StatusCode()
+        body = resp.Body()
+    }
     if err != nil {
         panic(err)
     }
 
     fmt.Println("Status:", status)
     fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_RemovesSingleLineImport(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientsingle")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	// Single-line import without block
+	file := writeTempFile(t, dir, `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func main() {
+    agent := fiber.Get("http://localhost:3000")
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+    _ = status
+    _ = body
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	// The ensureImport function converts single-line imports to block imports
+	expected := gofmtSource(t, `package main
+
+import (
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000")
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+    _ = status
+    _ = body
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_RemovesAliasedImport(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientalias")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	// Aliased import
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    f "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    agent := f.Get("http://localhost:3000")
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+    fmt.Println(status, string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	// The aliased import f "..." should be removed since f. is no longer used
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000")
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(status, string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_KeepsAliasedImportWhenUsed(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientaliaskeep")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	// Aliased import that's still used
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    f "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    agent := f.Get("http://localhost:3000")
+    status, body, errs := agent.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+    fmt.Println(status, string(body))
+    fmt.Println("StatusOK:", f.StatusOK)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	// The aliased import f "..." should be kept since f.StatusOK is still used
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    f "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    agent, err := client.Get("http://localhost:3000")
+    var status int
+    var body []byte
+    if err == nil {
+        status = agent.StatusCode()
+        body = agent.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(status, string(body))
+    fmt.Println("StatusOK:", f.StatusOK)
 }`)
 
 	assert.Equal(t, expected, content)
