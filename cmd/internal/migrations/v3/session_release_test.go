@@ -439,26 +439,26 @@ func main() {
 	store := session.NewStore()
 
 	app.Post("/login", func(c fiber.Ctx) error {
-		session, err := store.Get(c)
+		sess, err := store.Get(c)
 		if err != nil {
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
-		if err := session.Reset(); err != nil {
+		if err := sess.Reset(); err != nil {
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
-		session.Set("loggedIn", true)
-		if err := session.Save(); err != nil {
+		sess.Set("loggedIn", true)
+		if err := sess.Save(); err != nil {
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
 		return c.Redirect("/protected")
 	})
 
 	app.Get("/logout", func(c fiber.Ctx) error {
-		session, err := store.Get(c)
+		sess, err := store.Get(c)
 		if err != nil {
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
-		if err := session.Destroy(); err != nil {
+		if err := sess.Destroy(); err != nil {
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
 		return c.Redirect("/")
@@ -481,10 +481,10 @@ func main() {
 	result := string(data)
 
 	// Should add Release() for both store.Get() calls
-	assert.Equal(t, 2, strings.Count(result, "defer session.Release()"), "Should add defer for both store.Get() calls")
+	assert.Equal(t, 2, strings.Count(result, "defer sess.Release()"), "Should add defer for both store.Get() calls")
 
 	// Verify the Release() calls are placed correctly
-	assert.Contains(t, result, "defer session.Release() // Important: Manual cleanup required")
+	assert.Contains(t, result, "defer sess.Release() // Important: Manual cleanup required")
 }
 
 // Test_MigrateSessionRelease_EntMySQL tests real-world code from gofiber/recipes
