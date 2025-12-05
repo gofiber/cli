@@ -45,7 +45,7 @@ _ = retBody
 return nil
 }`
 
-	updated, changed := rewriteAcquireAgentBlocks(content)
+	updated, changed := rewriteAcquireAgentBlocksWithAlias(content, "fiber")
 	require.True(t, changed, "expected rewrite")
 	formatted := gofmtSource(t, updated)
 	expected := gofmtSource(t, `package main
@@ -69,9 +69,11 @@ func handler(ctx *fiber.Ctx, code string) error {
     if err != nil {
         return err
     }
-    retCode = resp.StatusCode()
-    retBody = resp.Body()
+    var retCode int
+    var retBody []byte
     if err == nil {
+        retCode = resp.StatusCode()
+        retBody = resp.Body()
         err = resp.JSON(&t)
     }
     if err != nil {

@@ -15,20 +15,15 @@ import (
 )
 
 var (
-	clientBytesWithBodyPattern  = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Bytes\(\)`)
-	clientBytesPattern          = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Bytes\(\)`)
-	clientStringWithBodyPattern = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.String\(\)`)
-	clientStringPattern         = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.String\(\)`)
-	clientStructWithBodyPattern = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Struct\(([^)]*)\)`)
-	clientStructPattern         = regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Struct\(([^)]*)\)`)
-	clientErrIfPattern          = regexp.MustCompile(`if\s+len\(\s*errs\s*\)\s*>\s*0\s*{`)
-	clientErrLenPattern         = regexp.MustCompile(`\blen\(errs\)`)
-	clientErrComparePattern     = regexp.MustCompile(`err\s*!=\s*nil\s*>\s*0`)
-	clientErrMapPattern         = regexp.MustCompile(`"errs"\s*:\s*errs`)
-	clientErrVarPattern         = regexp.MustCompile(`\berrs\b`)
-	clientErrsDeclPattern       = regexp.MustCompile(`\berrs\s+\[]error\b`)
+	// Error handling patterns
+	clientErrIfPattern      = regexp.MustCompile(`if\s+len\(\s*errs\s*\)\s*>\s*0\s*{`)
+	clientErrLenPattern     = regexp.MustCompile(`\blen\(errs\)`)
+	clientErrComparePattern = regexp.MustCompile(`err\s*!=\s*nil\s*>\s*0`)
+	clientErrMapPattern     = regexp.MustCompile(`"errs"\s*:\s*errs`)
+	clientErrVarPattern     = regexp.MustCompile(`\berrs\b`)
+	clientErrsDeclPattern   = regexp.MustCompile(`\berrs\s+\[]error\b`)
 
-	acquireAgentPattern = regexp.MustCompile(`(?m)^([ \t]*)(\w+)\s*:=\s*fiber\.AcquireAgent\(\)\s*$`)
+	// Non-alias-dependent patterns
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
 	headerMethodPattern = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.SetMethod\(([^)]*)\)\s*$`)
 	headerSetPattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
@@ -40,7 +35,7 @@ var (
 )
 
 var (
-	simpleAgentPattern     = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*fiber\.(Get|Head|Post|Put|Patch|Delete)\((.*)\)\s*$`)
+	// Agent method patterns (non-alias-dependent)
 	headerSetSimplePattern = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
 	queryStringPattern     = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
 	timeoutPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
@@ -48,23 +43,58 @@ var (
 	bodyPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
 	basicAuthPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
 	tlsConfigPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
+	debugPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
+	reusePattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
 	agentBytesCallPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	agentStringCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
 	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
 )
 
+// buildAliasPatterns creates regex patterns for fiber package calls with given alias
+func buildAliasPatterns(alias string) map[string]*regexp.Regexp {
+	escaped := regexp.QuoteMeta(alias)
+	return map[string]*regexp.Regexp{
+		"simpleAgent":    regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\((.*)\)\s*$`),
+		"acquireAgent":   regexp.MustCompile(`(?m)^([ \t]*)(\w+)\s*:=\s*` + escaped + `\.AcquireAgent\(\)\s*$`),
+		"releaseAgent":   regexp.MustCompile(`(?m)^([ \t]*)defer\s+` + escaped + `\.ReleaseAgent\((\w+)\)\s*$`),
+		"bytesWithBody":  regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Bytes\(\)`),
+		"bytes":          regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Bytes\(\)`),
+		"stringWithBody": regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.String\(\)`),
+		"string":         regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.String\(\)`),
+		"structWithBody": regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Struct\(([^)]*)\)`),
+		"struct":         regexp.MustCompile(`(?m)([ \t]*)(\w+)\s*:=\s*` + escaped + `\.(Get|Head|Post|Put|Patch|Delete)\(([^)]*)\)\s*\n([ \t]*)(\w+)\s*,\s*(\w+)\s*,\s*errs\s*:=\s*(\w+)\.Struct\(([^)]*)\)`),
+	}
+}
+
 const callTypeString = "string"
 
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		updated, modified := rewriteClientExamples(content)
-		updated, agentChanged := rewriteAcquireAgentBlocks(updated)
-		modified = modified || agentChanged
+		// Find all fiber import aliases used in this file
+		aliases := findFiberImportAliases(content)
+		if len(aliases) == 0 {
+			// Default to "fiber" if no import found (might be in another file)
+			aliases = []string{"fiber"}
+		}
+
+		modified := false
+		updated := content
+
+		// Apply migrations for each alias
+		for _, alias := range aliases {
+			var changed bool
+			updated, changed = rewriteClientExamplesWithAlias(updated, alias)
+			modified = modified || changed
+			updated, changed = rewriteAcquireAgentBlocksWithAlias(updated, alias)
+			modified = modified || changed
+		}
+
 		if !modified {
 			return content
 		}
 
 		updated = rewriteClientErrorHandling(updated)
+		updated = removeUnusedFiberImport(updated)
 		return updated
 	})
 	if err != nil {
@@ -78,12 +108,29 @@ func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	return nil
 }
 
-func rewriteAcquireAgentBlocks(content string) (string, bool) {
+func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
+	patterns := buildAliasPatterns(alias)
+	acquireAgentPattern := patterns["acquireAgent"]
+	releaseAgentPattern := patterns["releaseAgent"]
+
 	lines := strings.Split(content, "\n")
 	var out []string
 	changed := false
+	skipLines := make(map[int]bool)
+
+	// First pass: mark ReleaseAgent defer lines for removal
+	for i, line := range lines {
+		if releaseAgentPattern.MatchString(line) {
+			skipLines[i] = true
+		}
+	}
 
 	for i := 0; i < len(lines); i++ {
+		if skipLines[i] {
+			changed = true
+			continue
+		}
+
 		line := lines[i]
 		acquire := acquireAgentPattern.FindStringSubmatch(line)
 		if acquire == nil {
@@ -97,8 +144,11 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		reqLine := -1
 		var reqMatch []string
 		for j := i + 1; j < len(lines); j++ {
+			if skipLines[j] {
+				continue
+			}
 			trimmed := strings.TrimSpace(lines[j])
-			if trimmed == "" || strings.Contains(lines[j], "ReleaseAgent("+agentVar+")") || strings.HasPrefix(trimmed, "//") {
+			if trimmed == "" || strings.HasPrefix(trimmed, "//") {
 				continue
 			}
 
@@ -121,6 +171,9 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 
 		j := reqLine + 1
 		for ; j < len(lines); j++ {
+			if skipLines[j] {
+				continue
+			}
 			l := lines[j]
 			if m := headerMethodPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
 				methodExpr = strings.TrimSpace(m[3])
@@ -186,10 +239,6 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
-			assignOp := structMatch[4]
-			if assignOp == "" {
-				assignOp = "="
-			}
 			structTarget := strings.TrimSpace(structMatch[6])
 
 			structBody := []string{}
@@ -214,14 +263,20 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 			out = append(out, parseIndent+"if err != nil {")
 			out = append(out, parseBody[:len(parseBody)-1]...)
 			out = append(out, parseIndent+"}")
-
+			// Declare variables and assign only if err == nil to avoid nil pointer dereference
 			if statusVar != "" {
-				out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
+				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
 			}
 			if bodyVar != "" {
-				out = append(out, fmt.Sprintf("%s%s %s resp.Body()", indent, bodyVar, assignOp))
+				out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
 			}
 			out = append(out, indent+"if err == nil {")
+			if statusVar != "" {
+				out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
+			}
+			if bodyVar != "" {
+				out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
+			}
 			out = append(out, fmt.Sprintf("%s\terr = resp.JSON(%s)", indent, structTarget))
 			out = append(out, indent+"}")
 			out = append(out, structMatch[1]+"if err != nil {")
@@ -234,18 +289,19 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
-			assignOp := bytesMatch[4]
-			if assignOp == "" {
-				assignOp = "="
-			}
 
 			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, parseIndent+"if err != nil {")
 			out = append(out, parseBody[:len(parseBody)-1]...)
 			out = append(out, parseIndent+"}")
-			out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
-			out = append(out, fmt.Sprintf("%s%s %s resp.Body()", indent, bodyVar, assignOp))
+			// Declare variables and assign only if err == nil to avoid nil pointer dereference
+			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
+			out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
+			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
+			out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
+			out = append(out, indent+"}")
 
 			i = structStart
 			changed = true
@@ -253,18 +309,19 @@ func rewriteAcquireAgentBlocks(content string) (string, bool) {
 		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
 			statusVar := strings.TrimSpace(stringMatch[2])
 			bodyVar := strings.TrimSpace(stringMatch[3])
-			assignOp := stringMatch[4]
-			if assignOp == "" {
-				assignOp = "="
-			}
 
 			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, parseIndent+"if err != nil {")
 			out = append(out, parseBody[:len(parseBody)-1]...)
 			out = append(out, parseIndent+"}")
-			out = append(out, fmt.Sprintf("%s%s %s resp.StatusCode()", indent, statusVar, assignOp))
-			out = append(out, fmt.Sprintf("%s%s %s resp.String()", indent, bodyVar, assignOp))
+			// Declare variables and assign only if err == nil to avoid nil pointer dereference
+			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
+			out = append(out, fmt.Sprintf("%svar %s string", indent, bodyVar))
+			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
+			out = append(out, fmt.Sprintf("%s\t%s = resp.String()", indent, bodyVar))
+			out = append(out, indent+"}")
 
 			i = structStart
 			changed = true
@@ -317,20 +374,22 @@ func buildConfig(headers map[string]string) string {
 	return fmt.Sprintf(", client.Config{Header: map[string]string{%s}}", strings.Join(parts, ", "))
 }
 
-func rewriteClientExamples(content string) (string, bool) {
-	updated, changedSimple := rewriteSimpleAgentBlocks(content)
+func rewriteClientExamplesWithAlias(content, alias string) (string, bool) {
+	patterns := buildAliasPatterns(alias)
+
+	updated, changedSimple := rewriteSimpleAgentBlocksWithAlias(content, alias)
 	changed := changedSimple
 
 	for _, replace := range []struct {
 		pattern *regexp.Regexp
 		build   func(parts []string) (string, bool)
 	}{
-		{pattern: clientBytesWithBodyPattern, build: buildBytesWithBodyReplacement},
-		{pattern: clientBytesPattern, build: buildBytesReplacement},
-		{pattern: clientStringWithBodyPattern, build: buildStringWithBodyReplacement},
-		{pattern: clientStringPattern, build: buildStringReplacement},
-		{pattern: clientStructWithBodyPattern, build: buildStructWithBodyReplacement},
-		{pattern: clientStructPattern, build: buildStructReplacement},
+		{pattern: patterns["bytesWithBody"], build: buildBytesWithBodyReplacement},
+		{pattern: patterns["bytes"], build: buildBytesReplacement},
+		{pattern: patterns["stringWithBody"], build: buildStringWithBodyReplacement},
+		{pattern: patterns["string"], build: buildStringReplacement},
+		{pattern: patterns["structWithBody"], build: buildStructWithBodyReplacement},
+		{pattern: patterns["struct"], build: buildStructReplacement},
 	} {
 		updated = replace.pattern.ReplaceAllStringFunc(updated, func(match string) string {
 			parts := replace.pattern.FindStringSubmatch(match)
@@ -364,7 +423,10 @@ type headerValue struct {
 	raw   bool
 }
 
-func rewriteSimpleAgentBlocks(content string) (string, bool) {
+func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
+	patterns := buildAliasPatterns(alias)
+	simpleAgentPattern := patterns["simpleAgent"]
+
 	lines := strings.Split(content, "\n")
 	var out []string
 	changed := false
@@ -452,6 +514,14 @@ func rewriteSimpleAgentBlocks(content string) (string, bool) {
 			if m := bodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
 				cfg.body = strings.TrimSpace(m[4])
 				cfg.config = true
+				continue
+			}
+			// Handle Debug() - not supported in v3, just skip (v3 uses hooks instead)
+			if m := debugPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
+				continue
+			}
+			// Handle Reuse() - not needed in v3, just skip
+			if m := reusePattern.FindStringSubmatch(l); len(m) > 0 && m[2] == varName {
 				continue
 			}
 			if m := agentBytesCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
@@ -745,4 +815,111 @@ func rewriteClientErrorHandling(content string) string {
 	updated = clientErrMapPattern.ReplaceAllString(updated, `"err": err`)
 	updated = clientErrVarPattern.ReplaceAllString(updated, "err")
 	return updated
+}
+
+// removeUnusedFiberImport removes unused fiber/v2 or fiber/v3 imports
+// when they are no longer needed after migration to the client package.
+// Handles: single-line imports, import blocks, and aliased imports.
+func removeUnusedFiberImport(content string) string {
+	// Extract all import aliases for fiber
+	aliases := findFiberImportAliases(content)
+	if len(aliases) == 0 {
+		// No fiber import found
+		return content
+	}
+
+	// Check if any alias is still used in the code (excluding imports)
+	importContent := extractImportSection(content)
+	contentWithoutImports := strings.Replace(content, importContent, "", 1)
+
+	for _, alias := range aliases {
+		// Check for usage like "alias." in code
+		usagePattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(alias) + `\.`)
+		if usagePattern.MatchString(contentWithoutImports) {
+			return content
+		}
+	}
+
+	// No alias is used, remove the fiber import
+	updated := removeFiberImportLine(content)
+	updated = cleanupEmptyImportBlock(updated)
+	return updated
+}
+
+// findFiberImportAliases finds all import aliases for fiber/v2 or fiber/v3
+// Returns slice of aliases (e.g., ["fiber"] for `import "..."` or ["f"] for `import f "..."`)
+func findFiberImportAliases(content string) []string {
+	var aliases []string
+
+	// Pattern for aliased import in block: `alias "github.com/gofiber/fiber/v3"`
+	aliasedBlockPattern := regexp.MustCompile(`(?m)^\s*(\w+)\s+"github\.com/gofiber/fiber/v[23]"\s*$`)
+	if matches := aliasedBlockPattern.FindAllStringSubmatch(content, -1); matches != nil {
+		for _, m := range matches {
+			aliases = append(aliases, m[1])
+		}
+	}
+
+	// Pattern for non-aliased import in block: `"github.com/gofiber/fiber/v3"`
+	nonAliasedBlockPattern := regexp.MustCompile(`(?m)^\s*"github\.com/gofiber/fiber/v[23]"\s*$`)
+	if nonAliasedBlockPattern.MatchString(content) {
+		aliases = append(aliases, "fiber")
+	}
+
+	// Pattern for single-line aliased import: `import alias "github.com/gofiber/fiber/v3"`
+	singleAliasedPattern := regexp.MustCompile(`(?m)^import\s+(\w+)\s+"github\.com/gofiber/fiber/v[23]"\s*$`)
+	if matches := singleAliasedPattern.FindAllStringSubmatch(content, -1); matches != nil {
+		for _, m := range matches {
+			aliases = append(aliases, m[1])
+		}
+	}
+
+	// Pattern for single-line non-aliased import: `import "github.com/gofiber/fiber/v3"`
+	singleNonAliasedPattern := regexp.MustCompile(`(?m)^import\s+"github\.com/gofiber/fiber/v[23]"\s*$`)
+	if singleNonAliasedPattern.MatchString(content) {
+		aliases = append(aliases, "fiber")
+	}
+
+	return aliases
+}
+
+// removeFiberImportLine removes the fiber import line from content
+// Handles both single-line imports and imports within a block, with or without aliases
+func removeFiberImportLine(content string) string {
+	// Remove single-line import (with or without alias)
+	singleLinePattern := regexp.MustCompile(`(?m)^import\s+(\w+\s+)?"github\.com/gofiber/fiber/v[23]"\s*\n?`)
+	content = singleLinePattern.ReplaceAllString(content, "")
+
+	// Remove import line from block (with or without alias)
+	blockLinePattern := regexp.MustCompile(`(?m)^\s*(\w+\s+)?"github\.com/gofiber/fiber/v[23]"\s*\n?`)
+	content = blockLinePattern.ReplaceAllString(content, "")
+
+	return content
+}
+
+// cleanupEmptyImportBlock removes empty import blocks like `import (\n)`
+func cleanupEmptyImportBlock(content string) string {
+	// Remove import blocks that only contain whitespace/newlines
+	emptyBlockPattern := regexp.MustCompile(`(?m)^import\s*\(\s*\)\s*\n?`)
+	content = emptyBlockPattern.ReplaceAllString(content, "")
+
+	// Remove import blocks with only whitespace between parentheses
+	emptyBlockWithWhitespace := regexp.MustCompile(`(?ms)^import\s*\(\s*\)\s*\n?`)
+	content = emptyBlockWithWhitespace.ReplaceAllString(content, "")
+
+	return content
+}
+
+func extractImportSection(content string) string {
+	blockRegex := regexp.MustCompile(`(?ms)^import \([^)]*\)`)
+	if match := blockRegex.FindString(content); match != "" {
+		return match
+	}
+
+	// Single-line import with optional alias
+	singleImport := regexp.MustCompile(`(?m)^import\s+(\w+\s+)?"[^"]+"\s*$`)
+	if match := singleImport.FindString(content); match != "" {
+		return match
+	}
+
+	return ""
 }
