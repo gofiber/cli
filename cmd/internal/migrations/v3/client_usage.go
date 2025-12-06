@@ -22,6 +22,8 @@ var (
 	clientErrMapPattern     = regexp.MustCompile(`"errs"\s*:\s*errs`)
 	clientErrVarPattern     = regexp.MustCompile(`\berrs\b`)
 	clientErrsDeclPattern   = regexp.MustCompile(`\berrs\s+\[]error\b`)
+	errShortDeclPattern     = regexp.MustCompile(`(^|[\s\(\),])err\s*:=`)
+	errVarDeclPattern       = regexp.MustCompile(`^var\s+err\b`)
 
 	// Non-alias-dependent patterns
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
@@ -237,6 +239,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
+			errAssign := errAssignmentOperator(out, lines, i, "resp")
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
 			structTarget := strings.TrimSpace(structMatch[6])
@@ -257,7 +260,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 
-			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
 
 			out = append(out, respLine)
 			out = append(out, parseIndent+"if err != nil {")
@@ -287,10 +290,11 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
+			errAssign := errAssignmentOperator(out, lines, i, "resp")
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
 
-			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, parseIndent+"if err != nil {")
 			out = append(out, parseBody[:len(parseBody)-1]...)
@@ -307,10 +311,11 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
+			errAssign := errAssignmentOperator(out, lines, i, "resp")
 			statusVar := strings.TrimSpace(stringMatch[2])
 			bodyVar := strings.TrimSpace(stringMatch[3])
 
-			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, parseIndent+"if err != nil {")
 			out = append(out, parseBody[:len(parseBody)-1]...)
@@ -327,7 +332,8 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		default:
-			respLine := fmt.Sprintf("%s_, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			errAssign := errAssignmentOperator(out, lines, i)
+			respLine := fmt.Sprintf("%s_, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, parseIndent+"if err != nil {")
 			out = append(out, parseBody[:len(parseBody)-1]...)
@@ -345,6 +351,75 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 	}
 
 	return strings.Join(out, "\n"), false
+}
+
+func errAssignmentOperator(existing, original []string, idx int, newVars ...string) string {
+	errInScope := errDeclared(existing) || errDeclared(original[:idx])
+	hasNewVar := false
+
+	for _, name := range newVars {
+		if name == "" || name == "_" {
+			continue
+		}
+
+		if identifierDeclared(existing, original, idx, name) {
+			continue
+		}
+
+		hasNewVar = true
+		break
+	}
+
+	if errInScope && !hasNewVar {
+		return "="
+	}
+
+	return ":="
+}
+
+func errDeclared(lines []string) bool {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		if errShortDeclPattern.MatchString(trimmed) || errVarDeclPattern.MatchString(trimmed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func identifierDeclared(existing, original []string, idx int, name string) bool {
+	if identifierDeclaredInLines(existing, name) {
+		return true
+	}
+
+	return identifierDeclaredInLines(original[:idx], name)
+}
+
+func identifierDeclaredInLines(lines []string, name string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+
+	shortPattern := regexp.MustCompile(fmt.Sprintf(`(^|[\s\(\),])%s\s*:=`, regexp.QuoteMeta(name)))
+	varPattern := regexp.MustCompile(fmt.Sprintf(`^var\s+%s\b`, regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		if shortPattern.MatchString(trimmed) || varPattern.MatchString(trimmed) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func methodFromExpr(expr string) string {
@@ -532,19 +607,34 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 			if m := agentBytesCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1])
+				newVar := ""
+				if m[4] == ":=" {
+					newVar = varName
+				}
+				errAssign := errAssignmentOperator(out, lines, i, newVar)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1], errAssign)
 				callFound = true
 				callIndex = j
 				break
 			}
 			if m := agentStringCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1])
+				newVar := ""
+				if m[4] == ":=" {
+					newVar = varName
+				}
+				errAssign := errAssignmentOperator(out, lines, i, newVar)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1], errAssign)
 				callFound = true
 				callIndex = j
 				break
 			}
 			if m := agentStructCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1])
+				newVar := ""
+				if m[4] == ":=" {
+					newVar = varName
+				}
+				errAssign := errAssignmentOperator(out, lines, i, newVar)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1], errAssign)
 				callFound = true
 				callIndex = j
 				break
@@ -568,11 +658,11 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 	return strings.Join(out, "\n"), changed
 }
 
-func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent string) []string {
+func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent, errAssign string) []string {
 	config := buildSimpleConfig(cfg)
 	var lines []string
 
-	respLine := fmt.Sprintf("%s%s, err := client.%s(%s%s)", indent, varName, method, urlExpr, config)
+	respLine := fmt.Sprintf("%s%s, err %s client.%s(%s%s)", indent, varName, errAssign, method, urlExpr, config)
 	lines = append(lines, respLine)
 
 	statusName := strings.TrimSpace(statusVar)
