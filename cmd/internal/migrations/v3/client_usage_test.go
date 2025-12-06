@@ -1297,14 +1297,14 @@ import (
 )
 
 func handler(url string) {
-    var err error
+    var errs []error
 
-    _, err = client.Get(url)
+    _, err := client.Get(url)
     if err != nil {
-        err = append(err, err)
+        errs = append(errs, err)
     }
 
-    fmt.Println(err)
+    fmt.Println(errs)
 }`)
 
 	assert.Equal(t, expected, content)

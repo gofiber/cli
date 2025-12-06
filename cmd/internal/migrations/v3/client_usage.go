@@ -483,10 +483,6 @@ func identifierDeclaredInLines(lines []string, name string) bool {
 			return true
 		}
 
-		if name == defaultErrName && futureErrsConflictPattern.MatchString(trimmed) {
-			return true
-		}
-
 		if declaredInVarBlockLine(name, trimmed) {
 			return true
 		}
@@ -713,34 +709,19 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 			if m := agentBytesCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				newVar := ""
-				if m[4] == ":=" {
-					newVar = varName
-				}
-				errAssign := errAssignmentOperator(errName, out, lines, i, newVar)
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1], errAssign, errName)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1], ":=", errName)
 				callFound = true
 				callIndex = j
 				break
 			}
 			if m := agentStringCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				newVar := ""
-				if m[4] == ":=" {
-					newVar = varName
-				}
-				errAssign := errAssignmentOperator(errName, out, lines, i, newVar)
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1], errAssign, errName)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1], ":=", errName)
 				callFound = true
 				callIndex = j
 				break
 			}
 			if m := agentStructCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				newVar := ""
-				if m[4] == ":=" {
-					newVar = varName
-				}
-				errAssign := errAssignmentOperator(errName, out, lines, i, newVar)
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1], errAssign, errName)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1], ":=", errName)
 				callFound = true
 				callIndex = j
 				break
@@ -1011,11 +992,18 @@ func ensureClientImport(content string) string {
 }
 
 func rewriteClientErrorHandling(content string) string {
-	updated := clientErrsDeclPattern.ReplaceAllString(content, "err error")
-	updated = clientErrIfPattern.ReplaceAllString(updated, "if err != nil {")
+	// Only rewrite when we see the legacy multi-error usage patterns. This avoids
+	// mutating unrelated identifiers such as custom "errs" slices.
+	hasLegacyErrs := clientErrIfPattern.MatchString(content) || clientErrLenPattern.MatchString(content) || clientErrComparePattern.MatchString(content) || clientErrMapPattern.MatchString(content)
+	if !hasLegacyErrs {
+		return content
+	}
+
+	updated := clientErrIfPattern.ReplaceAllString(content, "if err != nil {")
 	updated = clientErrLenPattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrComparePattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrMapPattern.ReplaceAllString(updated, `"err": err`)
+	updated = clientErrsDeclPattern.ReplaceAllString(updated, "err error")
 	updated = clientErrVarPattern.ReplaceAllString(updated, "err")
 	return updated
 }
