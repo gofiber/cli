@@ -327,7 +327,14 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		default:
-			out = append(out, line)
+			respLine := fmt.Sprintf("%s_, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			out = append(out, respLine)
+			out = append(out, parseIndent+"if err != nil {")
+			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, parseIndent+"}")
+
+			i = parseEnd
+			changed = true
 			continue
 		}
 	}
