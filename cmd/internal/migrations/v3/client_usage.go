@@ -22,8 +22,6 @@ var (
 	clientErrMapPattern     = regexp.MustCompile(`"errs"\s*:\s*errs`)
 	clientErrVarPattern     = regexp.MustCompile(`\berrs\b`)
 	clientErrsDeclPattern   = regexp.MustCompile(`\berrs\s+\[]error\b`)
-	errShortDeclPattern     = regexp.MustCompile(`(^|[\s\(\),])err\s*:=`)
-	errVarDeclPattern       = regexp.MustCompile(`^var\s+err\b`)
 
 	// Non-alias-dependent patterns
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
@@ -68,7 +66,10 @@ func buildAliasPatterns(alias string) map[string]*regexp.Regexp {
 	}
 }
 
-const callTypeString = "string"
+const (
+	callTypeString = "string"
+	defaultErrName = "err"
+)
 
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
@@ -236,10 +237,11 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
 		methodName := methodFromExpr(methodExpr)
 		configLine := buildConfig(headers)
+		errName := chooseErrName(out, lines, i)
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
-			errAssign := errAssignmentOperator(out, lines, i, "resp")
+			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
 			structTarget := strings.TrimSpace(structMatch[6])
@@ -260,11 +262,11 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 
-			respLine := fmt.Sprintf("%sresp, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
 			if statusVar != "" {
@@ -273,36 +275,36 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			if bodyVar != "" {
 				out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
 			}
-			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			if statusVar != "" {
 				out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			}
 			if bodyVar != "" {
 				out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
 			}
-			out = append(out, fmt.Sprintf("%s\terr = resp.JSON(%s)", indent, structTarget))
+			out = append(out, fmt.Sprintf("%s\t%s = resp.JSON(%s)", indent, errName, structTarget))
 			out = append(out, indent+"}")
-			out = append(out, structMatch[1]+"if err != nil {")
-			out = append(out, structBody[:len(structBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", structMatch[1], errName))
+			out = append(out, replaceErrIdentifier(structBody[:len(structBody)-1], errName)...)
 			out = append(out, structMatch[1]+"}")
 
 			i = structStart
 			changed = true
 			continue
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
-			errAssign := errAssignmentOperator(out, lines, i, "resp")
+			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
 
-			respLine := fmt.Sprintf("%sresp, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
 			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
 			out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
-			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
 			out = append(out, indent+"}")
@@ -311,19 +313,19 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
-			errAssign := errAssignmentOperator(out, lines, i, "resp")
+			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(stringMatch[2])
 			bodyVar := strings.TrimSpace(stringMatch[3])
 
-			respLine := fmt.Sprintf("%sresp, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
 			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
 			out = append(out, fmt.Sprintf("%svar %s string", indent, bodyVar))
-			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.String()", indent, bodyVar))
 			out = append(out, indent+"}")
@@ -332,11 +334,11 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		default:
-			errAssign := errAssignmentOperator(out, lines, i)
-			respLine := fmt.Sprintf("%s_, err %s client.%s(%s%s)", indent, errAssign, methodName, uriExpr, configLine)
+			errAssign := errAssignmentOperator(errName, out, lines, i)
+			respLine := fmt.Sprintf("%s_, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
 			out = append(out, parseIndent+"}")
 
 			i = parseEnd
@@ -353,8 +355,8 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 	return strings.Join(out, "\n"), false
 }
 
-func errAssignmentOperator(existing, original []string, idx int, newVars ...string) string {
-	errInScope := errDeclared(existing) || errDeclared(original[:idx])
+func errAssignmentOperator(errName string, existing, original []string, idx int, newVars ...string) string {
+	errInScope := identifierDeclared(existing, original, idx, errName)
 	hasNewVar := false
 
 	for _, name := range newVars {
@@ -377,19 +379,62 @@ func errAssignmentOperator(existing, original []string, idx int, newVars ...stri
 	return ":="
 }
 
-func errDeclared(lines []string) bool {
+func chooseErrName(existing, original []string, idx int) string {
+	if identifierDeclared(existing, original, idx, defaultErrName) {
+		return defaultErrName
+	}
+
+	if !futureErrConflictExists(original[idx:]) {
+		return defaultErrName
+	}
+
+	candidates := []string{"clientErr", "agentErr", "parseErr"}
+	for i := 0; ; i++ {
+		if i >= len(candidates) {
+			candidates = append(candidates, fmt.Sprintf("err%d", i-len(candidates)+1))
+		}
+
+		name := candidates[i]
+		if identifierDeclared(existing, original, idx, name) || identifierDeclaredInLines(original[idx:], name) {
+			continue
+		}
+
+		return name
+	}
+}
+
+func futureErrConflictExists(lines []string) bool {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
 			continue
 		}
 
-		if errShortDeclPattern.MatchString(trimmed) || errVarDeclPattern.MatchString(trimmed) {
+		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "switch ") {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "var err") || strings.HasPrefix(trimmed, "err :=") {
 			return true
 		}
 	}
 
 	return false
+}
+
+func replaceErrIdentifier(lines []string, errName string) []string {
+	if errName == defaultErrName {
+		return lines
+	}
+
+	replaced := make([]string, len(lines))
+	pattern := regexp.MustCompile(`\berr\b`)
+
+	for i, line := range lines {
+		replaced[i] = pattern.ReplaceAllString(line, errName)
+	}
+
+	return replaced
 }
 
 func identifierDeclared(existing, original []string, idx int, name string) bool {
@@ -526,6 +571,7 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 		varName := match[2]
 		method := match[3]
 		urlExpr := strings.TrimSpace(match[4])
+		errName := chooseErrName(out, lines, i)
 
 		cfg := simpleAgentConfig{headers: map[string]headerValue{}, params: map[string]string{}}
 		callFound := false
@@ -611,8 +657,8 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 				if m[4] == ":=" {
 					newVar = varName
 				}
-				errAssign := errAssignmentOperator(out, lines, i, newVar)
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1], errAssign)
+				errAssign := errAssignmentOperator(errName, out, lines, i, newVar)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1], errAssign, errName)
 				callFound = true
 				callIndex = j
 				break
@@ -622,8 +668,8 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 				if m[4] == ":=" {
 					newVar = varName
 				}
-				errAssign := errAssignmentOperator(out, lines, i, newVar)
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1], errAssign)
+				errAssign := errAssignmentOperator(errName, out, lines, i, newVar)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1], errAssign, errName)
 				callFound = true
 				callIndex = j
 				break
@@ -633,8 +679,8 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 				if m[4] == ":=" {
 					newVar = varName
 				}
-				errAssign := errAssignmentOperator(out, lines, i, newVar)
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1], errAssign)
+				errAssign := errAssignmentOperator(errName, out, lines, i, newVar)
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1], errAssign, errName)
 				callFound = true
 				callIndex = j
 				break
@@ -658,11 +704,11 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 	return strings.Join(out, "\n"), changed
 }
 
-func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent, errAssign string) []string {
+func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent, errAssign, errName string) []string {
 	config := buildSimpleConfig(cfg)
 	var lines []string
 
-	respLine := fmt.Sprintf("%s%s, err %s client.%s(%s%s)", indent, varName, errAssign, method, urlExpr, config)
+	respLine := fmt.Sprintf("%s%s, %s %s client.%s(%s%s)", indent, varName, errName, errAssign, method, urlExpr, config)
 	lines = append(lines, respLine)
 
 	statusName := strings.TrimSpace(statusVar)
@@ -681,7 +727,7 @@ func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgent
 		}
 	}
 	lines = append(lines, statusInit, bodyInit)
-	lines = append(lines, callIndent+"if err == nil {")
+	lines = append(lines, fmt.Sprintf("%sif %s == nil {", callIndent, errName))
 	status := fmt.Sprintf("%s\t%s = %s.StatusCode()", callIndent, strings.TrimSpace(statusVar), varName)
 	bodyCall := "Body()"
 	if callType == callTypeString {
@@ -690,7 +736,7 @@ func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgent
 	body := fmt.Sprintf("%s\t%s = %s.%s", callIndent, strings.TrimSpace(bodyVar), varName, bodyCall)
 	lines = append(lines, status, body)
 	if callType == "struct" {
-		lines = append(lines, fmt.Sprintf("%s\terr = %s.JSON(%s)", callIndent, varName, structTarget))
+		lines = append(lines, fmt.Sprintf("%s\t%s = %s.JSON(%s)", callIndent, errName, varName, structTarget))
 	}
 	lines = append(lines, callIndent+"}")
 
