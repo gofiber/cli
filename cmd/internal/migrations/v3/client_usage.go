@@ -29,6 +29,7 @@ var (
 	headerSetPattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
 	requestURIPattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.SetRequestURI\((.*)\)\s*$`)
 	parseCallPattern    = regexp.MustCompile(`^([ \t]*)if\s+err\s*:=\s*(\w+)\.Parse\(\);\s*err\s*!=\s*nil\s*{\s*$`)
+	requestBodyPattern  = regexp.MustCompile(`^([ \t]*)(\w+)\.SetBody(?:String)?\((.*)\)\s*$`)
 	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+([^,]+?)\s*,\s*([^,]+?)\s*,\s*errs\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
 	bytesAssignPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	stringAssignPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
@@ -36,18 +37,19 @@ var (
 
 var (
 	// Agent method patterns (non-alias-dependent)
-	headerSetSimplePattern = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
-	queryStringPattern     = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
-	timeoutPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
-	jsonBodyPattern        = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
-	bodyPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
-	basicAuthPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
-	tlsConfigPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
-	debugPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
-	reusePattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
-	agentBytesCallPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
-	agentStringCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
-	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
+	headerSetSimplePattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
+	queryStringPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
+	timeoutPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
+	jsonBodyPattern          = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
+	bodyPattern              = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
+	basicAuthPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
+	tlsConfigPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
+	debugPattern             = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
+	reusePattern             = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
+	agentBytesCallPattern    = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
+	agentStringCallPattern   = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
+	agentStructCallPattern   = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
+	futureErrConflictPattern = regexp.MustCompile(`^(?:var\s+err\b|err\s*:=)`) // detects future err declarations that would clash with injected err
 )
 
 // buildAliasPatterns creates regex patterns for fiber package calls with given alias
@@ -171,6 +173,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		methodExpr := ""
 		uriExpr := ""
 		headers := make(map[string]string)
+		bodyExpr := ""
 
 		j := reqLine + 1
 		for ; j < len(lines); j++ {
@@ -188,6 +191,10 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			}
 			if m := requestURIPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
 				uriExpr = strings.TrimSpace(m[3])
+				continue
+			}
+			if m := requestBodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
+				bodyExpr = strings.TrimSpace(m[3])
 				continue
 			}
 			if parseCallPattern.MatchString(l) {
@@ -236,7 +243,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		bytesMatch := bytesAssignPattern.FindStringSubmatch(lines[structStart])
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
 		methodName := methodFromExpr(methodExpr)
-		configLine := buildConfig(headers)
+		configLine := buildConfig(headers, bodyExpr)
 		errName := chooseErrName(out, lines, i)
 
 		switch {
@@ -414,7 +421,7 @@ func futureErrConflictExists(lines []string) bool {
 			continue
 		}
 
-		if strings.HasPrefix(trimmed, "var err") || strings.HasPrefix(trimmed, "err :=") {
+		if futureErrConflictPattern.MatchString(trimmed) {
 			return true
 		}
 	}
@@ -485,20 +492,31 @@ func methodFromExpr(expr string) string {
 	}
 }
 
-func buildConfig(headers map[string]string) string {
-	if len(headers) == 0 {
+func buildConfig(headers map[string]string, body string) string {
+	if len(headers) == 0 && body == "" {
 		return ""
 	}
+
 	var keys []string
 	for k := range headers {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+
 	var parts []string
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s: %s", k, headers[k]))
+	if len(keys) > 0 {
+		var headerParts []string
+		for _, k := range keys {
+			headerParts = append(headerParts, fmt.Sprintf("%s: %s", k, headers[k]))
+		}
+		parts = append(parts, fmt.Sprintf("Header: map[string]string{%s}", strings.Join(headerParts, ", ")))
 	}
-	return fmt.Sprintf(", client.Config{Header: map[string]string{%s}}", strings.Join(parts, ", "))
+
+	if body != "" {
+		parts = append(parts, "Body: "+body)
+	}
+
+	return fmt.Sprintf(", client.Config{%s}", strings.Join(parts, ", "))
 }
 
 func rewriteClientExamplesWithAlias(content, alias string) (string, bool) {

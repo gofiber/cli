@@ -535,6 +535,79 @@ func main() {
 	assert.Equal(t, expected, content)
 }
 
+func Test_MigrateClientUsage_RewritesParseBytesFlowWithBody(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientparsebody")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func main() {
+    a := fiber.AcquireAgent()
+    defer fiber.ReleaseAgent(a)
+
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodPost)
+    req.Header.Set("Content-Type", "application/json")
+    req.SetBodyString("{\"demo\":true}")
+    req.SetRequestURI("https://httpbin.org/post")
+
+    if err := a.Parse(); err != nil {
+        panic(err)
+    }
+
+    status, body, errs := a.Bytes()
+    if len(errs) > 0 {
+        panic(errs)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func main() {
+    resp, err := client.Post("https://httpbin.org/post", client.Config{Header: map[string]string{"Content-Type": "application/json"}, Body: "{\"demo\":true}"})
+    if err != nil {
+        panic(err)
+    }
+    var status int
+    var body []byte
+    if err == nil {
+        status = resp.StatusCode()
+        body = resp.Body()
+    }
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Status:", status)
+    fmt.Println("Body:", string(body))
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
 func Test_MigrateClientUsage_RewritesBasicAuth(t *testing.T) {
 	t.Parallel()
 
@@ -1111,6 +1184,71 @@ func handler(code string) {
     }
     var err error
     _ = err
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_AcquireAgentOnlyParseIgnoresErrLikeNames(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientparsealiases")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+var (
+    ClientID     = "id"
+    ClientSecret = "secret"
+)
+
+func handler(code string) {
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodPost)
+    req.Header.Set("accept", "application/json")
+    req.SetRequestURI(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    if err := a.Parse(); err != nil {
+        fmt.Printf("could not create HTTP request: %v", err)
+    }
+
+    var errMsg string
+    _ = errMsg
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+var (
+    ClientID     = "id"
+    ClientSecret = "secret"
+)
+
+func handler(code string) {
+    _, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    if err != nil {
+        fmt.Printf("could not create HTTP request: %v", err)
+    }
+
+    var errMsg string
+    _ = errMsg
 }`)
 
 	assert.Equal(t, expected, content)
