@@ -1254,6 +1254,62 @@ func handler(code string) {
 	assert.Equal(t, expected, content)
 }
 
+func Test_MigrateClientUsage_AcquireAgentOnlyParseRespectsErrsSlice(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientparseerrs")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func handler(url string) {
+    var errs []error
+
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodGet)
+    req.SetRequestURI(url)
+    if err := a.Parse(); err != nil {
+        errs = append(errs, err)
+    }
+
+    fmt.Println(errs)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func handler(url string) {
+    var err error
+
+    _, err = client.Get(url)
+    if err != nil {
+        err = append(err, err)
+    }
+
+    fmt.Println(err)
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
 func Test_MigrateClientUsage_RemovesSingleLineImport(t *testing.T) {
 	t.Parallel()
 

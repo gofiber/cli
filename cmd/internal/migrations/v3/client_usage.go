@@ -37,19 +37,20 @@ var (
 
 var (
 	// Agent method patterns (non-alias-dependent)
-	headerSetSimplePattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
-	queryStringPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
-	timeoutPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
-	jsonBodyPattern          = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
-	bodyPattern              = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
-	basicAuthPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
-	tlsConfigPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
-	debugPattern             = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
-	reusePattern             = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
-	agentBytesCallPattern    = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
-	agentStringCallPattern   = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
-	agentStructCallPattern   = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
-	futureErrConflictPattern = regexp.MustCompile(`^(?:var\s+err\b|err\s*:=)`) // detects future err declarations that would clash with injected err
+	headerSetSimplePattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
+	queryStringPattern        = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
+	timeoutPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
+	jsonBodyPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
+	bodyPattern               = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
+	basicAuthPattern          = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
+	tlsConfigPattern          = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
+	debugPattern              = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
+	reusePattern              = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
+	agentBytesCallPattern     = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
+	agentStringCallPattern    = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
+	agentStructCallPattern    = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
+	futureErrConflictPattern  = regexp.MustCompile(`\b(?:var\s+err\b|err\s*:=)`)   // detects future err declarations that would clash with injected err
+	futureErrsConflictPattern = regexp.MustCompile(`\b(?:var\s+errs\b|errs\s*:=)`) // errs will be renamed to err during rewrite
 )
 
 // buildAliasPatterns creates regex patterns for fiber package calls with given alias
@@ -417,11 +418,23 @@ func futureErrConflictExists(lines []string) bool {
 			continue
 		}
 
-		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "switch ") {
+		if declaredInVarBlockLine(defaultErrName, trimmed) || declaredInVarBlockLine("errs", trimmed) {
+			return true
+		}
+
+		if parseCallPattern.MatchString(trimmed) {
 			continue
 		}
 
-		if futureErrConflictPattern.MatchString(trimmed) {
+		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "switch ") || strings.HasPrefix(trimmed, "else if ") {
+			continue
+		}
+
+		if agentBytesCallPattern.MatchString(trimmed) || agentStringCallPattern.MatchString(trimmed) || agentStructCallPattern.MatchString(trimmed) {
+			continue
+		}
+
+		if futureErrConflictPattern.MatchString(trimmed) || futureErrsConflictPattern.MatchString(trimmed) {
 			return true
 		}
 	}
@@ -469,9 +482,38 @@ func identifierDeclaredInLines(lines []string, name string) bool {
 		if shortPattern.MatchString(trimmed) || varPattern.MatchString(trimmed) {
 			return true
 		}
+
+		if name == defaultErrName && futureErrsConflictPattern.MatchString(trimmed) {
+			return true
+		}
+
+		if declaredInVarBlockLine(name, trimmed) {
+			return true
+		}
+
+		if name == defaultErrName && declaredInVarBlockLine("errs", trimmed) {
+			return true
+		}
 	}
 
 	return false
+}
+
+func declaredInVarBlockLine(name, trimmed string) bool {
+	if !strings.HasPrefix(trimmed, name) {
+		return false
+	}
+
+	remainder := strings.TrimSpace(strings.TrimPrefix(trimmed, name))
+	if remainder == "" {
+		return false
+	}
+
+	if strings.Contains(remainder, ":=") || strings.Contains(remainder, "=") {
+		return false
+	}
+
+	return true
 }
 
 func methodFromExpr(expr string) string {
