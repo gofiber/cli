@@ -20,8 +20,7 @@ var (
 	clientErrLenPattern     = regexp.MustCompile(`\blen\(errs\)`)
 	clientErrComparePattern = regexp.MustCompile(`err\s*!=\s*nil\s*>\s*0`)
 	clientErrMapPattern     = regexp.MustCompile(`"errs"\s*:\s*errs`)
-	clientErrVarPattern     = regexp.MustCompile(`\berrs\b`)
-	clientErrsDeclPattern   = regexp.MustCompile(`\berrs\s+\[]error\b`)
+	clientErrsDeclPattern   = regexp.MustCompile(`(?m)^\s*var\s+errs\b`)
 
 	// Non-alias-dependent patterns
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
@@ -29,6 +28,7 @@ var (
 	headerSetPattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
 	requestURIPattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.SetRequestURI\((.*)\)\s*$`)
 	parseCallPattern    = regexp.MustCompile(`^([ \t]*)if\s+err\s*:=\s*(\w+)\.Parse\(\);\s*err\s*!=\s*nil\s*{\s*$`)
+	requestBodyPattern  = regexp.MustCompile(`^([ \t]*)(\w+)\.(SetBody(?:String)?)\((.*)\)\s*$`)
 	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+([^,]+?)\s*,\s*([^,]+?)\s*,\s*errs\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
 	bytesAssignPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	stringAssignPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
@@ -36,18 +36,20 @@ var (
 
 var (
 	// Agent method patterns (non-alias-dependent)
-	headerSetSimplePattern = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
-	queryStringPattern     = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
-	timeoutPattern         = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
-	jsonBodyPattern        = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
-	bodyPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
-	basicAuthPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
-	tlsConfigPattern       = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
-	debugPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
-	reusePattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
-	agentBytesCallPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
-	agentStringCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
-	agentStructCallPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
+	headerSetSimplePattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
+	queryStringPattern        = regexp.MustCompile(`^([ \t]*)(\w+)\.QueryString\(([^)]*)\)\s*$`)
+	timeoutPattern            = regexp.MustCompile(`^([ \t]*)(\w+)\.Timeout\(([^)]*)\)\s*$`)
+	jsonBodyPattern           = regexp.MustCompile(`^([ \t]*)(\w+)\.JSON\(([^)]*)\)\s*$`)
+	bodyPattern               = regexp.MustCompile(`^([ \t]*)(\w+)\.(Body|BodyString)\(([^)]*)\)\s*$`)
+	basicAuthPattern          = regexp.MustCompile(`^([ \t]*)(\w+)\.BasicAuth\(([^,]+),\s*([^)]*)\)\s*$`)
+	tlsConfigPattern          = regexp.MustCompile(`^([ \t]*)(\w+)\.TLSConfig\(([^)]*)\)\s*$`)
+	debugPattern              = regexp.MustCompile(`^([ \t]*)(\w+)\.Debug\(([^)]*)\)\s*$`)
+	reusePattern              = regexp.MustCompile(`^([ \t]*)(\w+)\.Reuse\(\)\s*$`)
+	agentBytesCallPattern     = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
+	agentStringCallPattern    = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
+	agentStructCallPattern    = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Struct\((.+)\)\s*$`)
+	futureErrConflictPattern  = regexp.MustCompile(`\b(?:var\s+err\b|err\s*:=)`)   // detects future err declarations that would clash with injected err
+	futureErrsConflictPattern = regexp.MustCompile(`\b(?:var\s+errs\b|errs\s*:=)`) // errs will be renamed to err during rewrite
 )
 
 // buildAliasPatterns creates regex patterns for fiber package calls with given alias
@@ -66,7 +68,10 @@ func buildAliasPatterns(alias string) map[string]*regexp.Regexp {
 	}
 }
 
-const callTypeString = "string"
+const (
+	callTypeString = "string"
+	defaultErrName = "err"
+)
 
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
@@ -168,6 +173,8 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		methodExpr := ""
 		uriExpr := ""
 		headers := make(map[string]string)
+		bodyExpr := ""
+		bodyIsString := false
 
 		j := reqLine + 1
 		for ; j < len(lines); j++ {
@@ -185,6 +192,11 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			}
 			if m := requestURIPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
 				uriExpr = strings.TrimSpace(m[3])
+				continue
+			}
+			if m := requestBodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
+				bodyExpr = strings.TrimSpace(m[4])
+				bodyIsString = m[3] == "SetBodyString"
 				continue
 			}
 			if parseCallPattern.MatchString(l) {
@@ -220,26 +232,129 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 		parseEnd := j
 
-		structStart := parseEnd + 1
-		for structStart < len(lines) && strings.TrimSpace(lines[structStart]) == "" {
-			structStart++
+		structStart := -1
+		preservedLines := []string{}
+		preservedIdx := []int{}
+		blankIdx := []int{}
+		blankAfterParse := false
+		for k := parseEnd + 1; k < len(lines); k++ {
+			if skipLines[k] {
+				continue
+			}
+
+			trimmed := strings.TrimSpace(lines[k])
+			if trimmed == "" {
+				blankAfterParse = true
+				blankIdx = append(blankIdx, k)
+				continue
+			}
+			if strings.HasPrefix(trimmed, "//") {
+				preservedLines = append(preservedLines, lines[k])
+				preservedIdx = append(preservedIdx, k)
+				continue
+			}
+
+			if strings.HasPrefix(trimmed, "var ") {
+				fields := strings.Fields(trimmed)
+				if len(fields) >= 2 {
+					name := fields[1]
+					if name == defaultErrName || name == "errs" {
+						continue
+					}
+				}
+
+				preservedLines = append(preservedLines, lines[k])
+				preservedIdx = append(preservedIdx, k)
+				continue
+			}
+
+			structStart = k
+			break
 		}
-		if structStart >= len(lines) {
-			out = append(out, line)
-			continue
+
+		if structStart == -1 {
+			structStart = parseEnd
 		}
 
 		structMatch := structAssignPattern.FindStringSubmatch(lines[structStart])
 		bytesMatch := bytesAssignPattern.FindStringSubmatch(lines[structStart])
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
-		methodName := methodFromExpr(methodExpr)
-		configLine := buildConfig(headers)
+		parseOnly := len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0
+
+		addPreserved := func() {
+			if len(preservedLines) == 0 {
+				return
+			}
+			if blankAfterParse && parseOnly {
+				out = append(out, "")
+				for _, idx := range blankIdx {
+					skipLines[idx] = true
+				}
+				blankAfterParse = false
+			}
+
+			out = append(out, preservedLines...)
+			for _, idx := range preservedIdx {
+				skipLines[idx] = true
+			}
+		}
+
+		if len(preservedLines) == 0 && !parseOnly {
+			for _, idx := range blankIdx {
+				skipLines[idx] = true
+			}
+			blankAfterParse = false
+		}
+
+		if len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0 {
+			structStart = parseEnd
+		}
+
+		errName := chooseErrName(out, lines, i)
+		errBlockEnd := blockEndIndex(lines, structStart)
+		if errBlockEnd < structStart {
+			errBlockEnd = structStart
+		}
+		errsNeeded := identifierUsedAfter(lines[errBlockEnd+1:], "errs")
+		errsAlreadyDeclared := identifierDeclared(out, lines, i, "errs") || identifierDeclaredInLines(preservedLines, "errs")
+
+		out = append(out, fmt.Sprintf("%s%s := client.New()", indent, agentVar))
+		out = append(out, fmt.Sprintf("%s%s := %s.R()", indent, reqVar, agentVar))
+		if methodExpr != "" {
+			out = append(out, fmt.Sprintf("%s%s.SetMethod(%s)", indent, reqVar, methodLiteral(methodExpr)))
+		}
+		if uriExpr != "" {
+			out = append(out, fmt.Sprintf("%s%s.SetURL(%s)", indent, reqVar, uriExpr))
+		}
+
+		if len(headers) > 0 {
+			keys := make([]string, 0, len(headers))
+			for k := range headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				out = append(out, fmt.Sprintf("%s%s.SetHeader(%s, %s)", indent, reqVar, k, headers[k]))
+			}
+		}
+
+		if bodyExpr != "" {
+			rawBody := bodyExpr
+			if bodyIsString {
+				rawBody = fmt.Sprintf("[]byte(%s)", bodyExpr)
+			}
+			out = append(out, fmt.Sprintf("%s%s.SetRawBody(%s)", indent, reqVar, rawBody))
+		}
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
+			addPreserved()
+			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
 			structTarget := strings.TrimSpace(structMatch[6])
+			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
+			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
 			structBody := []string{}
 			braceDepth = 0
@@ -257,77 +372,149 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 
-			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
-			if statusVar != "" {
+			if statusVar != "" && !statusDeclared {
 				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
 			}
-			if bodyVar != "" {
+			if bodyVar != "" && !bodyDeclared {
 				out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
 			}
-			out = append(out, indent+"if err == nil {")
+			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			if statusVar != "" {
 				out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			}
 			if bodyVar != "" {
 				out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
 			}
-			out = append(out, fmt.Sprintf("%s\terr = resp.JSON(%s)", indent, structTarget))
+			out = append(out, fmt.Sprintf("%s\t%s = resp.JSON(%s)", indent, errName, structTarget))
 			out = append(out, indent+"}")
-			out = append(out, structMatch[1]+"if err != nil {")
-			out = append(out, structBody[:len(structBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", structMatch[1], errName))
+			out = append(out, replaceErrIdentifier(structBody[:len(structBody)-1], errName, true)...)
 			out = append(out, structMatch[1]+"}")
+			if errsNeeded && !errsAlreadyDeclared {
+				out = append(out, indent+"var errs []error")
+			}
+			if errsNeeded {
+				out = append(out, fmt.Sprintf("%sif %s != nil {", indent, errName))
+				out = append(out, fmt.Sprintf("%s\terrs = append(errs, %s)", indent, errName))
+				out = append(out, indent+"}")
+			}
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) && !identifierUsedAfter(lines[structStart+1:], statusVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
+			}
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) && !identifierUsedAfter(lines[structStart+1:], bodyVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
+			}
 
 			i = structStart
 			changed = true
 			continue
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
+			addPreserved()
+			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
+			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
+			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
-			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
-			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
-			out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
-			out = append(out, indent+"if err == nil {")
+			if statusVar != "" && !statusDeclared {
+				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
+			}
+			if bodyVar != "" && !bodyDeclared {
+				out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
+			}
+			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
 			out = append(out, indent+"}")
+			if errsNeeded && !errsAlreadyDeclared {
+				out = append(out, indent+"var errs []error")
+			}
+			if errsNeeded {
+				out = append(out, fmt.Sprintf("%sif %s != nil {", indent, errName))
+				out = append(out, fmt.Sprintf("%s\terrs = append(errs, %s)", indent, errName))
+				out = append(out, indent+"}")
+			}
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) && !identifierUsedAfter(lines[structStart+1:], statusVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
+			}
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) && !identifierUsedAfter(lines[structStart+1:], bodyVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
+			}
 
 			i = structStart
 			changed = true
 			continue
 		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
+			addPreserved()
+			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(stringMatch[2])
 			bodyVar := strings.TrimSpace(stringMatch[3])
+			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
+			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
-			respLine := fmt.Sprintf("%sresp, err := client.%s(%s%s)", indent, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 			out = append(out, respLine)
-			out = append(out, parseIndent+"if err != nil {")
-			out = append(out, parseBody[:len(parseBody)-1]...)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
-			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
-			out = append(out, fmt.Sprintf("%svar %s string", indent, bodyVar))
-			out = append(out, indent+"if err == nil {")
+			if statusVar != "" && !statusDeclared {
+				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
+			}
+			if bodyVar != "" && !bodyDeclared {
+				out = append(out, fmt.Sprintf("%svar %s string", indent, bodyVar))
+			}
+			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.String()", indent, bodyVar))
 			out = append(out, indent+"}")
+			if errsNeeded && !errsAlreadyDeclared {
+				out = append(out, indent+"var errs []error")
+			}
+			if errsNeeded {
+				out = append(out, fmt.Sprintf("%sif %s != nil {", indent, errName))
+				out = append(out, fmt.Sprintf("%s\terrs = append(errs, %s)", indent, errName))
+				out = append(out, indent+"}")
+			}
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) && !identifierUsedAfter(lines[structStart+1:], statusVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
+			}
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) && !identifierUsedAfter(lines[structStart+1:], bodyVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
+			}
 
 			i = structStart
 			changed = true
 			continue
 		default:
-			out = append(out, line)
+			if !parseOnly {
+				addPreserved()
+			}
+			errAssign := errAssignmentOperator(errName, out, lines, i)
+			respLine := fmt.Sprintf("%s_, %s %s %s.Send()", indent, errName, errAssign, reqVar)
+			out = append(out, respLine)
+			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
+			out = append(out, parseIndent+"}")
+			if parseOnly {
+				addPreserved()
+			}
+
+			i = parseEnd
+			changed = true
 			continue
 		}
 	}
@@ -340,38 +527,243 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 	return strings.Join(out, "\n"), false
 }
 
-func methodFromExpr(expr string) string {
-	lower := strings.ToLower(expr)
-	switch {
-	case strings.Contains(lower, "methodpost"):
-		return "Post"
-	case strings.Contains(lower, "methodput"):
-		return "Put"
-	case strings.Contains(lower, "methodpatch"):
-		return "Patch"
-	case strings.Contains(lower, "methoddelete"):
-		return "Delete"
-	case strings.Contains(lower, "methodhead"):
-		return "Head"
-	default:
-		return "Get"
+func errAssignmentOperator(errName string, existing, original []string, idx int, newVars ...string) string {
+	errInScope := identifierDeclared(existing, original, idx, errName)
+	hasNewVar := false
+
+	for _, name := range newVars {
+		if name == "" || name == "_" {
+			continue
+		}
+
+		if identifierDeclared(existing, original, idx, name) {
+			continue
+		}
+
+		hasNewVar = true
+		break
+	}
+
+	if errInScope && !hasNewVar {
+		return "="
+	}
+
+	return ":="
+}
+
+func chooseErrName(existing, original []string, idx int) string {
+	if identifierDeclared(existing, original, idx, defaultErrName) {
+		return defaultErrName
+	}
+
+	if !futureErrConflictExists(original[idx:]) {
+		return defaultErrName
+	}
+
+	candidates := []string{"clientErr", "agentErr", "parseErr"}
+	for i := 0; ; i++ {
+		if i >= len(candidates) {
+			candidates = append(candidates, fmt.Sprintf("err%d", i-len(candidates)+1))
+		}
+
+		name := candidates[i]
+		if identifierDeclared(existing, original, idx, name) || identifierDeclaredInLines(original[idx:], name) {
+			continue
+		}
+
+		return name
 	}
 }
 
-func buildConfig(headers map[string]string) string {
-	if len(headers) == 0 {
-		return ""
+func futureErrConflictExists(lines []string) bool {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		if declaredInVarBlockLine(defaultErrName, trimmed) || declaredInVarBlockLine("errs", trimmed) {
+			return true
+		}
+
+		if parseCallPattern.MatchString(trimmed) {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "switch ") || strings.HasPrefix(trimmed, "else if ") {
+			continue
+		}
+
+		if agentBytesCallPattern.MatchString(trimmed) || agentStringCallPattern.MatchString(trimmed) || agentStructCallPattern.MatchString(trimmed) {
+			continue
+		}
+
+		if futureErrConflictPattern.MatchString(trimmed) || futureErrsConflictPattern.MatchString(trimmed) {
+			return true
+		}
 	}
-	var keys []string
-	for k := range headers {
-		keys = append(keys, k)
+
+	return false
+}
+
+func replaceErrIdentifier(lines []string, errName string, replaceErrs bool) []string {
+	replaced := make([]string, len(lines))
+	errPattern := regexp.MustCompile(`\berr\b`)
+	errsPattern := regexp.MustCompile(`\berrs\b`)
+
+	for i, line := range lines {
+		updated := errPattern.ReplaceAllString(line, errName)
+		if replaceErrs {
+			replaced[i] = errsPattern.ReplaceAllString(updated, errName)
+			continue
+		}
+
+		replaced[i] = updated
 	}
-	sort.Strings(keys)
-	var parts []string
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s: %s", k, headers[k]))
+
+	return replaced
+}
+
+func hasBlankAssignment(lines []string, name string) bool {
+	if name == "" {
+		return false
 	}
-	return fmt.Sprintf(", client.Config{Header: map[string]string{%s}}", strings.Join(parts, ", "))
+
+	pattern := regexp.MustCompile(fmt.Sprintf(`\b_\s*=\s*%s\b`, regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		if pattern.MatchString(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func identifierUsedAfter(lines []string, name string) bool {
+	if name == "" {
+		return false
+	}
+
+	pattern := regexp.MustCompile(fmt.Sprintf(`\b%s\b`, regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		if pattern.MatchString(trimmed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func blockEndIndex(lines []string, start int) int {
+	depth := 0
+
+	for i := start + 1; i < len(lines); i++ {
+		depth += strings.Count(lines[i], "{")
+		depth -= strings.Count(lines[i], "}")
+		if depth < 0 {
+			return i
+		}
+	}
+
+	return len(lines) - 1
+}
+
+func identifierDeclared(existing, original []string, idx int, name string) bool {
+	if identifierDeclaredInLines(existing, name) {
+		return true
+	}
+
+	return identifierDeclaredInLines(original[:idx], name)
+}
+
+func identifierDeclaredInLines(lines []string, name string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+
+	shortPattern := regexp.MustCompile(fmt.Sprintf(`(^|[\s\(\),])%s\s*:=`, regexp.QuoteMeta(name)))
+	varPattern := regexp.MustCompile(fmt.Sprintf(`^var\s+%s\b`, regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		// Declarations inside control statement initializers (e.g.,
+		// "if err := ...") are scoped to that statement and should not be
+		// treated as function-scope declarations.
+		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "switch ") || strings.HasPrefix(trimmed, "else if ") {
+			if declaredInVarBlockLine(name, trimmed) {
+				return true
+			}
+
+			if name == defaultErrName && declaredInVarBlockLine("errs", trimmed) {
+				return true
+			}
+
+			continue
+		}
+
+		if shortPattern.MatchString(trimmed) || varPattern.MatchString(trimmed) {
+			return true
+		}
+
+		if declaredInVarBlockLine(name, trimmed) {
+			return true
+		}
+
+		if name == defaultErrName && declaredInVarBlockLine("errs", trimmed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func declaredInVarBlockLine(name, trimmed string) bool {
+	fields := strings.Fields(trimmed)
+	if len(fields) < 2 {
+		return false
+	}
+	if fields[0] != name {
+		return false
+	}
+
+	for _, f := range fields[1:] {
+		if strings.Contains(f, ":=") || strings.Contains(f, "=") {
+			return false
+		}
+	}
+
+	return true
+}
+
+func methodLiteral(expr string) string {
+	lower := strings.ToLower(expr)
+	switch {
+	case strings.Contains(lower, "methodget"):
+		return "\"GET\""
+	case strings.Contains(lower, "methodpost"):
+		return "\"POST\""
+	case strings.Contains(lower, "methodput"):
+		return "\"PUT\""
+	case strings.Contains(lower, "methodpatch"):
+		return "\"PATCH\""
+	case strings.Contains(lower, "methoddelete"):
+		return "\"DELETE\""
+	case strings.Contains(lower, "methodhead"):
+		return "\"HEAD\""
+	default:
+		return expr
+	}
 }
 
 func rewriteClientExamplesWithAlias(content, alias string) (string, bool) {
@@ -444,6 +836,7 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 		varName := match[2]
 		method := match[3]
 		urlExpr := strings.TrimSpace(match[4])
+		errName := chooseErrName(out, lines, i)
 
 		cfg := simpleAgentConfig{headers: map[string]headerValue{}, params: map[string]string{}}
 		callFound := false
@@ -525,19 +918,19 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 			if m := agentBytesCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1])
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "bytes", "", m[1], ":=", errName)
 				callFound = true
 				callIndex = j
 				break
 			}
 			if m := agentStringCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1])
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "string", "", m[1], ":=", errName)
 				callFound = true
 				callIndex = j
 				break
 			}
 			if m := agentStructCallPattern.FindStringSubmatch(l); len(m) > 0 && m[5] == varName {
-				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1])
+				replacement = buildSimpleAgentReplacement(indent, urlExpr, method, cfg, m[2], m[3], m[4], varName, "struct", strings.TrimSpace(m[6]), m[1], ":=", errName)
 				callFound = true
 				callIndex = j
 				break
@@ -561,11 +954,11 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 	return strings.Join(out, "\n"), changed
 }
 
-func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent string) []string {
+func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgentConfig, statusVar, bodyVar, assignOp, varName, callType, structTarget, callIndent, errAssign, errName string) []string {
 	config := buildSimpleConfig(cfg)
 	var lines []string
 
-	respLine := fmt.Sprintf("%s%s, err := client.%s(%s%s)", indent, varName, method, urlExpr, config)
+	respLine := fmt.Sprintf("%s%s, %s %s client.%s(%s%s)", indent, varName, errName, errAssign, method, urlExpr, config)
 	lines = append(lines, respLine)
 
 	statusName := strings.TrimSpace(statusVar)
@@ -584,7 +977,7 @@ func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgent
 		}
 	}
 	lines = append(lines, statusInit, bodyInit)
-	lines = append(lines, callIndent+"if err == nil {")
+	lines = append(lines, fmt.Sprintf("%sif %s == nil {", callIndent, errName))
 	status := fmt.Sprintf("%s\t%s = %s.StatusCode()", callIndent, strings.TrimSpace(statusVar), varName)
 	bodyCall := "Body()"
 	if callType == callTypeString {
@@ -593,7 +986,7 @@ func buildSimpleAgentReplacement(indent, urlExpr, method string, cfg simpleAgent
 	body := fmt.Sprintf("%s\t%s = %s.%s", callIndent, strings.TrimSpace(bodyVar), varName, bodyCall)
 	lines = append(lines, status, body)
 	if callType == "struct" {
-		lines = append(lines, fmt.Sprintf("%s\terr = %s.JSON(%s)", callIndent, varName, structTarget))
+		lines = append(lines, fmt.Sprintf("%s\t%s = %s.JSON(%s)", callIndent, errName, varName, structTarget))
 	}
 	lines = append(lines, callIndent+"}")
 
@@ -808,12 +1201,38 @@ func ensureClientImport(content string) string {
 }
 
 func rewriteClientErrorHandling(content string) string {
-	updated := clientErrsDeclPattern.ReplaceAllString(content, "err error")
-	updated = clientErrIfPattern.ReplaceAllString(updated, "if err != nil {")
+	// Only rewrite when we see the legacy multi-error usage patterns. This avoids
+	// mutating unrelated identifiers such as custom "errs" slices.
+	baseLegacy := clientErrIfPattern.MatchString(content) || clientErrLenPattern.MatchString(content) || clientErrComparePattern.MatchString(content) || clientErrMapPattern.MatchString(content)
+	declaredErrs := clientErrsDeclPattern.MatchString(content)
+	if !baseLegacy {
+		// Declaration-only cases keep errs slices intact.
+		return content
+	}
+
+	hasLegacyErrs := baseLegacy || declaredErrs
+	if !hasLegacyErrs {
+		return content
+	}
+
+	updated := clientErrIfPattern.ReplaceAllString(content, "if err != nil {")
 	updated = clientErrLenPattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrComparePattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrMapPattern.ReplaceAllString(updated, `"err": err`)
-	updated = clientErrVarPattern.ReplaceAllString(updated, "err")
+
+	errToken := regexp.MustCompile(`\berrs\b`)
+	lines := strings.Split(updated, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "var errs") || strings.HasPrefix(trimmed, "errs") {
+			continue
+		}
+
+		lines[i] = errToken.ReplaceAllString(line, "err")
+	}
+
+	updated = strings.Join(lines, "\n")
+
 	return updated
 }
 

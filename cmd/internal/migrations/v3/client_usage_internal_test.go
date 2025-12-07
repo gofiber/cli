@@ -65,12 +65,15 @@ func handler(ctx *fiber.Ctx, code string) error {
         t       map[string]any
     )
 
-    resp, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code))
+    req.SetHeader("accept", "application/json")
+    resp, err := req.Send()
     if err != nil {
         return err
     }
-    var retCode int
-    var retBody []byte
     if err == nil {
         retCode = resp.StatusCode()
         retBody = resp.Body()
@@ -78,7 +81,7 @@ func handler(ctx *fiber.Ctx, code string) error {
     }
     if err != nil {
         return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-            "errs": errs,
+            "err": err,
         })
     }
 
