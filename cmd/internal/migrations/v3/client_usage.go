@@ -615,6 +615,21 @@ func identifierDeclaredInLines(lines []string, name string) bool {
 			continue
 		}
 
+		// Declarations inside control statement initializers (e.g.,
+		// "if err := ...") are scoped to that statement and should not be
+		// treated as function-scope declarations.
+		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "switch ") || strings.HasPrefix(trimmed, "else if ") {
+			if declaredInVarBlockLine(name, trimmed) {
+				return true
+			}
+
+			if name == defaultErrName && declaredInVarBlockLine("errs", trimmed) {
+				return true
+			}
+
+			continue
+		}
+
 		if shortPattern.MatchString(trimmed) || varPattern.MatchString(trimmed) {
 			return true
 		}
