@@ -318,7 +318,12 @@ func handler(ctx *fiber.Ctx, code string) error {
         t       map[string]any
     )
 
-    resp, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code))
+    req.SetHeader("accept", "application/json")
+    resp, err := req.Send()
     if err != nil {
         return err
     }
@@ -397,10 +402,15 @@ import (
 )
 
 func handler(ctx *fiber.Ctx, code string) error {
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code))
+    req.SetHeader("accept", "application/json")
     var retCode int
     var retBody []byte
     var t map[string]any
-    resp, clientErr := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    resp, clientErr := req.Send()
     if clientErr != nil {
         return clientErr
     }
@@ -591,7 +601,11 @@ import (
 )
 
 func main() {
-    resp, err := client.Get("https://httpbin.org/json")
+    a := client.New()
+    req := a.R()
+    req.SetMethod("GET")
+    req.SetURL("https://httpbin.org/json")
+    resp, err := req.Send()
     if err != nil {
         panic(err)
     }
@@ -671,7 +685,13 @@ import (
 )
 
 func main() {
-    resp, err := client.Post("https://httpbin.org/post", client.Config{Header: map[string]string{"Content-Type": "application/json"}, Body: "{\"demo\":true}"})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL("https://httpbin.org/post")
+    req.SetHeader("Content-Type", "application/json")
+    req.SetRawBody([]byte("{\"demo\":true}"))
+    resp, err := req.Send()
     if err != nil {
         panic(err)
     }
@@ -1067,7 +1087,12 @@ var (
 )
 
 func handler(code string) {
-    resp, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    req.SetHeader("accept", "application/json")
+    resp, err := req.Send()
     if err != nil {
         fmt.Printf("could not create HTTP request: %v", err)
     }
@@ -1142,7 +1167,12 @@ var (
 )
 
 func handler(code string) {
-    _, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    req.SetHeader("accept", "application/json")
+    _, err := req.Send()
     if err != nil {
         log.Errorf("could not create HTTP request: %v", err)
     }
@@ -1203,7 +1233,12 @@ var (
 
 func handler(code string) {
     var err error
-    _, err = client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    req.SetHeader("accept", "application/json")
+    _, err = req.Send()
     if err != nil {
         panic(err)
     }
@@ -1266,7 +1301,12 @@ var (
 )
 
 func handler(code string) {
-    _, clientErr := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    req.SetHeader("accept", "application/json")
+    _, clientErr := req.Send()
     if clientErr != nil {
         log.Errorf("could not create HTTP request: %v", clientErr)
     }
@@ -1330,7 +1370,12 @@ var (
 )
 
 func handler(code string) {
-    _, err := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", ClientID, ClientSecret, code))
+    req.SetHeader("accept", "application/json")
+    _, err := req.Send()
     if err != nil {
         fmt.Printf("could not create HTTP request: %v", err)
     }
@@ -1387,7 +1432,11 @@ import (
 func handler(url string) {
     var errs []error
 
-    _, err := client.Get(url)
+    a := client.New()
+    req := a.R()
+    req.SetMethod("GET")
+    req.SetURL(url)
+    _, err := req.Send()
     if err != nil {
         errs = append(errs, err)
     }

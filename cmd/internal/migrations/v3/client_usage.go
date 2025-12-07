@@ -29,7 +29,7 @@ var (
 	headerSetPattern    = regexp.MustCompile(`^([ \t]*)(\w+)\.Header\.Set\(([^,]+),\s*([^)]*)\)\s*$`)
 	requestURIPattern   = regexp.MustCompile(`^([ \t]*)(\w+)\.SetRequestURI\((.*)\)\s*$`)
 	parseCallPattern    = regexp.MustCompile(`^([ \t]*)if\s+err\s*:=\s*(\w+)\.Parse\(\);\s*err\s*!=\s*nil\s*{\s*$`)
-	requestBodyPattern  = regexp.MustCompile(`^([ \t]*)(\w+)\.SetBody(?:String)?\((.*)\)\s*$`)
+	requestBodyPattern  = regexp.MustCompile(`^([ \t]*)(\w+)\.(SetBody(?:String)?)\((.*)\)\s*$`)
 	structAssignPattern = regexp.MustCompile(`^([ \t]*)if\s+([^,]+?)\s*,\s*([^,]+?)\s*,\s*errs\s*([:=]?)=\s*(\w+)\.Struct\((.*)\);\s*len\(errs\)\s*>\s*0\s*{\s*$`)
 	bytesAssignPattern  = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.Bytes\(\)\s*$`)
 	stringAssignPattern = regexp.MustCompile(`^([ \t]*)([^,]+),\s*([^,]+),\s*errs\s*(=|:=)\s*(\w+)\.String\(\)\s*$`)
@@ -175,6 +175,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		uriExpr := ""
 		headers := make(map[string]string)
 		bodyExpr := ""
+		bodyIsString := false
 
 		j := reqLine + 1
 		for ; j < len(lines); j++ {
@@ -195,7 +196,8 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 			if m := requestBodyPattern.FindStringSubmatch(l); len(m) > 0 && m[2] == reqVar {
-				bodyExpr = strings.TrimSpace(m[3])
+				bodyExpr = strings.TrimSpace(m[4])
+				bodyIsString = m[3] == "SetBodyString"
 				continue
 			}
 			if parseCallPattern.MatchString(l) {
@@ -275,8 +277,6 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		structMatch := structAssignPattern.FindStringSubmatch(lines[structStart])
 		bytesMatch := bytesAssignPattern.FindStringSubmatch(lines[structStart])
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
-		methodName := methodFromExpr(methodExpr)
-		configLine := buildConfig(headers, bodyExpr)
 
 		if len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0 {
 			structStart = parseEnd
@@ -285,6 +285,34 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 
 		errName := chooseErrName(out, lines, i)
+
+		out = append(out, fmt.Sprintf("%s%s := client.New()", indent, agentVar))
+		out = append(out, fmt.Sprintf("%s%s := %s.R()", indent, reqVar, agentVar))
+		if methodExpr != "" {
+			out = append(out, fmt.Sprintf("%s%s.SetMethod(%s)", indent, reqVar, methodLiteral(methodExpr)))
+		}
+		if uriExpr != "" {
+			out = append(out, fmt.Sprintf("%s%s.SetURL(%s)", indent, reqVar, uriExpr))
+		}
+
+		if len(headers) > 0 {
+			keys := make([]string, 0, len(headers))
+			for k := range headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				out = append(out, fmt.Sprintf("%s%s.SetHeader(%s, %s)", indent, reqVar, k, headers[k]))
+			}
+		}
+
+		if bodyExpr != "" {
+			rawBody := bodyExpr
+			if bodyIsString {
+				rawBody = fmt.Sprintf("[]byte(%s)", bodyExpr)
+			}
+			out = append(out, fmt.Sprintf("%s%s.SetRawBody(%s)", indent, reqVar, rawBody))
+		}
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
@@ -317,7 +345,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 				continue
 			}
 
-			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
@@ -365,7 +393,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
 			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
-			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
 			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
@@ -404,7 +432,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
 			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
-			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%sresp, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
 			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
@@ -432,7 +460,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			continue
 		default:
 			errAssign := errAssignmentOperator(errName, out, lines, i)
-			respLine := fmt.Sprintf("%s_, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
+			respLine := fmt.Sprintf("%s_, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
 			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
@@ -620,49 +648,24 @@ func declaredInVarBlockLine(name, trimmed string) bool {
 	return true
 }
 
-func methodFromExpr(expr string) string {
+func methodLiteral(expr string) string {
 	lower := strings.ToLower(expr)
 	switch {
+	case strings.Contains(lower, "methodget"):
+		return "\"GET\""
 	case strings.Contains(lower, "methodpost"):
-		return "Post"
+		return "\"POST\""
 	case strings.Contains(lower, "methodput"):
-		return "Put"
+		return "\"PUT\""
 	case strings.Contains(lower, "methodpatch"):
-		return "Patch"
+		return "\"PATCH\""
 	case strings.Contains(lower, "methoddelete"):
-		return "Delete"
+		return "\"DELETE\""
 	case strings.Contains(lower, "methodhead"):
-		return "Head"
+		return "\"HEAD\""
 	default:
-		return "Get"
+		return expr
 	}
-}
-
-func buildConfig(headers map[string]string, body string) string {
-	if len(headers) == 0 && body == "" {
-		return ""
-	}
-
-	var keys []string
-	for k := range headers {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var parts []string
-	if len(keys) > 0 {
-		var headerParts []string
-		for _, k := range keys {
-			headerParts = append(headerParts, fmt.Sprintf("%s: %s", k, headers[k]))
-		}
-		parts = append(parts, fmt.Sprintf("Header: map[string]string{%s}", strings.Join(headerParts, ", ")))
-	}
-
-	if body != "" {
-		parts = append(parts, "Body: "+body)
-	}
-
-	return fmt.Sprintf(", client.Config{%s}", strings.Join(parts, ", "))
 }
 
 func rewriteClientExamplesWithAlias(content, alias string) (string, bool) {
