@@ -314,7 +314,7 @@ func handler(ctx *fiber.Ctx, code string) error {
     var (
         retCode int
         retBody []byte
-        err     error
+        errs    []error
         t       map[string]any
     )
 
@@ -322,8 +322,6 @@ func handler(ctx *fiber.Ctx, code string) error {
     if err != nil {
         return err
     }
-    var retCode int
-    var retBody []byte
     if err == nil {
         retCode = resp.StatusCode()
         retBody = resp.Body()
@@ -337,6 +335,90 @@ func handler(ctx *fiber.Ctx, code string) error {
 
     _ = retCode
     _ = retBody
+    return nil
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_RewritesAcquireAgentStructWithVarsBetweenParseAndCall(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientagentvars")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodPost)
+    req.Header.Set("accept", "application/json")
+    req.SetRequestURI(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code))
+    if err := a.Parse(); err != nil {
+        return err
+    }
+
+    var retCode int
+    var retBody []byte
+    var errs []error
+    var t map[string]any
+
+    if retCode, retBody, errs = a.Struct(&t); len(errs) > 0 {
+        return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "errs": errs,
+        })
+    }
+
+    var err error
+    _ = err
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func handler(ctx *fiber.Ctx, code string) error {
+    var retCode int
+    var retBody []byte
+    var t map[string]any
+    resp, clientErr := client.Post(fmt.Sprintf("https://github.com/login/oauth/access_token?code=%s", code), client.Config{Header: map[string]string{"accept": "application/json"}})
+    if clientErr != nil {
+        return clientErr
+    }
+    if clientErr == nil {
+        retCode = resp.StatusCode()
+        retBody = resp.Body()
+        clientErr = resp.JSON(&t)
+    }
+    if clientErr != nil {
+        return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+            "clientErr": clientErr,
+        })
+    }
+    _ = retCode
+    _ = retBody
+
+    var err error
+    _ = err
     return nil
 }`)
 
@@ -519,6 +601,8 @@ func main() {
         status = resp.StatusCode()
         body = resp.Body()
     }
+    _ = status
+    _ = body
     if err != nil {
         panic(err)
     }
@@ -597,6 +681,8 @@ func main() {
         status = resp.StatusCode()
         body = resp.Body()
     }
+    _ = status
+    _ = body
     if err != nil {
         panic(err)
     }
@@ -991,6 +1077,8 @@ func handler(code string) {
         status = resp.StatusCode()
         body = resp.Body()
     }
+    _ = status
+    _ = body
     if err != nil {
         panic(err)
     }

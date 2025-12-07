@@ -231,11 +231,43 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 		parseEnd := j
 
-		structStart := parseEnd + 1
-		for structStart < len(lines) && strings.TrimSpace(lines[structStart]) == "" {
-			structStart++
+		structStart := -1
+		preservedLines := []string{}
+		preservedIdx := []int{}
+		for k := parseEnd + 1; k < len(lines); k++ {
+			if skipLines[k] {
+				continue
+			}
+
+			trimmed := strings.TrimSpace(lines[k])
+			if trimmed == "" {
+				continue
+			}
+			if strings.HasPrefix(trimmed, "//") {
+				preservedLines = append(preservedLines, lines[k])
+				preservedIdx = append(preservedIdx, k)
+				continue
+			}
+
+			if strings.HasPrefix(trimmed, "var ") {
+				fields := strings.Fields(trimmed)
+				if len(fields) >= 2 {
+					name := fields[1]
+					if name == defaultErrName || name == "errs" {
+						continue
+					}
+				}
+
+				preservedLines = append(preservedLines, lines[k])
+				preservedIdx = append(preservedIdx, k)
+				continue
+			}
+
+			structStart = k
+			break
 		}
-		if structStart >= len(lines) {
+
+		if structStart == -1 {
 			out = append(out, line)
 			continue
 		}
@@ -245,14 +277,29 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
 		methodName := methodFromExpr(methodExpr)
 		configLine := buildConfig(headers, bodyExpr)
+
+		if len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0 {
+			structStart = parseEnd
+			preservedLines = nil
+			preservedIdx = nil
+		}
+
 		errName := chooseErrName(out, lines, i)
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
+			if len(preservedLines) > 0 {
+				out = append(out, preservedLines...)
+				for _, idx := range preservedIdx {
+					skipLines[idx] = true
+				}
+			}
 			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
 			structTarget := strings.TrimSpace(structMatch[6])
+			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
+			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
 			structBody := []string{}
 			braceDepth = 0
@@ -274,13 +321,13 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
-			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
-			if statusVar != "" {
+			if statusVar != "" && !statusDeclared {
 				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
 			}
-			if bodyVar != "" {
+			if bodyVar != "" && !bodyDeclared {
 				out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
 			}
 			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
@@ -293,50 +340,92 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			out = append(out, fmt.Sprintf("%s\t%s = resp.JSON(%s)", indent, errName, structTarget))
 			out = append(out, indent+"}")
 			out = append(out, fmt.Sprintf("%sif %s != nil {", structMatch[1], errName))
-			out = append(out, replaceErrIdentifier(structBody[:len(structBody)-1], errName)...)
+			out = append(out, replaceErrIdentifier(structBody[:len(structBody)-1], errName, true)...)
 			out = append(out, structMatch[1]+"}")
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
+			}
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
+			}
 
 			i = structStart
 			changed = true
 			continue
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
+			if len(preservedLines) > 0 {
+				out = append(out, preservedLines...)
+				for _, idx := range preservedIdx {
+					skipLines[idx] = true
+				}
+			}
 			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
+			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
+			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
 			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
-			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
-			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
-			out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
+			if statusVar != "" && !statusDeclared {
+				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
+			}
+			if bodyVar != "" && !bodyDeclared {
+				out = append(out, fmt.Sprintf("%svar %s []byte", indent, bodyVar))
+			}
 			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
 			out = append(out, indent+"}")
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
+			}
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
+			}
 
 			i = structStart
 			changed = true
 			continue
 		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
+			if len(preservedLines) > 0 {
+				out = append(out, preservedLines...)
+				for _, idx := range preservedIdx {
+					skipLines[idx] = true
+				}
+			}
 			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(stringMatch[2])
 			bodyVar := strings.TrimSpace(stringMatch[3])
+			statusDeclared := statusVar != "" && (identifierDeclaredInLines(preservedLines, statusVar) || identifierDeclared(out, lines, i, statusVar))
+			bodyDeclared := bodyVar != "" && (identifierDeclaredInLines(preservedLines, bodyVar) || identifierDeclared(out, lines, i, bodyVar))
 
 			respLine := fmt.Sprintf("%sresp, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
-			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 			// Declare variables and assign only if err == nil to avoid nil pointer dereference
-			out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
-			out = append(out, fmt.Sprintf("%svar %s string", indent, bodyVar))
+			if statusVar != "" && !statusDeclared {
+				out = append(out, fmt.Sprintf("%svar %s int", indent, statusVar))
+			}
+			if bodyVar != "" && !bodyDeclared {
+				out = append(out, fmt.Sprintf("%svar %s string", indent, bodyVar))
+			}
 			out = append(out, fmt.Sprintf("%sif %s == nil {", indent, errName))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.String()", indent, bodyVar))
 			out = append(out, indent+"}")
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
+			}
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) {
+				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
+			}
 
 			i = structStart
 			changed = true
@@ -346,7 +435,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			respLine := fmt.Sprintf("%s_, %s %s client.%s(%s%s)", indent, errName, errAssign, methodName, uriExpr, configLine)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
-			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName)...)
+			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
 
 			i = parseEnd
@@ -442,19 +531,38 @@ func futureErrConflictExists(lines []string) bool {
 	return false
 }
 
-func replaceErrIdentifier(lines []string, errName string) []string {
-	if errName == defaultErrName {
-		return lines
-	}
-
+func replaceErrIdentifier(lines []string, errName string, replaceErrs bool) []string {
 	replaced := make([]string, len(lines))
-	pattern := regexp.MustCompile(`\berr\b`)
+	errPattern := regexp.MustCompile(`\berr\b`)
+	errsPattern := regexp.MustCompile(`\berrs\b`)
 
 	for i, line := range lines {
-		replaced[i] = pattern.ReplaceAllString(line, errName)
+		updated := errPattern.ReplaceAllString(line, errName)
+		if replaceErrs {
+			replaced[i] = errsPattern.ReplaceAllString(updated, errName)
+			continue
+		}
+
+		replaced[i] = updated
 	}
 
 	return replaced
+}
+
+func hasBlankAssignment(lines []string, name string) bool {
+	if name == "" {
+		return false
+	}
+
+	pattern := regexp.MustCompile(fmt.Sprintf(`\b_\s*=\s*%s\b`, regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		if pattern.MatchString(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func identifierDeclared(existing, original []string, idx int, name string) bool {
