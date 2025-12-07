@@ -615,8 +615,6 @@ func main() {
         status = resp.StatusCode()
         body = resp.Body()
     }
-    _ = status
-    _ = body
     if err != nil {
         panic(err)
     }
@@ -701,8 +699,6 @@ func main() {
         status = resp.StatusCode()
         body = resp.Body()
     }
-    _ = status
-    _ = body
     if err != nil {
         panic(err)
     }
@@ -1102,8 +1098,6 @@ func handler(code string) {
         status = resp.StatusCode()
         body = resp.Body()
     }
-    _ = status
-    _ = body
     if err != nil {
         panic(err)
     }

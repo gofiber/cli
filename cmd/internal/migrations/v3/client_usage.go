@@ -285,6 +285,12 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 
 		errName := chooseErrName(out, lines, i)
+		errBlockEnd := blockEndIndex(lines, structStart)
+		if errBlockEnd < structStart {
+			errBlockEnd = structStart
+		}
+		errsNeeded := identifierUsedAfter(lines[errBlockEnd+1:], "errs")
+		errsAlreadyDeclared := identifierDeclared(out, lines, i, "errs") || identifierDeclaredInLines(preservedLines, "errs")
 
 		out = append(out, fmt.Sprintf("%s%s := client.New()", indent, agentVar))
 		out = append(out, fmt.Sprintf("%s%s := %s.R()", indent, reqVar, agentVar))
@@ -370,10 +376,18 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			out = append(out, fmt.Sprintf("%sif %s != nil {", structMatch[1], errName))
 			out = append(out, replaceErrIdentifier(structBody[:len(structBody)-1], errName, true)...)
 			out = append(out, structMatch[1]+"}")
-			if statusVar != "" && !hasBlankAssignment(lines, statusVar) {
+			if errsNeeded && !errsAlreadyDeclared {
+				out = append(out, indent+"var errs []error")
+			}
+			if errsNeeded {
+				out = append(out, fmt.Sprintf("%sif %s != nil {", indent, errName))
+				out = append(out, fmt.Sprintf("%s\terrs = append(errs, %s)", indent, errName))
+				out = append(out, indent+"}")
+			}
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) && !identifierUsedAfter(lines[structStart+1:], statusVar) {
 				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
 			}
-			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) {
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) && !identifierUsedAfter(lines[structStart+1:], bodyVar) {
 				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
 			}
 
@@ -409,10 +423,18 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.Body()", indent, bodyVar))
 			out = append(out, indent+"}")
-			if statusVar != "" && !hasBlankAssignment(lines, statusVar) {
+			if errsNeeded && !errsAlreadyDeclared {
+				out = append(out, indent+"var errs []error")
+			}
+			if errsNeeded {
+				out = append(out, fmt.Sprintf("%sif %s != nil {", indent, errName))
+				out = append(out, fmt.Sprintf("%s\terrs = append(errs, %s)", indent, errName))
+				out = append(out, indent+"}")
+			}
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) && !identifierUsedAfter(lines[structStart+1:], statusVar) {
 				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
 			}
-			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) {
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) && !identifierUsedAfter(lines[structStart+1:], bodyVar) {
 				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
 			}
 
@@ -448,10 +470,18 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			out = append(out, fmt.Sprintf("%s\t%s = resp.StatusCode()", indent, statusVar))
 			out = append(out, fmt.Sprintf("%s\t%s = resp.String()", indent, bodyVar))
 			out = append(out, indent+"}")
-			if statusVar != "" && !hasBlankAssignment(lines, statusVar) {
+			if errsNeeded && !errsAlreadyDeclared {
+				out = append(out, indent+"var errs []error")
+			}
+			if errsNeeded {
+				out = append(out, fmt.Sprintf("%sif %s != nil {", indent, errName))
+				out = append(out, fmt.Sprintf("%s\terrs = append(errs, %s)", indent, errName))
+				out = append(out, indent+"}")
+			}
+			if statusVar != "" && !hasBlankAssignment(lines, statusVar) && !identifierUsedAfter(lines[structStart+1:], statusVar) {
 				out = append(out, fmt.Sprintf("%s_ = %s", indent, statusVar))
 			}
-			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) {
+			if bodyVar != "" && !hasBlankAssignment(lines, bodyVar) && !identifierUsedAfter(lines[structStart+1:], bodyVar) {
 				out = append(out, fmt.Sprintf("%s_ = %s", indent, bodyVar))
 			}
 
@@ -591,6 +621,41 @@ func hasBlankAssignment(lines []string, name string) bool {
 	}
 
 	return false
+}
+
+func identifierUsedAfter(lines []string, name string) bool {
+	if name == "" {
+		return false
+	}
+
+	pattern := regexp.MustCompile(fmt.Sprintf(`\b%s\b`, regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		if pattern.MatchString(trimmed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func blockEndIndex(lines []string, start int) int {
+	depth := 0
+
+	for i := start + 1; i < len(lines); i++ {
+		depth += strings.Count(lines[i], "{")
+		depth -= strings.Count(lines[i], "}")
+		if depth < 0 {
+			return i
+		}
+	}
+
+	return len(lines) - 1
 }
 
 func identifierDeclared(existing, original []string, idx int, name string) bool {
