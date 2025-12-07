@@ -74,8 +74,9 @@ func other() int { return 1 }
 func main() {
     primary, secondary := target()
     single := target()
-    _, ignored := target()
+    _, captured := target()
     value, err := other()
+    first, second := other(), target()
     field.Name = target()
 }
 `
@@ -91,7 +92,10 @@ func main() {
 	})
 
 	assert.Contains(t, matches, "primary")
+	assert.Contains(t, matches, "secondary")
 	assert.Contains(t, matches, "single")
+	assert.Contains(t, matches, "captured")
+	assert.Contains(t, matches, "second")
 	assert.NotContains(t, matches, "value")
-	assert.NotContains(t, matches, "ignored")
+	assert.NotContains(t, matches, "first")
 }

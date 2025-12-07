@@ -61,18 +61,29 @@ func collectAssignedCallIdents(file *ast.File, predicate func(*ast.CallExpr) boo
 			return true
 		}
 
-		for idx, rhs := range assign.Rhs {
-			call, ok := rhs.(*ast.CallExpr)
-			if !ok || !predicate(call) {
-				continue
+		if len(assign.Rhs) == 1 {
+			// Capture all identifiers from a single call returning multiple values.
+			if call, ok := assign.Rhs[0].(*ast.CallExpr); ok && predicate(call) {
+				for _, lhs := range assign.Lhs {
+					if ident, ok := lhs.(*ast.Ident); ok && ident.Name != "_" {
+						matches[ident.Name] = struct{}{}
+					}
+				}
 			}
+		} else {
+			// Map each call on the RHS to its corresponding identifier on the LHS.
+			for idx, rhs := range assign.Rhs {
+				call, ok := rhs.(*ast.CallExpr)
+				if !ok || !predicate(call) {
+					continue
+				}
 
-			ident, ok := assign.Lhs[idx].(*ast.Ident)
-			if !ok {
-				continue
+				if idx < len(assign.Lhs) {
+					if ident, ok := assign.Lhs[idx].(*ast.Ident); ok && ident.Name != "_" {
+						matches[ident.Name] = struct{}{}
+					}
+				}
 			}
-
-			matches[ident.Name] = struct{}{}
 		}
 
 		return true
