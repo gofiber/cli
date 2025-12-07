@@ -26,7 +26,7 @@ import (
 )
 
 func handler(c fiber.Ctx) error {
-    store := session.NewStore()
+    store := session.New()
     sess, err := store.Get(c)
     if err != nil {
         return err
@@ -66,7 +66,7 @@ import (
 )
 
 func handler(c fiber.Ctx) error {
-    store := session.NewStore()
+    store := session.New()
     sess, err := store.Get(c)
     if err != nil {
         return err
@@ -110,7 +110,7 @@ import (
 )
 
 func backgroundTask(sessionID string) {
-    store := session.NewStore()
+    store := session.New()
     sess, err := store.GetByID(context.Background(), sessionID)
     if err != nil {
         return
@@ -150,7 +150,7 @@ import (
 )
 
 func handler(c fiber.Ctx) error {
-    store := session.NewStore()
+    store := session.New()
     sess, err := store.Get(c)
     if err != nil {
         c.Status(500)
@@ -233,7 +233,7 @@ import (
 )
 
 func handler(c fiber.Ctx) error {
-    store := alias.NewStore()
+    store := alias.New()
     session, err := store.Get(c)
     if err != nil {
         return err

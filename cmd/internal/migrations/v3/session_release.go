@@ -28,7 +28,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	reStoreGet := regexp.MustCompile(`(?m)^(\s*)(\w+),\s*(\w+)\s*:=\s*(\w+)\.(Get(?:ByID)?)\(`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		file, _, err := parseGoFile(content)
+		file, err := parseGoFile(content)
 		if err != nil {
 			return content
 		}
@@ -53,7 +53,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 				return false
 			}
 
-			return sel.Sel.Name == "New" || strings.HasPrefix(sel.Sel.Name, "NewStore")
+			return sel.Sel.Name == "New"
 		})
 
 		if len(storeVars) == 0 {

@@ -9,14 +9,14 @@ import (
 )
 
 // parseGoFile parses Go source content into an AST. It returns the parsed file
-// and token.FileSet or an error if the content cannot be parsed.
-func parseGoFile(content string) (*ast.File, *token.FileSet, error) {
+// or an error if the content cannot be parsed.
+func parseGoFile(content string) (*ast.File, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "", content, parser.ParseComments)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse Go file: %w", err)
+		return nil, fmt.Errorf("parse Go file: %w", err)
 	}
-	return file, fset, nil
+	return file, nil
 }
 
 // collectImportAliases finds all import aliases for the given import path within
@@ -35,6 +35,10 @@ func collectImportAliases(file *ast.File, importPath string) map[string]struct{}
 		}
 
 		if imp.Name != nil {
+			if imp.Name.Name == "_" || imp.Name.Name == "." {
+				continue
+			}
+
 			aliases[imp.Name.Name] = struct{}{}
 			continue
 		}
@@ -53,7 +57,7 @@ func collectAssignedCallIdents(file *ast.File, predicate func(*ast.CallExpr) boo
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		assign, ok := n.(*ast.AssignStmt)
-		if !ok || len(assign.Lhs) != len(assign.Rhs) {
+		if !ok {
 			return true
 		}
 
