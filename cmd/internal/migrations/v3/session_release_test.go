@@ -180,3 +180,79 @@ func handler(c fiber.Ctx) error {
 	errorBlockEnd := strings.Index(result, "}")
 	assert.Greater(t, deferIdx, errorBlockEnd, "defer should come after error block")
 }
+
+func Test_MigrateSessionRelease_IgnoresNonSessionStores(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionrelease")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	content := `package main
+
+import (
+    "github.com/other/module/session"
+)
+
+func handler() {
+    store := session.New()
+    obj, err := store.Get()
+    if err != nil {
+        panic(err)
+    }
+
+    _ = obj.Release
+}`
+
+	err = os.WriteFile(filepath.Join(dir, "main.go"), []byte(content), 0o600)
+	require.NoError(t, err)
+
+	cmd := &cobra.Command{}
+	err = MigrateSessionRelease(cmd, dir, nil, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	require.NoError(t, err)
+
+	result := string(data)
+	assert.NotContains(t, result, "defer obj.Release()")
+}
+
+func Test_MigrateSessionRelease_HandlesAliasedImports(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "msessionrelease")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	content := `package main
+
+import (
+    "github.com/gofiber/fiber/v3"
+    alias "github.com/gofiber/fiber/v3/middleware/session"
+)
+
+func handler(c fiber.Ctx) error {
+    store := alias.NewStore()
+    session, err := store.Get(c)
+    if err != nil {
+        return err
+    }
+
+    session.Set("key", "value")
+    return session.Save()
+}`
+
+	err = os.WriteFile(filepath.Join(dir, "main.go"), []byte(content), 0o600)
+	require.NoError(t, err)
+
+	cmd := &cobra.Command{}
+	err = MigrateSessionRelease(cmd, dir, nil, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	require.NoError(t, err)
+
+	result := string(data)
+	assert.Contains(t, result, "defer session.Release() // Important: Manual cleanup required")
+}

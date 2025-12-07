@@ -2,6 +2,7 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
 	"regexp"
 	"strings"
 
@@ -18,13 +19,47 @@ const releaseComment = "// Important: Manual cleanup required"
 // This is required in v3 for manual session lifecycle management.
 func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	// Match patterns like:
-	//   sess, err := store.Get(c)
-	//   sess, err := store.GetByID(ctx, sessionID)
-	//   session, err := myStore.Get(c)
+	//
+	//	sess, err := store.Get(c)
+	//	sess, err := store.GetByID(ctx, sessionID)
+	//	session, err := myStore.Get(c)
+	//
 	// Capture: variable name, store variable name, method call
 	reStoreGet := regexp.MustCompile(`(?m)^(\s*)(\w+),\s*(\w+)\s*:=\s*(\w+)\.(Get(?:ByID)?)\(`)
 
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
+		file, _, err := parseGoFile(content)
+		if err != nil {
+			return content
+		}
+
+		sessionAliases := collectImportAliases(file, "github.com/gofiber/fiber/v3/middleware/session")
+		if len(sessionAliases) == 0 {
+			return content
+		}
+
+		storeVars := collectAssignedCallIdents(file, func(call *ast.CallExpr) bool {
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return false
+			}
+
+			pkgIdent, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return false
+			}
+
+			if _, ok = sessionAliases[pkgIdent.Name]; !ok {
+				return false
+			}
+
+			return sel.Sel.Name == "New" || strings.HasPrefix(sel.Sel.Name, "NewStore")
+		})
+
+		if len(storeVars) == 0 {
+			return content
+		}
+
 		lines := strings.Split(content, "\n")
 		result := make([]string, 0, len(lines))
 
@@ -35,6 +70,11 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 			// Check if this line matches a store.Get() call
 			matches := reStoreGet.FindStringSubmatch(line)
 			if len(matches) < 6 {
+				continue
+			}
+
+			storeVar := matches[4]
+			if _, ok := storeVars[storeVar]; !ok {
 				continue
 			}
 
