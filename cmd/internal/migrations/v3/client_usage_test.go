@@ -1311,6 +1311,120 @@ func handler(code string) {
 	assert.Equal(t, expected, content)
 }
 
+func Test_MigrateClientUsage_AcquireAgentOnlyParseKeepsTrailingCode(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientparsepreserve")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3"
+)
+
+func handler(code string) {
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodPost)
+    req.SetRequestURI(fmt.Sprintf("https://example.com/auth?code=%s", code))
+    if err := a.Parse(); err != nil {
+        fmt.Println(err)
+    }
+    // keep
+    value := 123
+    _ = value
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "fmt"
+
+    "github.com/gofiber/fiber/v3/client"
+)
+
+func handler(code string) {
+    a := client.New()
+    req := a.R()
+    req.SetMethod("POST")
+    req.SetURL(fmt.Sprintf("https://example.com/auth?code=%s", code))
+    _, err := req.Send()
+    if err != nil {
+        fmt.Println(err)
+    }
+    // keep
+    value := 123
+    _ = value
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
+func Test_MigrateClientUsage_AcquireAgentOnlyParseIgnoresErrLikeVarNames(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mclientparsevarblock")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+    "github.com/gofiber/fiber/v3"
+)
+
+var (
+    errMsg string
+)
+
+func handler() {
+    a := fiber.AcquireAgent()
+    req := a.Request()
+    req.Header.SetMethod(fiber.MethodGet)
+    req.SetRequestURI("https://example.com")
+    if err := a.Parse(); err != nil {
+        println(err)
+    }
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
+
+	content := gofmtSource(t, readFile(t, file))
+	expected := gofmtSource(t, `package main
+
+import (
+    "github.com/gofiber/fiber/v3/client"
+)
+
+var (
+    errMsg string
+)
+
+func handler() {
+    a := client.New()
+    req := a.R()
+    req.SetMethod("GET")
+    req.SetURL("https://example.com")
+    _, err := req.Send()
+    if err != nil {
+        println(err)
+    }
+}`)
+
+	assert.Equal(t, expected, content)
+}
+
 func Test_MigrateClientUsage_AcquireAgentOnlyParseIgnoresErrLikeNames(t *testing.T) {
 	t.Parallel()
 

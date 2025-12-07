@@ -20,8 +20,7 @@ var (
 	clientErrLenPattern     = regexp.MustCompile(`\blen\(errs\)`)
 	clientErrComparePattern = regexp.MustCompile(`err\s*!=\s*nil\s*>\s*0`)
 	clientErrMapPattern     = regexp.MustCompile(`"errs"\s*:\s*errs`)
-	clientErrVarPattern     = regexp.MustCompile(`\berrs\b`)
-	clientErrsDeclPattern   = regexp.MustCompile(`\berrs\s+\[]error\b`)
+	clientErrsDeclPattern   = regexp.MustCompile(`(?m)^\s*var\s+errs\b`)
 
 	// Non-alias-dependent patterns
 	requestFromAgent    = regexp.MustCompile(`^([ \t]*)(\w+)\s*:=\s*(\w+)\.Request\(\)\s*$`)
@@ -236,6 +235,8 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		structStart := -1
 		preservedLines := []string{}
 		preservedIdx := []int{}
+		blankIdx := []int{}
+		blankAfterParse := false
 		for k := parseEnd + 1; k < len(lines); k++ {
 			if skipLines[k] {
 				continue
@@ -243,6 +244,8 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 
 			trimmed := strings.TrimSpace(lines[k])
 			if trimmed == "" {
+				blankAfterParse = true
+				blankIdx = append(blankIdx, k)
 				continue
 			}
 			if strings.HasPrefix(trimmed, "//") {
@@ -270,18 +273,41 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 
 		if structStart == -1 {
-			out = append(out, line)
-			continue
+			structStart = parseEnd
 		}
 
 		structMatch := structAssignPattern.FindStringSubmatch(lines[structStart])
 		bytesMatch := bytesAssignPattern.FindStringSubmatch(lines[structStart])
 		stringMatch := stringAssignPattern.FindStringSubmatch(lines[structStart])
+		parseOnly := len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0
+
+		addPreserved := func() {
+			if len(preservedLines) == 0 {
+				return
+			}
+			if blankAfterParse && parseOnly {
+				out = append(out, "")
+				for _, idx := range blankIdx {
+					skipLines[idx] = true
+				}
+				blankAfterParse = false
+			}
+
+			out = append(out, preservedLines...)
+			for _, idx := range preservedIdx {
+				skipLines[idx] = true
+			}
+		}
+
+		if len(preservedLines) == 0 && !parseOnly {
+			for _, idx := range blankIdx {
+				skipLines[idx] = true
+			}
+			blankAfterParse = false
+		}
 
 		if len(structMatch) == 0 && len(bytesMatch) == 0 && len(stringMatch) == 0 {
 			structStart = parseEnd
-			preservedLines = nil
-			preservedIdx = nil
 		}
 
 		errName := chooseErrName(out, lines, i)
@@ -322,12 +348,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 
 		switch {
 		case len(structMatch) > 0 && structMatch[5] == agentVar:
-			if len(preservedLines) > 0 {
-				out = append(out, preservedLines...)
-				for _, idx := range preservedIdx {
-					skipLines[idx] = true
-				}
-			}
+			addPreserved()
 			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(structMatch[2])
 			bodyVar := strings.TrimSpace(structMatch[3])
@@ -395,12 +416,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		case len(bytesMatch) > 0 && bytesMatch[5] == agentVar:
-			if len(preservedLines) > 0 {
-				out = append(out, preservedLines...)
-				for _, idx := range preservedIdx {
-					skipLines[idx] = true
-				}
-			}
+			addPreserved()
 			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(bytesMatch[2])
 			bodyVar := strings.TrimSpace(bytesMatch[3])
@@ -442,12 +458,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		case len(stringMatch) > 0 && stringMatch[5] == agentVar:
-			if len(preservedLines) > 0 {
-				out = append(out, preservedLines...)
-				for _, idx := range preservedIdx {
-					skipLines[idx] = true
-				}
-			}
+			addPreserved()
 			errAssign := errAssignmentOperator(errName, out, lines, i, "resp")
 			statusVar := strings.TrimSpace(stringMatch[2])
 			bodyVar := strings.TrimSpace(stringMatch[3])
@@ -489,12 +500,18 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			changed = true
 			continue
 		default:
+			if !parseOnly {
+				addPreserved()
+			}
 			errAssign := errAssignmentOperator(errName, out, lines, i)
 			respLine := fmt.Sprintf("%s_, %s %s %s.Send()", indent, errName, errAssign, reqVar)
 			out = append(out, respLine)
 			out = append(out, fmt.Sprintf("%sif %s != nil {", parseIndent, errName))
 			out = append(out, replaceErrIdentifier(parseBody[:len(parseBody)-1], errName, false)...)
 			out = append(out, parseIndent+"}")
+			if parseOnly {
+				addPreserved()
+			}
 
 			i = parseEnd
 			changed = true
@@ -712,17 +729,18 @@ func identifierDeclaredInLines(lines []string, name string) bool {
 }
 
 func declaredInVarBlockLine(name, trimmed string) bool {
-	if !strings.HasPrefix(trimmed, name) {
+	fields := strings.Fields(trimmed)
+	if len(fields) < 2 {
+		return false
+	}
+	if fields[0] != name {
 		return false
 	}
 
-	remainder := strings.TrimSpace(strings.TrimPrefix(trimmed, name))
-	if remainder == "" {
-		return false
-	}
-
-	if strings.Contains(remainder, ":=") || strings.Contains(remainder, "=") {
-		return false
+	for _, f := range fields[1:] {
+		if strings.Contains(f, ":=") || strings.Contains(f, "=") {
+			return false
+		}
 	}
 
 	return true
@@ -1185,7 +1203,14 @@ func ensureClientImport(content string) string {
 func rewriteClientErrorHandling(content string) string {
 	// Only rewrite when we see the legacy multi-error usage patterns. This avoids
 	// mutating unrelated identifiers such as custom "errs" slices.
-	hasLegacyErrs := clientErrIfPattern.MatchString(content) || clientErrLenPattern.MatchString(content) || clientErrComparePattern.MatchString(content) || clientErrMapPattern.MatchString(content)
+	baseLegacy := clientErrIfPattern.MatchString(content) || clientErrLenPattern.MatchString(content) || clientErrComparePattern.MatchString(content) || clientErrMapPattern.MatchString(content)
+	declaredErrs := clientErrsDeclPattern.MatchString(content)
+	if !baseLegacy {
+		// Declaration-only cases keep errs slices intact.
+		return content
+	}
+
+	hasLegacyErrs := baseLegacy || declaredErrs
 	if !hasLegacyErrs {
 		return content
 	}
@@ -1194,8 +1219,20 @@ func rewriteClientErrorHandling(content string) string {
 	updated = clientErrLenPattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrComparePattern.ReplaceAllString(updated, "err != nil")
 	updated = clientErrMapPattern.ReplaceAllString(updated, `"err": err`)
-	updated = clientErrsDeclPattern.ReplaceAllString(updated, "err error")
-	updated = clientErrVarPattern.ReplaceAllString(updated, "err")
+
+	errToken := regexp.MustCompile(`\berrs\b`)
+	lines := strings.Split(updated, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "var errs") || strings.HasPrefix(trimmed, "errs") {
+			continue
+		}
+
+		lines[i] = errToken.ReplaceAllString(line, "err")
+	}
+
+	updated = strings.Join(lines, "\n")
+
 	return updated
 }
 
