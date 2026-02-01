@@ -68,7 +68,7 @@ func Test_Dev_Escort_RunBin(t *testing.T) {
 
 	e := getEscort()
 
-	e.bin = exec.Command("go", "version")
+	e.bin = exec.CommandContext(e.ctx, "go", "version")
 	_, err := e.bin.CombinedOutput()
 	require.NoError(t, err)
 
@@ -83,7 +83,7 @@ func Test_Dev_Escort_WatchingPipes(t *testing.T) {
 	t.Parallel()
 
 	e := getEscort()
-	e.bin = exec.Command("go", "version")
+	e.bin = exec.CommandContext(e.ctx, "go", "version")
 	_, err := e.bin.CombinedOutput()
 	require.NoError(t, err)
 	e.watchingPipes()
@@ -235,20 +235,20 @@ func Test_Dev_IsRemoved(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		fsnotify.Op
+		op fsnotify.Op
 		bool
 	}{
-		{fsnotify.Create, false},
-		{fsnotify.Write, false},
-		{fsnotify.Remove, true},
-		{fsnotify.Rename, false},
-		{fsnotify.Chmod, false},
+		{op: fsnotify.Create, bool: false},
+		{op: fsnotify.Write, bool: false},
+		{op: fsnotify.Remove, bool: true},
+		{op: fsnotify.Rename, bool: false},
+		{op: fsnotify.Chmod, bool: false},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.Op.String(), func(t *testing.T) {
+		t.Run(tc.op.String(), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.bool, isRemoved(tc.Op))
+			assert.Equal(t, tc.bool, isRemoved(tc.op))
 		})
 	}
 }
@@ -257,20 +257,20 @@ func Test_Dev_IsCreated(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		fsnotify.Op
+		op fsnotify.Op
 		bool
 	}{
-		{fsnotify.Create, true},
-		{fsnotify.Write, false},
-		{fsnotify.Remove, false},
-		{fsnotify.Rename, false},
-		{fsnotify.Chmod, false},
+		{op: fsnotify.Create, bool: true},
+		{op: fsnotify.Write, bool: false},
+		{op: fsnotify.Remove, bool: false},
+		{op: fsnotify.Rename, bool: false},
+		{op: fsnotify.Chmod, bool: false},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.Op.String(), func(t *testing.T) {
+		t.Run(tc.op.String(), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.bool, isCreated(tc.Op))
+			assert.Equal(t, tc.bool, isCreated(tc.op))
 		})
 	}
 }
@@ -279,20 +279,20 @@ func Test_Dev_IsChmoded(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		fsnotify.Op
+		op fsnotify.Op
 		bool
 	}{
-		{fsnotify.Create, false},
-		{fsnotify.Write, false},
-		{fsnotify.Remove, false},
-		{fsnotify.Rename, false},
-		{fsnotify.Chmod, true},
+		{op: fsnotify.Create, bool: false},
+		{op: fsnotify.Write, bool: false},
+		{op: fsnotify.Remove, bool: false},
+		{op: fsnotify.Rename, bool: false},
+		{op: fsnotify.Chmod, bool: true},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.Op.String(), func(t *testing.T) {
+		t.Run(tc.op.String(), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.bool, isChmoded(tc.Op))
+			assert.Equal(t, tc.bool, isChmoded(tc.op))
 		})
 	}
 }

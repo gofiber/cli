@@ -27,7 +27,7 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&buf)
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, false, nil, nil))
-		assert.Equal(t, "", buf.String())
+		assert.Empty(t, buf.String())
 	})
 
 	t.Run("verbose", func(t *testing.T) {

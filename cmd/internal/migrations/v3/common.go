@@ -2,7 +2,9 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -11,6 +13,10 @@ var (
 	hexRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
 )
+
+func isIdentifierChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
+}
 
 // skipCommaSuffix advances the index past a comma and any trailing
 // whitespace, comments, or newline characters.
@@ -34,7 +40,7 @@ func skipCommaSuffix(src string, i int) int {
 				}
 				if src[i+1] == '*' { // block comment
 					i += 2
-					for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+					for i+1 < len(src) && (src[i] != '*' || src[i+1] != '/') {
 						i++
 					}
 					if i+1 < len(src) {
@@ -134,6 +140,7 @@ func removeConfigField(src, field string) string {
 				i++
 				src = src[:start] + src[i:]
 				goto nextField
+			default:
 			}
 			i++
 		}
@@ -147,45 +154,168 @@ func removeConfigField(src, field string) string {
 // fn with the parsed components. If fn returns an empty string, the field is
 // removed entirely.
 func replaceKeyLookup(src string, fn func(indent, val, comma, comment, newline string) string) string {
-	re := regexp.MustCompile(`(?m)(\s*)KeyLookup:\s*([^\n]+)(\n?)`)
-	return re.ReplaceAllStringFunc(src, func(s string) string {
-		sub := re.FindStringSubmatch(s)
-		indent := sub[1]
-		val := strings.TrimSpace(sub[2])
-		newline := sub[3]
+	return replaceStringField(src, "KeyLookup", fn)
+}
 
-		comment := ""
-		if idx := strings.Index(val, "//"); idx >= 0 {
-			comment = strings.TrimSpace(val[idx:])
-			val = strings.TrimSpace(val[:idx])
-		} else if idx := strings.Index(val, "/*"); idx >= 0 {
-			comment = strings.TrimSpace(val[idx:])
-			val = strings.TrimSpace(val[:idx])
+func replaceStringField(src, field string, fn func(indent, val, comma, comment, newline string) string) string {
+	return replaceFieldImpl(src, field, true, fn)
+}
+
+func replaceField(src, field string, fn func(indent, val, comma, comment, newline string) string) string {
+	return replaceFieldImpl(src, field, false, fn)
+}
+
+func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comma, comment, newline string) string) string {
+	re := regexp.MustCompile(regexp.QuoteMeta(field) + `:\s*`)
+	var b strings.Builder
+	pos := 0
+
+	for {
+		loc := re.FindStringIndex(src[pos:])
+		if loc == nil {
+			break
+		}
+		loc[0] += pos
+		loc[1] += pos
+
+		start := loc[0]
+		valStart := loc[1]
+
+		prefix := ""
+		prefixStart := start
+		if prefixStart > 0 && (src[prefixStart-1] == '{' || src[prefixStart-1] == ',') {
+			prefix = string(src[prefixStart-1])
+			prefixStart--
 		}
 
+		indentStart := prefixStart
+		for indentStart > 0 && (src[indentStart-1] == ' ' || src[indentStart-1] == '\t') {
+			indentStart--
+		}
+		indent := src[indentStart:prefixStart]
+
+		b.WriteString(src[pos:indentStart]) //nolint:errcheck // WriteString never returns an error
+
+		i := valStart
+		depth := 0
+		inString := false
 		comma := ""
+		newline := ""
+		for i < len(src) {
+			ch := src[i]
+			if inString {
+				if ch == '\\' && i+1 < len(src) {
+					i += 2
+					continue
+				}
+				if ch == '"' {
+					inString = false
+				}
+				i++
+				continue
+			}
+
+			switch ch {
+			case '"':
+				inString = true
+			case '(', '{', '[':
+				depth++
+			case ')', ']':
+				if depth > 0 {
+					depth--
+				}
+			case '}':
+				if depth == 0 {
+					goto endValue
+				}
+				depth--
+			case ',':
+				if depth == 0 {
+					comma = ","
+					suffixStart := i
+					i = skipCommaSuffix(src, i)
+					if strings.Contains(src[suffixStart:i], "\n") {
+						newline = "\n"
+					}
+					goto endValue
+				}
+			case '\n':
+				if depth == 0 {
+					newline = "\n"
+					i++
+					goto endValue
+				}
+			default:
+			}
+			i++
+		}
+
+	endValue:
+		end := i
+		val := strings.TrimSpace(src[valStart:end])
+		val, comment := ExtractCommentAndValue(val)
+
 		if strings.HasSuffix(val, ",") {
-			comma = ","
+			if comma == "" {
+				comma = ","
+			}
 			val = strings.TrimSpace(strings.TrimSuffix(val, ","))
 		}
 
-		if uq, err := strconv.Unquote(val); err == nil {
-			val = uq
-			repl := fn(indent, val, comma, comment, newline)
-			if repl == "" {
+		if unquote {
+			uq, err := strconv.Unquote(val)
+			if err != nil {
+				replacement := fmt.Sprintf("%s%s// TODO: migrate %s: %s", prefix, indent, field, val)
 				if comment != "" {
-					return fmt.Sprintf("%s%s%s", indent, comment, newline)
+					replacement = fmt.Sprintf("%s %s", replacement, comment)
 				}
-				return newline
+				replacement += newline
+				b.WriteString(replacement) //nolint:errcheck // WriteString never returns an error
+				pos = end
+				continue
 			}
-			return repl
+			val = uq
 		}
 
-		if comment != "" {
-			return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s %s%s", indent, val, comment, newline)
+		repl := fn(indent, val, comma, comment, newline)
+		var replacement string
+		if repl == "" {
+			if comment != "" {
+				replacement = fmt.Sprintf("%s%s%s%s", prefix, indent, comment, newline)
+			} else {
+				replacement = prefix + newline
+			}
+		} else {
+			replacement = prefix + repl
 		}
-		return fmt.Sprintf("%s// TODO: migrate KeyLookup: %s%s", indent, val, newline)
-	})
+
+		b.WriteString(replacement) //nolint:errcheck // WriteString never returns an error
+		pos = end
+	}
+
+	b.WriteString(src[pos:]) //nolint:errcheck // WriteString never returns an error
+	return b.String()
+}
+
+func collectAliases(content string, reImport *regexp.Regexp, defaults []string) []string {
+	aliases := map[string]struct{}{}
+	for _, m := range reImport.FindAllStringSubmatch(content, -1) {
+		alias := strings.TrimSpace(m[1])
+		if alias == "" {
+			for _, d := range defaults {
+				aliases[d] = struct{}{}
+			}
+			continue
+		}
+		aliases[alias] = struct{}{}
+	}
+
+	result := make([]string, 0, len(aliases))
+	for alias := range aliases {
+		result = append(result, alias)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // splitArgs splits a comma-separated argument list into its individual arguments
@@ -238,6 +368,7 @@ func splitArgs(src string) []string {
 				args = append(args, strings.TrimSpace(src[start:i]))
 				start = i + 1
 			}
+		default:
 		}
 	}
 
@@ -278,6 +409,7 @@ func extractCall(src string, start int) (int, string) {
 			if depth == 0 {
 				return i + 1, src[start:i]
 			}
+		default:
 		}
 	}
 	return len(src), src[start:]
@@ -318,6 +450,7 @@ func extractBlock(src string, start int, open, closeDelim byte) int {
 			if depth == 0 {
 				return i + 1
 			}
+		default:
 		}
 	}
 	return len(src)
@@ -434,4 +567,90 @@ func addImport(content, path string) string {
 	}
 
 	return content
+}
+
+// GetBaseIdent recursively resolves an expression to its base identifier.
+// It handles selector expressions, call expressions, and identifiers.
+// Returns nil if the expression cannot be resolved to a simple identifier.
+func GetBaseIdent(expr ast.Expr) *ast.Ident {
+	for {
+		switch e := expr.(type) {
+		case *ast.Ident:
+			return e
+		case *ast.SelectorExpr:
+			expr = e.X
+		case *ast.CallExpr:
+			expr = e.Fun
+		default:
+			return nil
+		}
+	}
+}
+
+// ExtractCommentAndValue separates a value from its trailing comment.
+// It handles both line comments (//) and block comments (/* */).
+// Returns the value (trimmed) and the comment (with original delimiters).
+func ExtractCommentAndValue(line string) (value, comment string) {
+	value = line
+	if idx := strings.Index(line, "//"); idx >= 0 {
+		comment = strings.TrimSpace(line[idx:])
+		value = strings.TrimSpace(line[:idx])
+	} else if idx := strings.Index(line, "/*"); idx >= 0 {
+		comment = strings.TrimSpace(line[idx:])
+		value = strings.TrimSpace(line[:idx])
+	}
+	return value, comment
+}
+
+// FormatFieldWithComment formats a field assignment with consistent spacing
+// for indentation, value, comma, comment, and newline.
+func FormatFieldWithComment(indent, fieldName, value, comma, comment, newline string) string {
+	if comment != "" {
+		comment = " " + comment
+	}
+	return fmt.Sprintf("%s%s: %s%s%s%s", indent, fieldName, value, comma, comment, newline)
+}
+
+// IterateConfigBlocks finds all occurrences matching the given regex pattern,
+// extracts their config blocks using braces, processes each block with the
+// provided function, and reconstructs the content.
+func IterateConfigBlocks(content string, pattern *regexp.Regexp, processor func(string) string) string {
+	matches := pattern.FindAllStringIndex(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		if m[0] < last {
+			// Skip matches that fall inside a block we've already processed.
+			continue
+		}
+		b.WriteString(content[last:m[0]]) //nolint:errcheck // WriteString never returns an error
+		start := m[0]
+		end := extractBlock(content, m[1], '{', '}')
+		cfg := content[start:end]
+
+		// Process the config block
+		cfg = processor(cfg)
+
+		b.WriteString(cfg) //nolint:errcheck // WriteString never returns an error
+		last = end
+	}
+	b.WriteString(content[last:]) //nolint:errcheck // WriteString never returns an error
+	return b.String()
+}
+
+// BuildExtractorChain builds an extractor expression from a slice of extractors.
+// Returns a single extractor for one element, Chain() for multiple, or empty for none.
+func BuildExtractorChain(extractors []string) string {
+	switch len(extractors) {
+	case 0:
+		return ""
+	case 1:
+		return extractors[0]
+	default:
+		return fmt.Sprintf("extractors.Chain(%s)", strings.Join(extractors, ", "))
+	}
 }

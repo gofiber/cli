@@ -81,11 +81,7 @@ func (p *Prompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC:
-			fallthrough
-		case tea.KeyEsc:
-			fallthrough
-		case tea.KeyEnter:
+		case tea.KeyCtrlC, tea.KeyEsc, tea.KeyEnter:
 			p.answer = p.textInput.Value()
 			return p, tea.Quit
 		default:

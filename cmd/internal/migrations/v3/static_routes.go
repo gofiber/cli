@@ -39,7 +39,8 @@ func MigrateStaticRoutes(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 
 			if cfg != "" {
 				cfg = strings.TrimSpace(cfg)
-				cfg = strings.Replace(cfg, "Static{", "static.Config{", 1)
+				reCfg := regexp.MustCompile(`\b(?:[a-zA-Z_]\w*\.)?Static{`)
+				cfg = reCfg.ReplaceAllString(cfg, "static.Config{")
 				reIndex := regexp.MustCompile(`Index:\s*([^,}\n]+)`)
 				cfg = reIndex.ReplaceAllString(cfg, "IndexNames: []string{$1}")
 				return fmt.Sprintf(".Get(%s, static.New(%s, %s))", quoted, root, cfg)

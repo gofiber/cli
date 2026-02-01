@@ -15,13 +15,13 @@ jobs:
     strategy:
       matrix:
         go-version: [1.25.x]
-        platform: [ubuntu-latest, windows-latest, macos-latest, macos-13]
+        platform: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.platform }}
     steps:
     - name: Check out repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ matrix.go-version }}
         cache: true

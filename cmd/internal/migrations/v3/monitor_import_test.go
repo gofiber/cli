@@ -27,7 +27,7 @@ var _ = monitor.New()`)
 	require.NoError(t, v3.MigrateMonitorImport(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "github.com/gofiber/contrib/monitor")
+	assert.Contains(t, content, "github.com/gofiber/contrib/v3/monitor")
 	assert.NotContains(t, content, "fiber/v2/middleware/monitor")
 	assert.Contains(t, buf.String(), "Migrating monitor middleware import")
 }

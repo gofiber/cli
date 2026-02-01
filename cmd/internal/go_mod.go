@@ -30,6 +30,7 @@ func RunGoMod(root string) error {
 	for _, dir := range dirs {
 		for _, args := range commands {
 			cmd := ExecCommand(args[0], args[1:]...) // #nosec G204 -- commands are controlled
+			setGoWorkOffEnv(cmd)
 			cmd.Dir = dir
 			if err := runCmd(cmd); err != nil {
 				return fmt.Errorf("in %s: %w", dir, err)
@@ -37,6 +38,21 @@ func RunGoMod(root string) error {
 		}
 	}
 	return nil
+}
+
+func setGoWorkOffEnv(cmd *exec.Cmd) {
+	env := append([]string{}, os.Environ()...)
+	if len(cmd.Env) > 0 {
+		env = append(env, cmd.Env...)
+	}
+	filtered := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, "GOWORK=") {
+			filtered = append(filtered, e)
+		}
+	}
+	filtered = append(filtered, "GOWORK=off")
+	cmd.Env = filtered
 }
 
 // fiberModuleDirs returns directories under root containing a go.mod file that

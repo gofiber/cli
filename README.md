@@ -189,7 +189,7 @@ fiber upgrade [flags]
 
 ### Synopsis
 
-Print the local and released version number of fiber
+Print the local and released version number of Fiber and the CLI
 
 ```bash
 fiber version [flags]

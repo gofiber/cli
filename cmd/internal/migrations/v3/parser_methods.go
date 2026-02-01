@@ -14,7 +14,7 @@ import (
 func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
 		orig := content
-		re := regexp.MustCompile(`\.(BodyParser|CookieParser|ParamsParser|QueryParser)\(`)
+		re := regexp.MustCompile(`\.(AllParams|BodyParser|CookieParser|ParamsParser|QueryParser)\(`)
 		matches := re.FindAllStringSubmatchIndex(content, -1)
 		if len(matches) == 0 {
 			return content
@@ -38,7 +38,7 @@ func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 			identStart := startCall - 1
 			for identStart >= 0 {
 				ch := content[identStart]
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+				if !isIdentifierChar(ch) {
 					break
 				}
 				identStart--
@@ -49,14 +49,16 @@ func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 			if isFiberCtx(orig, ident) {
 				var repl string
 				switch method {
+				case "AllParams", "ParamsParser":
+					repl = ".Bind().URI("
 				case "BodyParser":
 					repl = ".Bind().Body("
 				case "CookieParser":
 					repl = ".Bind().Cookie("
-				case "ParamsParser":
-					repl = ".Bind().URI("
 				case "QueryParser":
 					repl = ".Bind().Query("
+				default:
+					return content
 				}
 				if _, err := b.WriteString(repl + inner + ")"); err != nil {
 					return content
