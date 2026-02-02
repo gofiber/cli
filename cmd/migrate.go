@@ -111,8 +111,6 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 	if err != nil {
 		return fmt.Errorf("invalid version for \"%s\": %w", opts.TargetVersionS, err)
 	}
-	opts.TargetVersionS = baseVersion.String()
-
 	targetVersion := baseVersion
 	if opts.TargetHash != "" {
 		pv, err := pseudoVersionFromHash("gofiber/fiber", baseVersion, opts.TargetHash)

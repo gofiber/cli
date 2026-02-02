@@ -265,7 +265,7 @@ func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comm
 		if unquote {
 			uq, err := strconv.Unquote(val)
 			if err != nil {
-				comment = normalizeMigrationComment(field, comment)
+				comment = normalizeMigrationComment(comment, false)
 				replacement := fmt.Sprintf("%s%s// TODO: migrate %s: %s", prefix, indent, field, val)
 				if comment != "" {
 					replacement = fmt.Sprintf("%s %s", replacement, comment)
@@ -606,18 +606,18 @@ func ExtractCommentAndValue(line string) (value, comment string) {
 // FormatFieldWithComment formats a field assignment with consistent spacing
 // for indentation, value, comma, comment, and newline.
 func FormatFieldWithComment(indent, fieldName, value, comma, comment, newline string) string {
-	comment = normalizeMigrationComment(fieldName, comment)
+	comment = normalizeMigrationComment(comment, strings.Contains(fieldName, "TODO: migrate"))
 	if comment != "" {
 		comment = " " + comment
 	}
 	return fmt.Sprintf("%s%s: %s%s%s%s", indent, fieldName, value, comma, comment, newline)
 }
 
-func normalizeMigrationComment(fieldName, comment string) string {
+func normalizeMigrationComment(comment string, hasMigrationMarker bool) string {
 	if comment == "" {
 		return comment
 	}
-	if strings.Contains(comment, "TODO: migrate") && strings.Contains(fieldName, "TODO: migrate") {
+	if strings.Contains(comment, "TODO: migrate") && hasMigrationMarker {
 		return ""
 	}
 	return comment
