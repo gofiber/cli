@@ -200,6 +200,37 @@ func main() {
 	assert.Contains(t, content, "github.com/gofiber/fiber/v3 v3.0.0")
 }
 
+func Test_Migrate_TargetVersionShort(t *testing.T) {
+	dir, err := os.MkdirTemp("", "migrate_short_version")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
+
+	main := `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    _ = fiber.New()
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0o600))
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	cmd := newMigrateCmd()
+	setupCmd()
+	defer teardownCmd()
+	out, err := runCobraCmd(cmd, "-t=3")
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "Migration from Fiber 2.0.6 to 3.0.0")
+
+	content := readFileTB(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, content, "github.com/gofiber/fiber/v3 v3.0.0")
+}
+
 func Test_RunGoMod(t *testing.T) {
 	dir := t.TempDir()
 
