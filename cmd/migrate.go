@@ -111,7 +111,6 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 	if err != nil {
 		return fmt.Errorf("invalid version for \"%s\": %w", opts.TargetVersionS, err)
 	}
-
 	targetVersion := baseVersion
 	if opts.TargetHash != "" {
 		pv, err := pseudoVersionFromHash("gofiber/fiber", baseVersion, opts.TargetHash)
@@ -180,7 +179,7 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 
-	msg := fmt.Sprintf("Migration from Fiber %s to %s", migrateFromS, opts.TargetVersionS)
+	msg := fmt.Sprintf("Migration from Fiber %s to %s", migrateFromS, targetVersion.String())
 	cmd.Println(termenv.String(msg).
 		Foreground(termenv.ANSIBrightBlue))
 
