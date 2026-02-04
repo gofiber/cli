@@ -59,7 +59,7 @@ func currentVersionFromFile(path string) (string, error) {
 	}
 
 	if submatch := currentVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
-		return string(submatch[1]), nil
+		return strings.TrimSpace(string(submatch[1])), nil
 	}
 
 	return "", errors.New("github.com/gofiber/fiber was not found in go.mod")

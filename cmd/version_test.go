@@ -98,6 +98,20 @@ require (
 		at.Equal("v0.0.0-20200926082917-55763e7e6ee3", v)
 	})
 
+	t.Run("can read version from windows clrf file", func(t *testing.T) {
+		content := "module fiber-demo\r\ngo 1.14\r\nrequire (\r\n" +
+			"\tgithub.com/gofiber/fiber\r v0.0.0-20200926082917-55763e7e6ee3\r\n" +
+			"\tgithub.com/jarcoal/httpmock v1.0.6\r\n" +
+			")"
+
+		setupCurrentVersionFile(content)
+		defer teardownCurrentVersionFile()
+
+		v, err := currentVersion()
+		require.NoError(t, err)
+		at.Equal("v0.0.0-20200926082917-55763e7e6ee3", v)
+	})
+
 	t.Run("package not found", func(t *testing.T) {
 		content := `module fiber-demo
 go 1.14
