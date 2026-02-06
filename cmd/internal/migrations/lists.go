@@ -45,6 +45,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateMimeConstants,
 			v3migrations.MigrateLoggerTags,
 			v3migrations.MigrateLoggerGenerics,
+			v3migrations.MigrateLoggerConfig,
 			v3migrations.MigrateStaticRoutes,
 			v3migrations.MigrateTrustedProxyConfig,
 			v3migrations.MigrateMount,
