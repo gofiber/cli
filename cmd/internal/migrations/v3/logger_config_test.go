@@ -84,3 +84,103 @@ var _ = logger.New(logger.Config{
 	assert.Contains(t, content, "Format:")
 	assert.Contains(t, content, "TimeFormat:")
 }
+
+func Test_MigrateLoggerConfig_OutputInStringLiteral(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlogger_str")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "os"
+    "github.com/gofiber/fiber/v2/middleware/logger"
+)
+var _ = logger.New(logger.Config{
+    Format: "Output: ${status}\n",
+    Output: os.Stdout,
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateLoggerConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Stream:")
+	assert.Contains(t, content, `"Output: ${status}\n"`, "string literal should not be modified")
+	assert.Contains(t, buf.String(), "Migrating logger middleware configs")
+}
+
+func Test_MigrateLoggerConfig_WhitespaceBeforeBrace(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlogger_ws")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "os"
+    "github.com/gofiber/fiber/v2/middleware/logger"
+)
+var _ = logger.New(logger.Config {
+    Output: os.Stdout,
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateLoggerConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Stream:")
+	assert.NotContains(t, content, "Output:")
+}
+
+func Test_MigrateLoggerConfig_Alias(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlogger_alias")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "os"
+    fiberlog "github.com/gofiber/fiber/v2/middleware/logger"
+)
+var _ = fiberlog.New(fiberlog.Config{
+    Output: os.Stdout,
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateLoggerConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Stream:")
+	assert.NotContains(t, content, "Output:")
+}
+
+func Test_MigrateLoggerConfig_SingleLine(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlogger_single")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "os"
+    "github.com/gofiber/fiber/v2/middleware/logger"
+)
+var _ = logger.New(logger.Config{Output: os.Stdout})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateLoggerConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "Stream:")
+	assert.NotContains(t, content, "Output:")
+}
