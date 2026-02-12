@@ -64,6 +64,31 @@ replace github.com/gofiber/template/django/v3 => ../django`
 	assert.Contains(t, buf.String(), "Migrated template package versions")
 }
 
+func Test_MigrateTemplateVersions_ReplaceWithVersion(t *testing.T) {
+	dir := t.TempDir()
+
+	_ = writeTempFile(t, dir, `package main
+import _ "github.com/gofiber/template/html/v2"
+`)
+
+	modContent := `module example
+
+go 1.22
+
+require github.com/gofiber/template/html/v2 v2.0.0
+
+replace github.com/gofiber/template/html/v2 v2.0.0 => ../html`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateTemplateVersions(cmd, dir, nil, nil))
+
+	mod := readFile(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, mod, "replace github.com/gofiber/template/html/v3 v3.0.0 => ../html")
+	assert.NotContains(t, mod, "replace github.com/gofiber/template/html/v3 v2.0.0 => ../html")
+}
+
 func Test_MigrateTemplateVersions_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 

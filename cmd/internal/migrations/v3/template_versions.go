@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -140,7 +141,17 @@ func compileTemplateGoModPatterns() map[string]templateGoModPatterns {
 
 func updateTemplateGoModModule(content, newPath, version string, patterns templateGoModPatterns) string {
 	content = patterns.require.ReplaceAllString(content, fmt.Sprintf(`${1}%s %s`, newPath, version))
-	content = patterns.replace.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}${3}`, newPath))
+	content = patterns.replace.ReplaceAllStringFunc(content, func(s string) string {
+		sub := patterns.replace.FindStringSubmatch(s)
+		if len(sub) != 4 {
+			return s
+		}
+
+		if strings.TrimSpace(sub[2]) == "" {
+			return fmt.Sprintf("%s%s%s", sub[1], newPath, sub[3])
+		}
+		return fmt.Sprintf("%s%s %s%s", sub[1], newPath, version, sub[3])
+	})
 
 	return content
 }
