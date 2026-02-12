@@ -20,6 +20,11 @@ type templateTarget struct {
 	version    string
 }
 
+type templateGoModPatterns struct {
+	require *regexp.Regexp
+	replace *regexp.Regexp
+}
+
 // templateTargets maps template packages to their minimum module path and version
 // required for Fiber v3 core compatibility. Source:
 // https://github.com/gofiber/template/pull/437
@@ -72,18 +77,19 @@ func MigrateTemplateVersions(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 func migrateTemplateModules(cwd string) (bool, error) {
 	modChanged := false
+	patterns := compileTemplateGoModPatterns()
 
 	walkErr := filepath.WalkDir(cwd, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
-			if d.Name() == "vendor" {
+			if d.Name() == vendorDirName {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if d.Name() != "go.mod" {
+		if d.Name() != goModFileName {
 			return nil
 		}
 
@@ -100,7 +106,7 @@ func migrateTemplateModules(cwd string) (bool, error) {
 		updated := content
 
 		for pkg, target := range templateTargets {
-			updated = updateTemplateGoModModule(updated, pkg, target.modulePath, target.version)
+			updated = updateTemplateGoModModule(updated, target.modulePath, target.version, patterns[pkg])
 		}
 
 		if updated == content {
@@ -120,14 +126,21 @@ func migrateTemplateModules(cwd string) (bool, error) {
 	return modChanged, nil
 }
 
-func updateTemplateGoModModule(content, pkg, newPath, version string) string {
-	rePath := fmt.Sprintf(`github\.com/gofiber/template/%s(?:/v\d+)?`, regexp.QuoteMeta(pkg))
+func compileTemplateGoModPatterns() map[string]templateGoModPatterns {
+	patterns := make(map[string]templateGoModPatterns, len(templateTargets))
+	for pkg := range templateTargets {
+		rePath := fmt.Sprintf(`github\.com/gofiber/template/%s(?:/v\d+)?`, regexp.QuoteMeta(pkg))
+		patterns[pkg] = templateGoModPatterns{
+			require: regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)%s\s+%s`, rePath, goModVersionPattern)),
+			replace: regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*replace\s+)%s(\s+%s)?(\s+=>\s+)`, rePath, goModVersionPattern)),
+		}
+	}
+	return patterns
+}
 
-	reRequire := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)%s\s+%s`, rePath, goModVersionPattern))
-	content = reRequire.ReplaceAllString(content, fmt.Sprintf(`${1}%s %s`, newPath, version))
-
-	reReplace := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*replace\s+)%s(\s+%s)?(\s+=>\s+)`, rePath, goModVersionPattern))
-	content = reReplace.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}${3}`, newPath))
+func updateTemplateGoModModule(content, newPath, version string, patterns templateGoModPatterns) string {
+	content = patterns.require.ReplaceAllString(content, fmt.Sprintf(`${1}%s %s`, newPath, version))
+	content = patterns.replace.ReplaceAllString(content, fmt.Sprintf(`${1}%s${2}${3}`, newPath))
 
 	return content
 }
