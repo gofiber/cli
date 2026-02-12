@@ -25,6 +25,8 @@ const (
 	fiberSwaggerOld     = "github.com/gofiber/swagger"
 	fiberSwaggerNew     = "github.com/gofiber/contrib/v3/swaggo"
 	goModVersionPattern = `v[a-zA-Z0-9.+-]+`
+	vendorDirName       = "vendor"
+	goModFileName       = "go.mod"
 )
 
 func MigrateSwaggerPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -61,12 +63,12 @@ func migrateSwaggerModules(cwd string) (bool, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if d.Name() == "vendor" {
+			if d.Name() == vendorDirName {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if d.Name() != "go.mod" {
+		if d.Name() != goModFileName {
 			return nil
 		}
 
