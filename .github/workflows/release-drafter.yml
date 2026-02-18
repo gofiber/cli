@@ -1,30 +1,27 @@
 name: Release Drafter
 
 on:
-    workflow_dispatch:
-    push:
-        # branches to consider in the event; optional, defaults to all
-        branches:
-            - master
-    # pull_request event is required only for autolabeler
-    pull_request:
-        # Only following types are handled by the action, but one can default to all as well
-        types: [opened, reopened, synchronize]
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-    update_release_draft:
-        runs-on: ubuntu-latest
-        steps:
-            # (Optional) GitHub Enterprise requires GHE_HOST variable set
-            #- name: Set GHE_HOST
-            #  run: |
-            #    echo "GHE_HOST=${GITHUB_SERVER_URL##https:\/\/}" >> $GITHUB_ENV
-
-            # Drafts your next Release notes as Pull Requests are merged into "master"
-            - uses: release-drafter/release-drafter@v6
-                # (Optional) specify config name to use, relative to .github/. Default: release-drafter.yml
-                # with:
-                #   config-name: my-config.yml
-                #   disable-autolabeler: true
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  update_release_draft:
+    permissions:
+      # write permission is required to create a github release
+      contents: write
+      # write permission is required for autolabeler
+      # otherwise, read permission is required at least
+      pull-requests: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@6db134d15f3909ccc9eefd369f02bd1e9cffdf97 # v6.2.0
+        with:
+          disable-autolabeler: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
