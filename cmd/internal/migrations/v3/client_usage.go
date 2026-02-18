@@ -3,6 +3,7 @@ package v3
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -311,10 +312,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 
 		errName := chooseErrName(out, lines, i)
-		errBlockEnd := blockEndIndex(lines, structStart)
-		if errBlockEnd < structStart {
-			errBlockEnd = structStart
-		}
+		errBlockEnd := max(blockEndIndex(lines, structStart), structStart)
 		errsNeeded := identifierUsedAfter(lines[errBlockEnd+1:], "errs")
 		errsAlreadyDeclared := identifierDeclared(out, lines, i, "errs") || identifierDeclaredInLines(preservedLines, "errs")
 
@@ -868,9 +866,7 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 					failed = true
 					break
 				}
-				for k, v := range params {
-					cfg.params[k] = v
-				}
+				maps.Copy(cfg.params, params)
 				cfg.config = true
 				continue
 			}
@@ -1048,7 +1044,7 @@ func parseQueryParams(expr string) (map[string]string, bool) {
 		return nil, false
 	}
 	result := make(map[string]string)
-	for _, pair := range strings.Split(value, "&") {
+	for pair := range strings.SplitSeq(value, "&") {
 		if pair == "" {
 			continue
 		}

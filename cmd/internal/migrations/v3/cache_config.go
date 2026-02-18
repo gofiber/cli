@@ -24,8 +24,8 @@ func MigrateCacheConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 				return "true"
 			}
 
-			if strings.HasPrefix(expr, "!") {
-				return strings.TrimSpace(strings.TrimPrefix(expr, "!"))
+			if after, ok := strings.CutPrefix(expr, "!"); ok {
+				return strings.TrimSpace(after)
 			}
 
 			return "!(" + expr + ")"
