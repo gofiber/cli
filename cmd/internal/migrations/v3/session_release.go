@@ -221,8 +221,8 @@ func findFunctionBoundaries(src string, lineNum int) (start, end int) {
 func findSessionPackageAliases(src string) []string {
 	var aliases []string
 
-	lines := strings.Split(src, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(src, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, `"github.com/gofiber/fiber/v3/middleware/session"`) {
 			if strings.HasPrefix(line, `"github.com/gofiber/fiber/v3/middleware/session"`) {
@@ -292,14 +292,8 @@ func insertDeferStatements(content string, points []releasePoint) string {
 func hasExistingRelease(lines []string, startLine int, sessVar string) bool {
 	releaseCall := sessVar + ".Release()"
 
-	searchStart := startLine - 2
-	if searchStart < 0 {
-		searchStart = 0
-	}
-	searchEnd := startLine + 5
-	if searchEnd > len(lines) {
-		searchEnd = len(lines)
-	}
+	searchStart := max(startLine-2, 0)
+	searchEnd := min(startLine+5, len(lines))
 
 	for i := searchStart; i < searchEnd; i++ {
 		if strings.Contains(lines[i], releaseCall) {
