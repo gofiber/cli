@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -82,8 +83,8 @@ func LatestCliVersion() (string, error) {
 	return latestVersionByURL("https://api.github.com/repos/gofiber/cli/releases/latest")
 }
 
-// LatestFiberVersionForMajor retrieves the most recent non-prerelease Fiber release for a given major version.
-func LatestFiberVersionForMajor(major uint64) (string, error) {
+// LatestFiberVersionForConstraint retrieves the most recent non-prerelease Fiber release matching the given semver constraint.
+func LatestFiberVersionForConstraint(constraint *semver.Constraints) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -109,17 +110,20 @@ func LatestFiberVersionForMajor(major uint64) (string, error) {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	prefix := fmt.Sprintf("v%d.", major)
 	for _, r := range releases {
 		if r.Draft || r.Prerelease {
 			continue
 		}
-		if strings.HasPrefix(r.TagName, prefix) {
+		v, parseErr := semver.NewVersion(r.TagName)
+		if parseErr != nil {
+			continue
+		}
+		if constraint.Check(v) {
 			return strings.TrimPrefix(r.TagName, "v"), nil
 		}
 	}
 
-	return "", fmt.Errorf("no release found for major version %d", major)
+	return "", errors.New("no matching release found")
 }
 
 func latestVersionByURL(url string) (string, error) {

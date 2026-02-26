@@ -107,14 +107,14 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 	opts.TargetVersionS = strings.TrimPrefix(opts.TargetVersionS, "v")
-	// If only a major version is given (e.g. "--to v3"), resolve to the latest release for that major.
-	if !strings.Contains(opts.TargetVersionS, ".") {
-		if major, parseErr := strconv.ParseUint(opts.TargetVersionS, 10, 64); parseErr == nil {
-			opts.TargetVersionS, err = LatestFiberVersionForMajor(major)
-			if err != nil {
-				return fmt.Errorf("failed to determine latest fiber version for major %d: %w", major, err)
-			}
+	// Resolve partial/wildcard versions (e.g. "3", "3.*", "3.1", "3.1.x") to the
+	// latest matching release from GitHub.
+	if constraint, parseErr := partialVersionConstraint(opts.TargetVersionS); parseErr == nil {
+		resolved, resolveErr := LatestFiberVersionForConstraint(constraint)
+		if resolveErr != nil {
+			return fmt.Errorf("failed to resolve version %q: %w", opts.TargetVersionS, resolveErr)
 		}
+		opts.TargetVersionS = resolved
 	}
 	baseVersion, err := semver.NewVersion(opts.TargetVersionS)
 	if err != nil {
@@ -249,4 +249,46 @@ func pseudoVersionFromHash(repo string, base *semver.Version, hash string) (stri
 	}
 	pv := module.PseudoVersion("v"+strconv.FormatUint(base.Major(), 10), "v"+base.String(), commitTime, short)
 	return strings.TrimPrefix(pv, "v"), nil
+}
+
+// partialVersionConstraint builds a semver constraint for partial or wildcard version strings such as
+// "3", "3.*", "3.x", "3.1", "3.1.*", "3.1.x". It returns an error for full semver strings (x.y.z)
+// or strings with pre-release/build metadata, which should be used as-is.
+func partialVersionConstraint(v string) (*semver.Constraints, error) {
+	// Normalize trailing wildcard segments in order (longest first).
+	v = strings.TrimSuffix(v, ".*.*")
+	v = strings.TrimSuffix(v, ".x.x")
+	v = strings.TrimSuffix(v, ".*")
+	v = strings.TrimSuffix(v, ".x")
+
+	parts := strings.Split(v, ".")
+	if len(parts) >= 3 {
+		return nil, fmt.Errorf("not a partial version: %s", v)
+	}
+
+	// All parts must be plain non-negative integers (no pre-release or build metadata).
+	nums := make([]uint64, len(parts))
+	for i, p := range parts {
+		n, err := strconv.ParseUint(p, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("not a partial version: %s", v)
+		}
+		nums[i] = n
+	}
+
+	var constraintStr string
+	switch len(nums) {
+	case 1: // e.g. "3" → >= 3.0.0, < 4.0.0
+		constraintStr = fmt.Sprintf(">= %d.0.0, < %d.0.0", nums[0], nums[0]+1)
+	case 2: // e.g. "3.1" → >= 3.1.0, < 3.2.0
+		constraintStr = fmt.Sprintf(">= %d.%d.0, < %d.%d.0", nums[0], nums[1], nums[0], nums[1]+1)
+	default:
+		return nil, fmt.Errorf("not a partial version: %s", v)
+	}
+
+	c, err := semver.NewConstraint(constraintStr)
+	if err != nil {
+		return nil, fmt.Errorf("build constraint: %w", err)
+	}
+	return c, nil
 }
