@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -79,6 +80,46 @@ func LatestFiberVersion() (string, error) {
 // LatestCliVersion retrieves the latest Fiber CLI release version from GitHub.
 func LatestCliVersion() (string, error) {
 	return latestVersionByURL("https://api.github.com/repos/gofiber/cli/releases/latest")
+}
+
+// LatestFiberVersionForMajor retrieves the most recent non-prerelease Fiber release for a given major version.
+func LatestFiberVersionForMajor(major uint64) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	url := "https://api.github.com/repos/gofiber/fiber/releases?per_page=100"
+	b, status, err := cachedGET(ctx, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("http request failed: %w", err)
+	}
+	if status != http.StatusOK {
+		msg := strings.TrimSpace(string(b))
+		if msg == "" {
+			msg = http.StatusText(status)
+		}
+		return "", fmt.Errorf("http request failed: %s", msg)
+	}
+
+	var releases []struct {
+		TagName    string `json:"tag_name"`
+		Prerelease bool   `json:"prerelease"`
+		Draft      bool   `json:"draft"`
+	}
+	if err := json.Unmarshal(b, &releases); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	prefix := fmt.Sprintf("v%d.", major)
+	for _, r := range releases {
+		if r.Draft || r.Prerelease {
+			continue
+		}
+		if strings.HasPrefix(r.TagName, prefix) {
+			return strings.TrimPrefix(r.TagName, "v"), nil
+		}
+	}
+
+	return "", fmt.Errorf("no release found for major version %d", major)
 }
 
 func latestVersionByURL(url string) (string, error) {

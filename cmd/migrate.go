@@ -107,6 +107,15 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		}
 	}
 	opts.TargetVersionS = strings.TrimPrefix(opts.TargetVersionS, "v")
+	// If only a major version is given (e.g. "--to v3"), resolve to the latest release for that major.
+	if !strings.Contains(opts.TargetVersionS, ".") {
+		if major, parseErr := strconv.ParseUint(opts.TargetVersionS, 10, 64); parseErr == nil {
+			opts.TargetVersionS, err = LatestFiberVersionForMajor(major)
+			if err != nil {
+				return fmt.Errorf("failed to determine latest fiber version for major %d: %w", major, err)
+			}
+		}
+	}
 	baseVersion, err := semver.NewVersion(opts.TargetVersionS)
 	if err != nil {
 		return fmt.Errorf("invalid version for \"%s\": %w", opts.TargetVersionS, err)

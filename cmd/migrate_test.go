@@ -219,16 +219,22 @@ func main() {
 	require.NoError(t, os.Chdir(dir))
 	defer func() { require.NoError(t, os.Chdir(cwd)) }()
 
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+	clearHTTPCache()
+	httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases?per_page=100",
+		httpmock.NewBytesResponder(200, []byte(`[{"tag_name":"v3.1.0","prerelease":false,"draft":false},{"tag_name":"v3.0.0","prerelease":false,"draft":false}]`)))
+
 	cmd := newMigrateCmd()
 	setupCmd()
 	defer teardownCmd()
 	out, err := runCobraCmd(cmd, "-t=3")
 	require.NoError(t, err)
 
-	assert.Contains(t, out, "Migration from Fiber 2.0.6 to 3.0.0")
+	assert.Contains(t, out, "Migration from Fiber 2.0.6 to 3.1.0")
 
 	content := readFileTB(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, content, "github.com/gofiber/fiber/v3 v3.0.0")
+	assert.Contains(t, content, "github.com/gofiber/fiber/v3 v3.1.0")
 }
 
 func Test_RunGoMod(t *testing.T) {
