@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +81,58 @@ func LatestFiberVersion() (string, error) {
 // LatestCliVersion retrieves the latest Fiber CLI release version from GitHub.
 func LatestCliVersion() (string, error) {
 	return latestVersionByURL("https://api.github.com/repos/gofiber/cli/releases/latest")
+}
+
+// LatestFiberVersionForConstraint retrieves the most recent non-prerelease Fiber release matching the given semver constraint.
+func LatestFiberVersionForConstraint(constraint *semver.Constraints) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	type release struct {
+		TagName    string `json:"tag_name"`
+		Prerelease bool   `json:"prerelease"`
+		Draft      bool   `json:"draft"`
+	}
+
+	for page := 1; page <= 10; page++ {
+		url := fmt.Sprintf("https://api.github.com/repos/gofiber/fiber/releases?per_page=100&page=%d", page)
+		b, status, err := cachedGET(ctx, url, nil)
+		if err != nil {
+			return "", fmt.Errorf("http request failed: %w", err)
+		}
+		if status != http.StatusOK {
+			msg := strings.TrimSpace(string(b))
+			if msg == "" {
+				msg = http.StatusText(status)
+			}
+			return "", fmt.Errorf("http request failed: %s", msg)
+		}
+
+		var releases []release
+		if err := json.Unmarshal(b, &releases); err != nil {
+			return "", fmt.Errorf("decode response: %w", err)
+		}
+
+		// No more releases; all pages exhausted.
+		if len(releases) == 0 {
+			break
+		}
+
+		for _, r := range releases {
+			if r.Draft || r.Prerelease {
+				continue
+			}
+			v, parseErr := semver.NewVersion(r.TagName)
+			if parseErr != nil {
+				continue
+			}
+			if constraint.Check(v) {
+				return strings.TrimPrefix(r.TagName, "v"), nil
+			}
+		}
+	}
+
+	return "", errors.New("no matching release found")
 }
 
 func latestVersionByURL(url string) (string, error) {
