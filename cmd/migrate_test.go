@@ -242,8 +242,10 @@ func main() {
 			httpmock.Activate()
 			defer httpmock.DeactivateAndReset()
 			clearHTTPCache()
-			httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases?per_page=100",
+			httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases?per_page=100&page=1",
 				httpmock.NewBytesResponder(200, []byte(releases)))
+			httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases?per_page=100&page=2",
+				httpmock.NewBytesResponder(200, []byte(`[]`)))
 
 			cmd := newMigrateCmd()
 			setupCmd()

@@ -108,13 +108,16 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 	}
 	opts.TargetVersionS = strings.TrimPrefix(opts.TargetVersionS, "v")
 	// Resolve partial/wildcard versions (e.g. "3", "3.*", "3.1", "3.1.x") to the
-	// latest matching release from GitHub.
-	if constraint, parseErr := partialVersionConstraint(opts.TargetVersionS); parseErr == nil {
-		resolved, resolveErr := LatestFiberVersionForConstraint(constraint)
-		if resolveErr != nil {
-			return fmt.Errorf("failed to resolve version %q: %w", opts.TargetVersionS, resolveErr)
+	// latest matching release from GitHub. Skip when a target hash is provided so
+	// the pseudo-version base is derived directly from the user-specified version.
+	if opts.TargetHash == "" {
+		if constraint, parseErr := partialVersionConstraint(opts.TargetVersionS); parseErr == nil {
+			resolved, resolveErr := LatestFiberVersionForConstraint(constraint)
+			if resolveErr != nil {
+				return fmt.Errorf("failed to resolve version %q: %w", opts.TargetVersionS, resolveErr)
+			}
+			opts.TargetVersionS = resolved
 		}
-		opts.TargetVersionS = resolved
 	}
 	baseVersion, err := semver.NewVersion(opts.TargetVersionS)
 	if err != nil {
