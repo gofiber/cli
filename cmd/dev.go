@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -374,13 +375,7 @@ func (e *escort) hitExtension(ext string) bool {
 	}
 	// remove '.'
 	ext = ext[1:]
-	for _, e := range e.extensions {
-		if ext == e {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(e.extensions, ext)
 }
 
 func (e *escort) ignoredDirs(dir string) bool {
@@ -389,23 +384,11 @@ func (e *escort) ignoredDirs(dir string) bool {
 		return true
 	}
 
-	for _, d := range e.excludeDirs {
-		if dir == d {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(e.excludeDirs, dir)
 }
 
 func (e *escort) ignoredFiles(filename string) bool {
-	for _, f := range e.excludeFiles {
-		if filename == f {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(e.excludeFiles, filename)
 }
 
 func (e *escort) doPreRun() {
