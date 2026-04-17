@@ -29,16 +29,12 @@ exclude-contributors:
 version-resolver:
   major:
     labels:
-      - 'major'
       - '❗ BreakingChange'
   minor:
     labels:
-      - 'minor'
       - '✏️ Feature'
-      - '📝 Proposal'
   patch:
     labels:
-      - 'patch'
       - '📒 Documentation'
       - '☢️ Bug'
       - '🤖 Dependencies'
