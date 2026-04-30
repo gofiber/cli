@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/containerd/console v1.0.5
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.0
 	github.com/gofiber/fiber/v3 v3.2.0
 	github.com/gofrs/flock v0.13.0
 	github.com/jarcoal/httpmock v1.4.1
