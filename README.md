@@ -200,3 +200,9 @@ fiber version [flags]
 ```text
   -h, --help   help for version
 ```
+
+## ☕ Supporters
+
+Fiber is an open-source project that runs on donations to pay the bills, e.g., our domain name, hosting, and serverless infrastructure. If you want to support Fiber, please become a [GitHub Sponsor](https://github.com/sponsors/gofiber).
+
+<!-- sponsors --><!-- sponsors -->
