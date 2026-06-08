@@ -99,6 +99,49 @@ replace github.com/gofiber/contrib/websocket => ../local`
 	assert.Contains(t, buf.String(), "Migrating contrib packages")
 }
 
+func Test_MigrateContribPackages_Rename(t *testing.T) {
+	dir := t.TempDir()
+
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		if module != "otel" {
+			return "", fmt.Errorf("unexpected module %s", module)
+		}
+		return "v1.2.0", nil
+	})
+	t.Cleanup(restore)
+
+	file := writeTempFile(t, dir, `package main
+import (
+    otel "github.com/gofiber/contrib/otelfiber/v2"
+)
+
+var _ = otel.Middleware`)
+
+	modContent := `module example
+
+go 1.22
+
+require github.com/gofiber/contrib/otelfiber/v2 v2.0.0
+
+replace github.com/gofiber/contrib/otelfiber/v2 => ../local`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContribPackages(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "github.com/gofiber/contrib/v3/otel")
+	assert.NotContains(t, content, "github.com/gofiber/contrib/otelfiber/v2")
+
+	mod := readFile(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/otel v1.2.0")
+	assert.Contains(t, mod, "replace github.com/gofiber/contrib/v3/otel => ../local")
+	assert.NotContains(t, mod, "github.com/gofiber/contrib/otelfiber/v2")
+
+	assert.Contains(t, buf.String(), "Migrating contrib packages")
+}
+
 func Test_MigrateContribPackages_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 
