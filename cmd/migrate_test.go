@@ -82,6 +82,7 @@ import (
     "github.com/gofiber/fiber/v2/middleware/monitor"
     "github.com/gofiber/fiber/v2/middleware/csrf"
     "github.com/gofiber/fiber/v2/middleware/keyauth"
+    "net/http/httptest"
 )
 
 func handler(c *fiber.Ctx) error {
@@ -110,6 +111,8 @@ func main() {
     app.Static("/", "./public")
     app.Add(fiber.MethodGet, "/foo", handler)
     app.Mount("/api", app)
+    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+    _ = app.Test(req, 250)
     app.ListenTLS(":443", "cert.pem", "key.pem")
     _ = fiber.MIMEApplicationJavaScript
     _ = monitor.New()
@@ -144,6 +147,7 @@ func main() {
 	at.NotContains(content, "keyauth.TokenFromContext")
 	at.NotContains(content, "ContextKey")
 	at.Contains(content, ".Use(\"/api\", app)")
+	at.Contains(content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(250) * time.Millisecond})")
 	at.Contains(content, ".Listen(")
 	at.Contains(content, "MIMETextJavaScript")
 	at.NotContains(content, "MIMEApplicationJavaScript")
