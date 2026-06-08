@@ -48,8 +48,6 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveByteRange, "range", false, "enable byte range requests")
 	serveCmd.Flags().BoolVar(&servePrefork, "prefork", false, "enable prefork mode")
 	serveCmd.Flags().BoolVar(&serveQuiet, "quiet", false, "disable startup message")
-
-	rootCmd.AddCommand(serveCmd)
 }
 
 var serveCmd = &cobra.Command{
