@@ -45,8 +45,9 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 	if hash == "" {
 		reader := bufio.NewReader(cmd.InOrStdin())
 		for _, m := range modules {
-			latest := latestContribVersionFn(m)
-			prompt := fmt.Sprintf("Version for %s%s (default %s): ", contribModulePrefix, m, latest)
+			targetModule := internal.NormalizeContribModule(m)
+			latest := latestContribVersionFn(targetModule)
+			prompt := fmt.Sprintf("Version for %s%s (default %s): ", contribModulePrefix, targetModule, latest)
 			cmd.Print(prompt)
 			line, err := reader.ReadString('\n')
 			if err != nil && err != io.EOF {
@@ -57,12 +58,13 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 				v = latest
 			}
 			if v != "" {
-				versions[m] = v
+				versions[targetModule] = v
 			}
 		}
 	} else {
 		for _, m := range modules {
-			latest := latestContribVersionFn(m)
+			targetModule := internal.NormalizeContribModule(m)
+			latest := latestContribVersionFn(targetModule)
 			if latest == "" {
 				continue
 			}
@@ -74,7 +76,7 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
-			versions[m] = pv
+			versions[targetModule] = pv
 		}
 	}
 	if len(versions) == 0 {
@@ -86,13 +88,14 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		return re.ReplaceAllStringFunc(content, func(s string) string {
 			sub := re.FindStringSubmatch(s)
 			mod := sub[1]
+			targetModule := internal.NormalizeContribModule(mod)
 			rest := sub[2]
-			ver, ok := versions[mod]
+			ver, ok := versions[targetModule]
 			if !ok {
 				return s
 			}
 			major := majorFromVersion(ver)
-			return fmt.Sprintf("\"%s%s%s\"", contribModulePrefix+mod, majorPath(major), rest)
+			return fmt.Sprintf("\"%s%s%s\"", contribModulePrefix+targetModule, majorPath(major), rest)
 		})
 	})
 	if err != nil {
@@ -109,12 +112,14 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 		content := string(b)
 		for mod, ver := range versions {
 			major := majorFromVersion(ver)
-			re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/contrib/(?:v\d+/)?%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(mod)))
 			newLine := fmt.Sprintf(`${1}%s%s %s`, contribModulePrefix+mod, majorPath(major), ver)
-			replaced := re.ReplaceAllString(content, newLine)
-			if replaced != content {
-				content = replaced
-				changedMod = true
+			for _, oldModule := range internal.ContribModuleAliases(mod) {
+				re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)github.com/gofiber/contrib/(?:v\d+/)?%s(?:/v\d+)?\s+v[\w\.-]+`, regexp.QuoteMeta(oldModule)))
+				replaced := re.ReplaceAllString(content, newLine)
+				if replaced != content {
+					content = replaced
+					changedMod = true
+				}
 			}
 		}
 		if changedMod {

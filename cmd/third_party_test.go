@@ -47,6 +47,49 @@ require github.com/gofiber/contrib/v3/monitor v1.0.0
 	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/monitor v1.2.3")
 }
 
+func Test_refreshContrib_RenamedModule(t *testing.T) {
+	dir := t.TempDir()
+	mainSrc := `package main
+
+import _ "github.com/gofiber/contrib/fiberzap"
+
+func main(){}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o600))
+	modSrc := `module test
+
+require github.com/gofiber/contrib/fiberzap v1.0.2
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modSrc), 0o600))
+
+	old := latestContribVersionFn
+	latestContribVersionFn = func(module string) string {
+		if module != "zap" {
+			t.Fatalf("unexpected module %s", module)
+		}
+		return "v1.1.0"
+	}
+	defer func() { latestContribVersionFn = old }()
+
+	c := &cobra.Command{}
+	c.SetIn(bytes.NewBufferString("\n"))
+	var buf bytes.Buffer
+	c.SetOut(&buf)
+
+	changed, err := refreshContrib(c, dir, "")
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	content, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "github.com/gofiber/contrib/v3/zap")
+	assert.NotContains(t, string(content), "github.com/gofiber/contrib/fiberzap")
+
+	gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
+	require.NoError(t, err)
+	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/zap v1.1.0")
+	assert.NotContains(t, string(gm), "github.com/gofiber/contrib/fiberzap")
+}
+
 func Test_refreshStorage(t *testing.T) {
 	dir := t.TempDir()
 	mainSrc := `package main

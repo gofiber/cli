@@ -24,10 +24,6 @@ const (
 	contribV3Prefix = "github.com/gofiber/contrib/v3/"
 )
 
-var contribPackageRenames = map[string]string{
-	"otelfiber/v2": "otel",
-}
-
 // MigrateContribPackages updates imports and module requirements that reference
 // github.com/gofiber/contrib to use the v3 module path.
 func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -41,7 +37,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			if hasVersionPrefix(rest) {
 				return match
 			}
-			rest = normalizeContribModule(rest)
+			rest = internal.NormalizeContribModule(rest)
 			return sub[1] + contribV3Prefix + rest
 		})
 	})
@@ -85,7 +81,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			if rest == match || hasVersionPrefix(rest) {
 				continue
 			}
-			rest = normalizeContribModule(rest)
+			rest = internal.NormalizeContribModule(rest)
 
 			version, err := contribV3Version(rest)
 			if err != nil {
@@ -114,13 +110,6 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 
 	cmd.Println("Migrating contrib packages")
 	return nil
-}
-
-func normalizeContribModule(rest string) string {
-	if renamed, ok := contribPackageRenames[rest]; ok {
-		return renamed
-	}
-	return rest
 }
 
 func hasVersionPrefix(rest string) bool {
