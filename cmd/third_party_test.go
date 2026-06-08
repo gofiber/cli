@@ -49,12 +49,12 @@ require github.com/gofiber/contrib/v3/monitor v1.0.0
 
 func Test_refreshContrib_RenamedModule(t *testing.T) {
 	tests := []struct {
-		name         string
-		oldImport    string
-		oldRequire   string
-		newModule    string
-		newVersion   string
-		notContains  string
+		name        string
+		oldImport   string
+		oldRequire  string
+		newModule   string
+		newVersion  string
+		notContains string
 	}{
 		{
 			name:        "zap",

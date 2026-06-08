@@ -1,6 +1,8 @@
 package internal
 
-import "strings"
+import (
+	"strings"
+)
 
 var contribModuleRenames = map[string]string{
 	"fibernewrelic": "newrelic",
