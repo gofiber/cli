@@ -37,6 +37,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			if hasVersionPrefix(rest) {
 				return match
 			}
+			rest = internal.NormalizeContribModule(rest)
 			return sub[1] + contribV3Prefix + rest
 		})
 	})
@@ -80,6 +81,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			if rest == match || hasVersionPrefix(rest) {
 				continue
 			}
+			rest = internal.NormalizeContribModule(rest)
 
 			version, err := contribV3Version(rest)
 			if err != nil {
