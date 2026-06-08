@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const renamedZapModule = "zap"
+
 func Test_refreshContrib(t *testing.T) {
 	dir := t.TempDir()
 	mainSrc := `package main
@@ -60,10 +62,10 @@ func Test_refreshContrib_RenamedModule(t *testing.T) {
 		notContains string
 	}{
 		{
-			name:        "zap",
+			name:        renamedZapModule,
 			oldImport:   "github.com/gofiber/contrib/fiberzap",
 			oldRequire:  "github.com/gofiber/contrib/fiberzap",
-			newModule:   "zap",
+			newModule:   renamedZapModule,
 			newVersion:  "v1.1.0",
 			notContains: "github.com/gofiber/contrib/fiberzap",
 		},
@@ -91,7 +93,7 @@ func Test_refreshContrib_RenamedModule(t *testing.T) {
 			mainSrc := "package main\n\nimport _ " + `"` + tt.oldImport + `"` + "\n\nfunc main(){}"
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o600))
 			modSrc := "module test\n\nrequire " + tt.oldRequire + " v1.0.0\n"
-			if tt.name == "zap" {
+			if tt.name == renamedZapModule {
 				modSrc = "module test\n\nrequire " + tt.oldRequire + " v1.0.2\n"
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modSrc), 0o600))
