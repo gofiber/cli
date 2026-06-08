@@ -48,46 +48,80 @@ require github.com/gofiber/contrib/v3/monitor v1.0.0
 }
 
 func Test_refreshContrib_RenamedModule(t *testing.T) {
-	dir := t.TempDir()
-	mainSrc := `package main
-
-import _ "github.com/gofiber/contrib/fiberzap"
-
-func main(){}`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o600))
-	modSrc := `module test
-
-require github.com/gofiber/contrib/fiberzap v1.0.2
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modSrc), 0o600))
-
-	old := latestContribVersionFn
-	latestContribVersionFn = func(module string) string {
-		if module != "zap" {
-			t.Fatalf("unexpected module %s", module)
-		}
-		return "v1.1.0"
+	tests := []struct {
+		name         string
+		oldImport    string
+		oldRequire   string
+		newModule    string
+		newVersion   string
+		notContains  string
+	}{
+		{
+			name:        "zap",
+			oldImport:   "github.com/gofiber/contrib/fiberzap",
+			oldRequire:  "github.com/gofiber/contrib/fiberzap",
+			newModule:   "zap",
+			newVersion:  "v1.1.0",
+			notContains: "github.com/gofiber/contrib/fiberzap",
+		},
+		{
+			name:        "i18n",
+			oldImport:   "github.com/gofiber/contrib/fiberi18n",
+			oldRequire:  "github.com/gofiber/contrib/fiberi18n",
+			newModule:   "i18n",
+			newVersion:  "v1.0.0",
+			notContains: "github.com/gofiber/contrib/fiberi18n",
+		},
+		{
+			name:        "zerolog",
+			oldImport:   "github.com/gofiber/contrib/fiberzerolog",
+			oldRequire:  "github.com/gofiber/contrib/fiberzerolog",
+			newModule:   "zerolog",
+			newVersion:  "v1.0.0",
+			notContains: "github.com/gofiber/contrib/fiberzerolog",
+		},
 	}
-	defer func() { latestContribVersionFn = old }()
 
-	c := &cobra.Command{}
-	c.SetIn(bytes.NewBufferString("\n"))
-	var buf bytes.Buffer
-	c.SetOut(&buf)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mainSrc := "package main\n\nimport _ " + `"` + tt.oldImport + `"` + "\n\nfunc main(){}"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o600))
+			modSrc := "module test\n\nrequire " + tt.oldRequire + " v1.0.0\n"
+			if tt.name == "zap" {
+				modSrc = "module test\n\nrequire " + tt.oldRequire + " v1.0.2\n"
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modSrc), 0o600))
 
-	changed, err := refreshContrib(c, dir, "")
-	require.NoError(t, err)
-	assert.True(t, changed)
+			old := latestContribVersionFn
+			latestContribVersionFn = func(module string) string {
+				if module != tt.newModule {
+					t.Fatalf("unexpected module %s", module)
+				}
+				return tt.newVersion
+			}
+			defer func() { latestContribVersionFn = old }()
 
-	content, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "github.com/gofiber/contrib/v3/zap")
-	assert.NotContains(t, string(content), "github.com/gofiber/contrib/fiberzap")
+			c := &cobra.Command{}
+			c.SetIn(bytes.NewBufferString("\n"))
+			var buf bytes.Buffer
+			c.SetOut(&buf)
 
-	gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
-	require.NoError(t, err)
-	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/zap v1.1.0")
-	assert.NotContains(t, string(gm), "github.com/gofiber/contrib/fiberzap")
+			changed, err := refreshContrib(c, dir, "")
+			require.NoError(t, err)
+			assert.True(t, changed)
+
+			content, err := os.ReadFile(filepath.Join(dir, "main.go")) // #nosec G304
+			require.NoError(t, err)
+			assert.Contains(t, string(content), "github.com/gofiber/contrib/v3/"+tt.newModule)
+			assert.NotContains(t, string(content), tt.notContains)
+
+			gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
+			require.NoError(t, err)
+			assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/"+tt.newModule+" "+tt.newVersion)
+			assert.NotContains(t, string(gm), tt.notContains)
+		})
+	}
 }
 
 func Test_refreshStorage(t *testing.T) {

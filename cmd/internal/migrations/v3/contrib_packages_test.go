@@ -128,6 +128,15 @@ func Test_MigrateContribPackages_Rename(t *testing.T) {
 			oldVersion:   "v1.3.1",
 		},
 		{
+			name:         "i18n",
+			oldPath:      "github.com/gofiber/contrib/fiberi18n",
+			newModule:    "i18n",
+			newVersion:   "v1.0.0",
+			importAlias:  "i18n",
+			importSymbol: "New",
+			oldVersion:   "v1.0.0",
+		},
+		{
 			name:         "sentry",
 			oldPath:      "github.com/gofiber/contrib/fibersentry",
 			newModule:    "sentry",
@@ -144,6 +153,15 @@ func Test_MigrateContribPackages_Rename(t *testing.T) {
 			importAlias:  "zap",
 			importSymbol: "New",
 			oldVersion:   "v1.0.2",
+		},
+		{
+			name:         "zerolog",
+			oldPath:      "github.com/gofiber/contrib/fiberzerolog",
+			newModule:    "zerolog",
+			newVersion:   "v1.0.0",
+			importAlias:  "zerolog",
+			importSymbol: "NewLogger",
+			oldVersion:   "v1.0.0",
 		},
 	}
 
