@@ -20,9 +20,19 @@ func TestNormalizeContribModule(t *testing.T) {
 			want:   "otel",
 		},
 		{
+			name:   "otel legacy subpackage",
+			module: "otelfiber/v2/middleware",
+			want:   "otel/middleware",
+		},
+		{
 			name:   "i18n legacy name",
 			module: "fiberi18n",
 			want:   "i18n",
+		},
+		{
+			name:   "i18n legacy subpackage",
+			module: "fiberi18n/messages",
+			want:   "i18n/messages",
 		},
 		{
 			name:   "zerolog legacy name",

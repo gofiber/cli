@@ -42,10 +42,15 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 	}
 
 	versions := make(map[string]string, len(modules))
+	seenModules := make(map[string]struct{}, len(modules))
 	if hash == "" {
 		reader := bufio.NewReader(cmd.InOrStdin())
 		for _, m := range modules {
 			targetModule := internal.NormalizeContribModule(m)
+			if _, ok := seenModules[targetModule]; ok {
+				continue
+			}
+			seenModules[targetModule] = struct{}{}
 			latest := latestContribVersionFn(targetModule)
 			prompt := fmt.Sprintf("Version for %s%s (default %s): ", contribModulePrefix, targetModule, latest)
 			cmd.Print(prompt)
@@ -64,6 +69,10 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 	} else {
 		for _, m := range modules {
 			targetModule := internal.NormalizeContribModule(m)
+			if _, ok := seenModules[targetModule]; ok {
+				continue
+			}
+			seenModules[targetModule] = struct{}{}
 			latest := latestContribVersionFn(targetModule)
 			if latest == "" {
 				continue

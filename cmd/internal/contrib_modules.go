@@ -14,15 +14,25 @@ var contribModuleRenames = map[string]string{
 }
 
 func NormalizeContribModule(module string) string {
-	if renamed, ok := contribModuleRenames[module]; ok {
+	parts := strings.Split(module, "/")
+	if len(parts) == 0 {
+		return module
+	}
+
+	renamed, ok := contribModuleRenames[parts[0]]
+	if !ok {
+		return module
+	}
+
+	rest := parts[1:]
+	if len(rest) > 0 && isContribModuleMajorVersion(rest[0]) {
+		rest = rest[1:]
+	}
+
+	if len(rest) == 0 {
 		return renamed
 	}
-	if base, ok := trimContribModuleMajorSuffix(module); ok {
-		if renamed, exists := contribModuleRenames[base]; exists {
-			return renamed
-		}
-	}
-	return module
+	return renamed + "/" + strings.Join(rest, "/")
 }
 
 func ContribModuleAliases(module string) []string {
@@ -35,15 +45,14 @@ func ContribModuleAliases(module string) []string {
 	return aliases
 }
 
-func trimContribModuleMajorSuffix(module string) (string, bool) {
-	idx := strings.LastIndex(module, "/v")
-	if idx < 0 || idx+2 >= len(module) {
-		return "", false
+func isContribModuleMajorVersion(segment string) bool {
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
 	}
-	for _, ch := range module[idx+2:] {
+	for _, ch := range segment[1:] {
 		if ch < '0' || ch > '9' {
-			return "", false
+			return false
 		}
 	}
-	return module[:idx], true
+	return true
 }
