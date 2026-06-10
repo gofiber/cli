@@ -1,6 +1,7 @@
 name: Test
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -10,6 +11,10 @@ on:
   pull_request:
     paths-ignore:
       - "**/*.md"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -20,6 +25,7 @@ jobs:
         go-version: [1.25.x]
         platform: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
     steps:
     - name: Check out repository
       uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -30,5 +36,6 @@ jobs:
         cache: true
         cache-dependency-path: '**/go.sum'
     - name: Run Test
-      run: |
-        go run gotest.tools/gotestsum@latest -f testname -- ./... -race -count=1 -coverprofile=coverage.txt -covermode=atomic -shuffle=on
+      uses: gofiber/.github/.github/actions/gotestsum@main
+      with:
+        args: ./... -race -count=1 -coverprofile=coverage.txt -covermode=atomic -shuffle=on
