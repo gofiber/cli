@@ -38,4 +38,6 @@ jobs:
     - name: Run Test
       uses: gofiber/.github/.github/actions/gotestsum@main
       with:
-        args: ./... -race -count=1 -coverprofile=coverage.txt -covermode=atomic -shuffle=on
+        packages: ./...
+        rerun-fails: '2'
+        args: -race -count=1 -coverprofile=coverage.txt -covermode=atomic -shuffle=on
