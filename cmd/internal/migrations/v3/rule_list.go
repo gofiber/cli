@@ -97,24 +97,42 @@ type ruleEntry struct {
 	key  string // the key unquoted, for ranking
 }
 
-var reRuleEntry = regexp.MustCompile(`^\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*:\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*,?\s*$`)
+// reRuleEntry matches one "key": "value" pair. Both sides are Go string
+// literals, interpreted or raw.
+var reRuleEntry = regexp.MustCompile(`("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*:\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
 
-// parseRuleMap reads the entries of a map literal body, reporting false when
-// any line is something other than a string-to-string pair or a comment.
+// parseRuleMap reads the entries of a map literal body. It reports false when
+// anything sits between the pairs other than separators and comments, which is
+// how a computed key or value is left alone rather than guessed at. Entries may
+// share a line, so this walks the body rather than its lines.
 func parseRuleMap(body string) ([]ruleEntry, bool) {
 	var rules []ruleEntry
-	for line := range strings.SplitSeq(body, "\n") {
-		trimmed := strings.TrimSpace(line)
+	last := 0
+	for _, m := range reRuleEntry.FindAllStringSubmatchIndex(body, -1) {
+		if !onlySeparators(body[last:m[0]]) {
+			return nil, false
+		}
+		key := body[m[2]:m[3]]
+		rules = append(rules, ruleEntry{from: key, to: body[m[4]:m[5]], key: unquoteRuleKey(key)})
+		last = m[1]
+	}
+	if !onlySeparators(body[last:]) {
+		return nil, false
+	}
+	return rules, len(rules) > 0
+}
+
+// onlySeparators reports whether the text between two entries is nothing but
+// commas, whitespace and comments.
+func onlySeparators(s string) bool {
+	for line := range strings.SplitSeq(s, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), ","))
 		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
 			continue
 		}
-		m := reRuleEntry.FindStringSubmatch(line)
-		if m == nil {
-			return nil, false
-		}
-		rules = append(rules, ruleEntry{from: m[1], to: m[2], key: unquoteRuleKey(m[1])})
+		return false
 	}
-	return rules, len(rules) > 0
+	return true
 }
 
 func unquoteRuleKey(s string) string {

@@ -61,6 +61,36 @@ var _ = rewrite.New(rewrite.Config{
 	assert.Contains(t, content, `{From: "/js/*", To: "/public/javascript/$1"},`)
 }
 
+func Test_MigrateRuleList_EntriesSharingALine(t *testing.T) {
+	t.Parallel()
+
+	content, _ := migrateRuleList(t, `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{
+	Rules: map[string]string{"/old": "/new", "/old/*": "/new/$1"},
+})`)
+
+	assert.Contains(t, content, `{From: "/old", To: "/new"},`)
+	assert.Contains(t, content, `{From: "/old/*", To: "/new/$1"},`)
+	assert.NotContains(t, content, "map[string]string")
+}
+
+func Test_MigrateRuleList_KeepsCommentsOut(t *testing.T) {
+	t.Parallel()
+
+	content, _ := migrateRuleList(t, `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{
+	Rules: map[string]string{
+		// the old docs path
+		"/old": "/new",
+	},
+})`)
+
+	assert.Contains(t, content, `{From: "/old", To: "/new"},`)
+	assert.NotContains(t, content, "map[string]string")
+}
+
 func Test_MigrateRuleList_KeepsTheOrderTheMapAnswered(t *testing.T) {
 	t.Parallel()
 

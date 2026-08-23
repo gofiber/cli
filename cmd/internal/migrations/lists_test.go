@@ -96,7 +96,7 @@ require github.com/valyala/fasthttp v1.0.0`
 	})
 }
 
-func Test_DoMigration_RuleListRunsWithinV3From36(t *testing.T) {
+func Test_DoMigration_RuleListFollowsTheTarget(t *testing.T) {
 	source := `package main
 
 import "github.com/gofiber/fiber/v3/middleware/redirect"
@@ -111,11 +111,11 @@ var _ = redirect.New(redirect.Config{
 		target  string
 		migrate bool
 	}{
-		{name: "the release it landed in", curr: "3.6.0", target: "3.6.1", migrate: true},
-		{name: "later within v3", curr: "3.7.0", target: "3.9.1", migrate: true},
-		{name: "before the field existed", curr: "3.5.0", target: "3.6.0", migrate: false},
-		{name: "coming from v2", curr: "2.52.0", target: "3.6.0", migrate: false},
-		{name: "leaving v3", curr: "3.6.0", target: "4.0.0", migrate: false},
+		{name: "3.5.0 asking for 3.6.0", curr: "3.5.0", target: "3.6.0", migrate: true},
+		{name: "v2 asking for 3.6.0", curr: "2.52.0", target: "3.6.0", migrate: true},
+		{name: "already on 3.6.0, going further", curr: "3.6.0", target: "3.9.1", migrate: true},
+		{name: "target predates the field", curr: "3.5.0", target: "3.5.9", migrate: false},
+		{name: "target leaves v3", curr: "3.6.0", target: "4.0.0", migrate: false},
 	}
 
 	for _, tc := range tests {
