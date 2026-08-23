@@ -88,11 +88,10 @@ var Migrations = []Migration{
 		},
 	},
 	{
-		// Only when the target carries the field: redirect and rewrite gained
-		// RuleList in 3.6.0, and Rules keeps working, so rewriting a config for
-		// an older target would name a field it does not have.
-		From: ">=2.0.0-0",
-		To:   ">=3.6.0-0",
+		// redirect and rewrite gained RuleList in 3.6.0 and Rules keeps working
+		// beside it, so this runs within v3 from that release on.
+		From: ">=3.6.0-0",
+		To:   "<4.0.0-0",
 		Functions: []MigrationFn{
 			v3migrations.MigrateRuleList,
 		},
