@@ -84,6 +84,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateBasicauthConfig,
 			v3migrations.MigrateBasicauthStorePassword,
 			v3migrations.MigrateReqHeaderParser,
+			v3migrations.MigrateRuleList,
 			MigrateGoVersion("1.25"),
 		},
 	},
