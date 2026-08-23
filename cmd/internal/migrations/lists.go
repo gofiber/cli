@@ -84,8 +84,17 @@ var Migrations = []Migration{
 			v3migrations.MigrateBasicauthConfig,
 			v3migrations.MigrateBasicauthStorePassword,
 			v3migrations.MigrateReqHeaderParser,
-			v3migrations.MigrateRuleList,
 			MigrateGoVersion("1.25"),
+		},
+	},
+	{
+		// Only when the target carries the field: redirect and rewrite gained
+		// RuleList in 3.6.0, and Rules keeps working, so rewriting a config for
+		// an older target would name a field it does not have.
+		From: ">=2.0.0-0",
+		To:   ">=3.6.0-0",
+		Functions: []MigrationFn{
+			v3migrations.MigrateRuleList,
 		},
 	},
 }

@@ -54,8 +54,11 @@ func migrateRuleListContent(content string) string {
 	return content
 }
 
+// importRe matches the middleware import under any module major, because the
+// package-path migration runs first and has already moved it by the time this
+// one reads the file.
 func importRe(pkg string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w.]+)\s+)?"github\.com/gofiber/fiber/v3/middleware/` + pkg + `"`)
+	return regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w.]+)\s+)?"github\.com/gofiber/fiber(?:/v\d+)?/middleware/` + pkg + `"`)
 }
 
 // rewriteRuleMap replaces the one Rules map inside a config block. The block is
