@@ -1,4 +1,4 @@
-TOOLCHAIN ?= go1.25.0
+TOOLCHAIN ?= go1.26.0
 
 ## help: 💡 Display available commands
 .PHONY: help
@@ -44,7 +44,7 @@ lint:
 ## modernize: 🛠 Run gopls modernize
 .PHONY: modernize
 modernize:
-	GOTOOLCHAIN=$(GOVERSION) go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test=false ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test=false ./...
 
 ## test: 🚦 Execute all tests
 .PHONY: test

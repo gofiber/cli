@@ -12,6 +12,6 @@ jobs:
   automerge:
     uses: gofiber/.github/.github/workflows/dependabot-automerge.yml@main
     with:
-      match_pattern: 'Tests|lint'
+      match_pattern: 'Build|lint'
     secrets:
       github-token: ${{ secrets.PR_TOKEN }}
