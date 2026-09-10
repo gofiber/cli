@@ -87,6 +87,17 @@ var Migrations = []Migration{
 			MigrateGoVersion("1.25"),
 		},
 	},
+	{
+		// Keyed on where the migration is going: redirect and rewrite gained
+		// RuleList in 3.6.0, and it is a v3 field, so the target has to land in
+		// that band. Any current version qualifies, since a v2 config carries
+		// the same Rules map.
+		From: ">=2.0.0-0",
+		To:   ">=3.6.0-0 <4.0.0-0",
+		Functions: []MigrationFn{
+			v3migrations.MigrateRuleList,
+		},
+	},
 }
 
 func migrationName(fn MigrationFn) string {
