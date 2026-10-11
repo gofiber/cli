@@ -1,4 +1,7 @@
-# cli
+<h1 align="center">
+  <img height="125" alt="Fiber CLI" src="https://raw.githubusercontent.com/gofiber/cli/master/.github/logo-dark.svg#gh-dark-mode-only" />
+  <img height="125" alt="Fiber CLI" src="https://raw.githubusercontent.com/gofiber/cli/master/.github/logo.svg#gh-light-mode-only" />
+</h1>
 
 Fiber Command Line Interface
 
