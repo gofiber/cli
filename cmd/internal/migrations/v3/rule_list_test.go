@@ -91,6 +91,24 @@ var _ = redirect.New(redirect.Config{
 	assert.NotContains(t, content, "map[string]string")
 }
 
+func Test_MigrateRuleList_LeavesACommentedOutEntryOut(t *testing.T) {
+	t.Parallel()
+
+	content, _ := migrateRuleList(t, `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{
+	Rules: map[string]string{
+		"/old": "/new", // was "/older": "/new"
+		// "/legacy/*": "/v1/$1",
+	},
+})`)
+
+	assert.Contains(t, content, `{From: "/old", To: "/new"},`)
+	assert.NotContains(t, content, `{From: "/older"`)
+	assert.NotContains(t, content, `{From: "/legacy/*"`)
+	assert.NotContains(t, content, "map[string]string")
+}
+
 func Test_MigrateRuleList_KeepsTheOrderTheMapAnswered(t *testing.T) {
 	t.Parallel()
 
@@ -110,6 +128,42 @@ var _ = redirect.New(redirect.Config{
 	require.NotEqual(t, -1, users)
 	require.NotEqual(t, -1, catchAll)
 	assert.Less(t, users, catchAll, "the specific rule must be tried first")
+}
+
+func Test_MigrateRuleList_RanksAKeyAsItsMiddlewareReadsIt(t *testing.T) {
+	t.Parallel()
+
+	// redirect compiles a key as a regexp, so its "." pins nothing and the two
+	// keys tie on their prefix; rewrite reads the same "." as path text.
+	tests := []struct {
+		pkg   string
+		first string
+		then  string
+	}{
+		{pkg: "redirect", first: "/docs/v2*/changelog", then: "/docs/v2.1/*"},
+		{pkg: "rewrite", first: "/docs/v2.1/*", then: "/docs/v2*/changelog"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.pkg, func(t *testing.T) {
+			t.Parallel()
+
+			content, _ := migrateRuleList(t, `package main
+import "github.com/gofiber/fiber/v3/middleware/`+tc.pkg+`"
+var _ = `+tc.pkg+`.New(`+tc.pkg+`.Config{
+	Rules: map[string]string{
+		"/docs/v2.1/*":        "/archive/$1",
+		"/docs/v2*/changelog": "/changelog",
+	},
+})`)
+
+			first := strings.Index(content, `{From: "`+tc.first+`"`)
+			then := strings.Index(content, `{From: "`+tc.then+`"`)
+			require.NotEqual(t, -1, first)
+			require.NotEqual(t, -1, then)
+			assert.Less(t, first, then)
+		})
+	}
 }
 
 func Test_MigrateRuleList_ImportAlias(t *testing.T) {

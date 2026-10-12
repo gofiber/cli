@@ -16,7 +16,12 @@ import (
 // ruleListPackages are the middlewares that took a rule map and now take an
 // ordered list. Both deprecated the map for the same reason and their new
 // fields are spelled the same, so one migration serves them.
-var ruleListPackages = []string{"redirect", "rewrite"}
+var ruleListPackages = []struct{ name, patternBytes string }{
+	// patternBytes are the key bytes ranked as syntax rather than path text:
+	// redirect compiles a key as a regexp, rewrite reads only "*".
+	{name: "redirect", patternBytes: `*.[](){}+?^|\$`},
+	{name: "rewrite", patternBytes: "*"},
+}
 
 var reRuleMap = regexp.MustCompile(`(?m)^([ \t]*)Rules:\s*map\[string\]string\{`)
 
@@ -44,10 +49,10 @@ func MigrateRuleList(cmd *cobra.Command, cwd string, _, _ *semver.Version) error
 
 func migrateRuleListContent(content string) string {
 	for _, pkg := range ruleListPackages {
-		for _, alias := range collectAliases(content, importRe(pkg), []string{pkg}) {
+		for _, alias := range collectAliases(content, importRe(pkg.name), []string{pkg.name}) {
 			pattern := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config\{`)
 			content = IterateConfigBlocks(content, pattern, func(cfg string) string {
-				return rewriteRuleMap(cfg, alias)
+				return rewriteRuleMap(cfg, alias, pkg.patternBytes)
 			})
 		}
 	}
@@ -61,7 +66,7 @@ func importRe(pkg string) *regexp.Regexp {
 // rewriteRuleMap replaces the one Rules map inside a config block. The block is
 // whatever IterateConfigBlocks handed over, so a nested config of another
 // package is not reachable from here.
-func rewriteRuleMap(cfg, alias string) string {
+func rewriteRuleMap(cfg, alias, patternBytes string) string {
 	loc := reRuleMap.FindStringSubmatchIndex(cfg)
 	if loc == nil {
 		return cfg
@@ -79,7 +84,7 @@ func rewriteRuleMap(cfg, alias string) string {
 		// instance. Left alone rather than guessed at; the map still compiles.
 		return cfg
 	}
-	sortRules(rules)
+	sortRules(rules, patternBytes)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%sRuleList: []%s.Rule{\n", indent, alias)
@@ -97,9 +102,9 @@ type ruleEntry struct {
 	key  string // the key unquoted, for ranking
 }
 
-// reRuleEntry matches one "key": "value" pair. Both sides are Go string
-// literals, interpreted or raw.
-var reRuleEntry = regexp.MustCompile(`("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*:\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
+// reRuleEntry matches one "key": "value" pair, both sides Go string literals,
+// interpreted or raw, or a line comment, which captures nothing.
+var reRuleEntry = regexp.MustCompile(`//[^\n]*|("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*:\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
 
 // parseRuleMap reads the entries of a map literal body. It reports false when
 // anything sits between the pairs other than separators and comments, which is
@@ -109,6 +114,9 @@ func parseRuleMap(body string) ([]ruleEntry, bool) {
 	var rules []ruleEntry
 	last := 0
 	for _, m := range reRuleEntry.FindAllStringSubmatchIndex(body, -1) {
+		if m[2] < 0 {
+			continue // a comment: a pair commented out is not a rule
+		}
 		if !onlySeparators(body[last:m[0]]) {
 			return nil, false
 		}
@@ -150,12 +158,12 @@ func unquoteRuleKey(s string) string {
 
 // sortRules puts the entries in the order the middleware ranked the map, so
 // the list answers each path the way the map did.
-func sortRules(rules []ruleEntry) {
+func sortRules(rules []ruleEntry, patternBytes string) {
 	slices.SortFunc(rules, func(a, b ruleEntry) int {
-		if d := cmp.Compare(pinnedPrefixLen(b.key), pinnedPrefixLen(a.key)); d != 0 {
+		if d := cmp.Compare(pinnedPrefixLen(b.key, patternBytes), pinnedPrefixLen(a.key, patternBytes)); d != 0 {
 			return d
 		}
-		if d := cmp.Compare(pinnedLen(b.key), pinnedLen(a.key)); d != 0 {
+		if d := cmp.Compare(pinnedLen(b.key, patternBytes), pinnedLen(a.key, patternBytes)); d != 0 {
 			return d
 		}
 		if d := cmp.Compare(strings.Count(a.key, "*"), strings.Count(b.key, "*")); d != 0 {
@@ -165,13 +173,19 @@ func sortRules(rules []ruleEntry) {
 	})
 }
 
-func pinnedPrefixLen(rule string) int {
-	if i := strings.IndexByte(rule, '*'); i >= 0 {
+func pinnedPrefixLen(rule, patternBytes string) int {
+	if i := strings.IndexAny(rule, patternBytes); i >= 0 {
 		return i
 	}
 	return len(rule)
 }
 
-func pinnedLen(rule string) int {
-	return len(rule) - strings.Count(rule, "*")
+func pinnedLen(rule, patternBytes string) int {
+	n := 0
+	for i := range len(rule) {
+		if strings.IndexByte(patternBytes, rule[i]) < 0 {
+			n++
+		}
+	}
+	return n
 }
