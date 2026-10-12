@@ -95,3 +95,50 @@ require github.com/valyala/fasthttp v1.0.0`
 		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
 	})
 }
+
+func Test_DoMigration_RuleListFollowsTheTarget(t *testing.T) {
+	source := `package main
+
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+
+var _ = redirect.New(redirect.Config{
+	Rules: map[string]string{"/old": "/new"},
+})`
+
+	tests := []struct {
+		name    string
+		curr    string
+		target  string
+		migrate bool
+	}{
+		{name: "3.5.0 asking for 3.6.0", curr: "3.5.0", target: "3.6.0", migrate: true},
+		{name: "v2 asking for 3.6.0", curr: "2.52.0", target: "3.6.0", migrate: true},
+		{name: "already on 3.6.0, going further", curr: "3.6.0", target: "3.9.1", migrate: true},
+		{name: "target predates the field", curr: "3.5.0", target: "3.5.9", migrate: false},
+		{name: "target leaves v3", curr: "3.6.0", target: "4.0.0", migrate: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			main := filepath.Join(dir, "main.go")
+			require.NoError(t, os.WriteFile(main, []byte(source), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.0\n"), 0o600))
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			require.NoError(t, migrations.DoMigration(cmd, dir,
+				semver.MustParse(tc.curr), semver.MustParse(tc.target), true, false, nil, nil))
+
+			content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			if tc.migrate {
+				assert.Contains(t, string(content), "RuleList: []redirect.Rule{")
+			} else {
+				assert.Contains(t, string(content), "map[string]string")
+			}
+		})
+	}
+}

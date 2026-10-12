@@ -1,0 +1,222 @@
+package v3
+
+import (
+	"cmp"
+	"fmt"
+	"go/scanner"
+	"go/token"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+
+	semver "github.com/Masterminds/semver/v3"
+	"github.com/spf13/cobra"
+
+	"github.com/gofiber/cli/cmd/internal"
+)
+
+// ruleListPackages are the middlewares that took a rule map and now take an
+// ordered list. Both deprecated the map for the same reason and their new
+// fields are spelled the same, so one migration serves them.
+var ruleListPackages = []struct{ name, patternBytes string }{
+	// patternBytes are the key bytes ranked as syntax rather than path text:
+	// redirect compiles a key as a regexp, rewrite reads only "*".
+	{name: "redirect", patternBytes: `*.[](){}+?^|\$`},
+	{name: "rewrite", patternBytes: "*"},
+}
+
+var reRuleMap = regexp.MustCompile(`(?m)^([ \t]*)Rules:\s*map\[string\]string\{`)
+
+// MigrateRuleList rewrites a Rules map into the RuleList slice that replaced it.
+//
+//	Rules: map[string]string{"/old": "/new"}
+//	RuleList: []redirect.Rule{{From: "/old", To: "/new"}}
+//
+// The entries are emitted in the order the deprecated map ranked them, not in
+// the order they were written: a list is tried top to bottom, so writing
+// "/api/*" above the "/api/users" it also matches would change which rule
+// answers.
+func MigrateRuleList(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	changed, err := internal.ChangeFileContent(cwd, migrateRuleListContent)
+	if err != nil {
+		return fmt.Errorf("failed to migrate redirect and rewrite rules: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+
+	cmd.Println("Migrating redirect and rewrite Rules maps to RuleList")
+	return nil
+}
+
+func migrateRuleListContent(content string) string {
+	for _, pkg := range ruleListPackages {
+		for _, alias := range collectAliases(content, importRe(pkg.name), []string{pkg.name}) {
+			pattern := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config\{`)
+			content = IterateConfigBlocks(content, pattern, func(cfg string) string {
+				return rewriteRuleMap(cfg, alias, pkg.patternBytes)
+			})
+		}
+	}
+	return content
+}
+
+func importRe(pkg string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w.]+)\s+)?"github\.com/gofiber/fiber/v3/middleware/` + pkg + `"`)
+}
+
+// rewriteRuleMap replaces the one Rules map inside a config block. The block is
+// whatever IterateConfigBlocks handed over, so a nested config of another
+// package is not reachable from here.
+func rewriteRuleMap(cfg, alias, patternBytes string) string {
+	loc := findTopLevelRuleMap(cfg)
+	if loc == nil {
+		return cfg
+	}
+
+	indent := cfg[loc[2]:loc[3]]
+	end := extractBlock(cfg, loc[1], '{', '}')
+	if end <= loc[1] {
+		return cfg
+	}
+
+	rules, ok := parseRuleMap(cfg[loc[1] : end-1])
+	if !ok {
+		// A key or value this migration cannot read verbatim, a variable for
+		// instance. Left alone rather than guessed at; the map still compiles.
+		return cfg
+	}
+	sortRules(rules, patternBytes)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%sRuleList: []%s.Rule{\n", indent, alias)
+	for _, r := range rules {
+		fmt.Fprintf(&b, "%s\t{From: %s, To: %s},\n", indent, r.from, r.to)
+	}
+	fmt.Fprintf(&b, "%s}", indent)
+
+	return cfg[:loc[0]] + b.String() + cfg[end:]
+}
+
+func findTopLevelRuleMap(cfg string) []int {
+	matches := reRuleMap.FindAllStringSubmatchIndex(cfg, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	candidates := make(map[int][]int, len(matches))
+	for _, loc := range matches {
+		candidates[loc[3]] = loc
+	}
+
+	fileSet := token.NewFileSet()
+	file := fileSet.AddFile("", -1, len(cfg))
+	var s scanner.Scanner
+	s.Init(file, []byte(cfg), nil, scanner.ScanComments)
+
+	depth := 0
+	for {
+		pos, tok, _ := s.Scan()
+		switch tok {
+		case token.EOF:
+			return nil
+		case token.LBRACE:
+			depth++
+		case token.RBRACE:
+			depth--
+		case token.IDENT:
+			if loc, ok := candidates[file.Offset(pos)]; ok && depth == 1 {
+				return loc
+			}
+		default:
+		}
+	}
+}
+
+type ruleEntry struct {
+	from string // the key as written, quotes included
+	to   string
+	key  string // the key unquoted, for ranking
+}
+
+// reRuleEntry matches one "key": "value" pair, both sides Go string literals,
+// interpreted or raw, or a line comment, which captures nothing.
+var reRuleEntry = regexp.MustCompile(`//[^\n]*|("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*:\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
+
+// parseRuleMap reads the entries of a map literal body. It reports false when
+// anything sits between the pairs other than separators and comments, which is
+// how a computed key or value is left alone rather than guessed at. Entries may
+// share a line, so this walks the body rather than its lines.
+func parseRuleMap(body string) ([]ruleEntry, bool) {
+	var rules []ruleEntry
+	last := 0
+	for _, m := range reRuleEntry.FindAllStringSubmatchIndex(body, -1) {
+		if m[2] < 0 {
+			continue // a comment: a pair commented out is not a rule
+		}
+		if !onlySeparators(body[last:m[0]]) {
+			return nil, false
+		}
+		key := body[m[2]:m[3]]
+		// Ranked by the string the middleware sees, so "\x2a" counts as the
+		// wildcard it is. A literal Go would not accept is left alone.
+		unquoted, err := strconv.Unquote(key)
+		if err != nil {
+			return nil, false
+		}
+		rules = append(rules, ruleEntry{from: key, to: body[m[4]:m[5]], key: unquoted})
+		last = m[1]
+	}
+	if !onlySeparators(body[last:]) {
+		return nil, false
+	}
+	return rules, len(rules) > 0
+}
+
+// onlySeparators reports whether the text between two entries is nothing but
+// commas, whitespace and comments.
+func onlySeparators(s string) bool {
+	for line := range strings.SplitSeq(s, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), ","))
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// sortRules puts the entries in the order the middleware ranked the map, so
+// the list answers each path the way the map did.
+func sortRules(rules []ruleEntry, patternBytes string) {
+	slices.SortFunc(rules, func(a, b ruleEntry) int {
+		if d := cmp.Compare(pinnedPrefixLen(b.key, patternBytes), pinnedPrefixLen(a.key, patternBytes)); d != 0 {
+			return d
+		}
+		if d := cmp.Compare(pinnedLen(b.key, patternBytes), pinnedLen(a.key, patternBytes)); d != 0 {
+			return d
+		}
+		if d := cmp.Compare(strings.Count(a.key, "*"), strings.Count(b.key, "*")); d != 0 {
+			return d
+		}
+		return cmp.Compare(a.key, b.key)
+	})
+}
+
+func pinnedPrefixLen(rule, patternBytes string) int {
+	if i := strings.IndexAny(rule, patternBytes); i >= 0 {
+		return i
+	}
+	return len(rule)
+}
+
+func pinnedLen(rule, patternBytes string) int {
+	n := 0
+	for i := range len(rule) {
+		if strings.IndexByte(patternBytes, rule[i]) < 0 {
+			n++
+		}
+	}
+	return n
+}
