@@ -185,6 +185,27 @@ var _ = `+tc.pkg+`.New(`+tc.pkg+`.Config{
 	}
 }
 
+func Test_MigrateRuleList_RanksAnEscapedKeyByItsValue(t *testing.T) {
+	t.Parallel()
+
+	// "\x2a" is the "*" the middleware sees, so it ranks as a catch-all below
+	// the exact key it would otherwise answer for.
+	content, _ := migrateRuleList(t, `package main
+import "github.com/gofiber/fiber/v3/middleware/rewrite"
+var _ = rewrite.New(rewrite.Config{
+	Rules: map[string]string{
+		"/a/\x2a": "/all",
+		"/a/x":    "/x",
+	},
+})`)
+
+	exact := strings.Index(content, `{From: "/a/x", To: "/x"}`)
+	wildcard := strings.Index(content, `{From: "/a/\x2a", To: "/all"}`)
+	require.NotEqual(t, -1, exact)
+	require.NotEqual(t, -1, wildcard)
+	assert.Less(t, exact, wildcard)
+}
+
 func Test_MigrateRuleList_ImportAlias(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +239,14 @@ import "github.com/gofiber/fiber/v3/middleware/redirect"
 var target = "/new"
 var _ = redirect.New(redirect.Config{
 	Rules: map[string]string{"/old": target},
+})`,
+		},
+		{
+			name: "a key Go would not accept",
+			src: `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{
+	Rules: map[string]string{"/old\q": "/new"},
 })`,
 		},
 		{

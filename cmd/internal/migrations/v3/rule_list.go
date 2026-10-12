@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -158,7 +159,13 @@ func parseRuleMap(body string) ([]ruleEntry, bool) {
 			return nil, false
 		}
 		key := body[m[2]:m[3]]
-		rules = append(rules, ruleEntry{from: key, to: body[m[4]:m[5]], key: unquoteRuleKey(key)})
+		// Ranked by the string the middleware sees, so "\x2a" counts as the
+		// wildcard it is. A literal Go would not accept is left alone.
+		unquoted, err := strconv.Unquote(key)
+		if err != nil {
+			return nil, false
+		}
+		rules = append(rules, ruleEntry{from: key, to: body[m[4]:m[5]], key: unquoted})
 		last = m[1]
 	}
 	if !onlySeparators(body[last:]) {
@@ -178,19 +185,6 @@ func onlySeparators(s string) bool {
 		return false
 	}
 	return true
-}
-
-func unquoteRuleKey(s string) string {
-	if len(s) < 2 {
-		return s
-	}
-	inner := s[1 : len(s)-1]
-	if s[0] == '`' {
-		return inner
-	}
-	// Only the escapes a path can carry: the ranking reads bytes, so an
-	// unhandled escape just ranks by the text as written.
-	return strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(inner)
 }
 
 // sortRules puts the entries in the order the middleware ranked the map, so
