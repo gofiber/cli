@@ -3,6 +3,8 @@ package v3
 import (
 	"cmp"
 	"fmt"
+	"go/scanner"
+	"go/token"
 	"regexp"
 	"slices"
 	"strings"
@@ -67,7 +69,7 @@ func importRe(pkg string) *regexp.Regexp {
 // whatever IterateConfigBlocks handed over, so a nested config of another
 // package is not reachable from here.
 func rewriteRuleMap(cfg, alias, patternBytes string) string {
-	loc := reRuleMap.FindStringSubmatchIndex(cfg)
+	loc := findTopLevelRuleMap(cfg)
 	if loc == nil {
 		return cfg
 	}
@@ -94,6 +96,41 @@ func rewriteRuleMap(cfg, alias, patternBytes string) string {
 	fmt.Fprintf(&b, "%s}", indent)
 
 	return cfg[:loc[0]] + b.String() + cfg[end:]
+}
+
+func findTopLevelRuleMap(cfg string) []int {
+	matches := reRuleMap.FindAllStringSubmatchIndex(cfg, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	candidates := make(map[int][]int, len(matches))
+	for _, loc := range matches {
+		candidates[loc[3]] = loc
+	}
+
+	fileSet := token.NewFileSet()
+	file := fileSet.AddFile("", -1, len(cfg))
+	var s scanner.Scanner
+	s.Init(file, []byte(cfg), nil, scanner.ScanComments)
+
+	depth := 0
+	for {
+		pos, tok, _ := s.Scan()
+		switch tok {
+		case token.EOF:
+			return nil
+		case token.LBRACE:
+			depth++
+		case token.RBRACE:
+			depth--
+		case token.IDENT:
+			if loc, ok := candidates[file.Offset(pos)]; ok && depth == 1 {
+				return loc
+			}
+		default:
+		}
+	}
 }
 
 type ruleEntry struct {
