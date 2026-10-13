@@ -26,7 +26,7 @@ var ruleListPackages = []struct{ name, patternBytes string }{
 	{name: "rewrite", patternBytes: "*"},
 }
 
-var reRuleMap = regexp.MustCompile(`(?m)^([ \t]*)Rules:\s*map\[string\]string\{`)
+var reRuleMap = regexp.MustCompile(`\bRules:\s*map\[string\]string\{`)
 
 // MigrateRuleList rewrites a Rules map into the RuleList slice that replaced it.
 //
@@ -75,7 +75,9 @@ func rewriteRuleMap(cfg, alias, patternBytes string) string {
 		return cfg
 	}
 
-	indent := cfg[loc[2]:loc[3]]
+	// Rules may share its line with the config's opening or another field.
+	line := cfg[strings.LastIndexByte(cfg[:loc[0]], '\n')+1 : loc[0]]
+	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 	end := extractBlock(cfg, loc[1], '{', '}')
 	if end <= loc[1] {
 		return cfg
@@ -90,7 +92,7 @@ func rewriteRuleMap(cfg, alias, patternBytes string) string {
 	sortRules(rules, patternBytes)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%sRuleList: []%s.Rule{\n", indent, alias)
+	fmt.Fprintf(&b, "RuleList: []%s.Rule{\n", alias)
 	for _, r := range rules {
 		fmt.Fprintf(&b, "%s\t{From: %s, To: %s},\n", indent, r.from, r.to)
 	}
@@ -100,14 +102,14 @@ func rewriteRuleMap(cfg, alias, patternBytes string) string {
 }
 
 func findTopLevelRuleMap(cfg string) []int {
-	matches := reRuleMap.FindAllStringSubmatchIndex(cfg, -1)
+	matches := reRuleMap.FindAllStringIndex(cfg, -1)
 	if len(matches) == 0 {
 		return nil
 	}
 
 	candidates := make(map[int][]int, len(matches))
 	for _, loc := range matches {
-		candidates[loc[3]] = loc
+		candidates[loc[0]] = loc
 	}
 
 	fileSet := token.NewFileSet()
