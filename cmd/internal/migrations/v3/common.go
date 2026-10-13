@@ -418,8 +418,8 @@ func extractCall(src string, start int) (int, string) {
 
 // extractBlock returns the index just after the closing delimiter that matches
 // the opening delimiter at the start position. Start must point to the first
-// character after the opening delimiter. It handles nested delimiters and
-// quoted strings.
+// character after the opening delimiter. It handles nested delimiters, quoted
+// strings and comments.
 //
 //nolint:unparam // keep open for potential future delimiters
 func extractBlock(src string, start int, open, closeDelim byte) int {
@@ -444,6 +444,8 @@ func extractBlock(src string, start int, open, closeDelim byte) int {
 		case '"', '\'', '`':
 			inStr = true
 			quote = ch
+		case '/':
+			i = commentEnd(src, i)
 		case open:
 			depth++
 		case closeDelim:
@@ -455,6 +457,25 @@ func extractBlock(src string, start int, open, closeDelim byte) int {
 		}
 	}
 	return len(src)
+}
+
+// commentEnd returns the index of the last byte of the comment starting at i,
+// or i when none starts there: its quotes and delimiters are not code.
+func commentEnd(src string, i int) int {
+	rest := src[i:]
+	switch {
+	case strings.HasPrefix(rest, "//"):
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			return i + nl
+		}
+	case strings.HasPrefix(rest, "/*"):
+		if closing := strings.Index(rest[2:], "*/"); closing >= 0 {
+			return i + closing + 3
+		}
+	default:
+		return i
+	}
+	return len(src) - 1
 }
 
 // replaceCall finds invocations of name within src and allows custom

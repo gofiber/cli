@@ -94,6 +94,72 @@ var _ = redirect.New(redirect.Config{
 	assert.NotContains(t, content, "map[string]string")
 }
 
+func Test_MigrateRuleList_RulesNotFirstOnItsLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ name, src string }{
+		{
+			name: "a one-line config",
+			src: `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{Rules: map[string]string{"/old": "/new"}})`,
+		},
+		{
+			name: "a field ahead of Rules",
+			src: `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{
+	StatusCode: 301, Rules: map[string]string{"/old": "/new"},
+})`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			content, out := migrateRuleList(t, tc.src)
+			assert.Contains(t, content, "RuleList: []redirect.Rule{")
+			assert.Contains(t, content, `{From: "/old", To: "/new"},`)
+			assert.NotContains(t, content, "map[string]string")
+			assert.NotEmpty(t, out)
+		})
+	}
+}
+
+func Test_MigrateRuleList_ReadsPastCommentPunctuation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ name, above, inside string }{
+		{name: "an apostrophe", inside: "// don't drop this one"},
+		{name: "a closing brace", inside: "// closes with }"},
+		{name: "a closing brace in a block comment", above: "/* closes with } */"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			content, _ := migrateRuleList(t, `package main
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+var _ = redirect.New(redirect.Config{
+	`+tc.above+`
+	Rules: map[string]string{
+		"/a": "/b",
+		`+tc.inside+`
+		"/c": "/d",
+	},
+	StatusCode: 301,
+})`)
+
+			assert.Contains(t, content, `{From: "/a", To: "/b"},`)
+			assert.Contains(t, content, `{From: "/c", To: "/d"},`)
+			assert.NotContains(t, content, "map[string]string")
+			assert.Contains(t, content, "StatusCode: 301")
+		})
+	}
+}
+
 func Test_MigrateRuleList_KeepsCommentsOut(t *testing.T) {
 	t.Parallel()
 
