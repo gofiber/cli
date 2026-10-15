@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -315,7 +315,7 @@ func collectAliases(content string, reImport *regexp.Regexp, defaults []string) 
 	for alias := range aliases {
 		result = append(result, alias)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 

@@ -396,7 +396,7 @@ func (e *escort) doPreRun() {
 		cmd := execCommand(command[0], command[1:]...)
 		out, err := cmd.CombinedOutput()
 		var buf bytes.Buffer
-		if _, werr := buf.WriteString(fmt.Sprintf("Pre running %s... ", command)); werr != nil {
+		if _, werr := fmt.Fprintf(&buf, "Pre running %s... ", command); werr != nil {
 			log.Printf("Failed to write to buffer: %v", werr)
 		}
 		if err != nil {

@@ -39,12 +39,12 @@ markdown:
 ## lint: 🚨 Run lint checks
 .PHONY: lint
 lint:
-	GOTOOLCHAIN=$(TOOLCHAIN) go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2 run ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
 
 ## modernize: 🛠 Run gopls modernize
 .PHONY: modernize
 modernize:
-	GOTOOLCHAIN=$(TOOLCHAIN) go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test=false ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@latest -fix -test=false ./...
 
 ## test: 🚦 Execute all tests
 .PHONY: test

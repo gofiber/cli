@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -177,7 +177,7 @@ func findContribModules(cwd string) ([]string, error) {
 	for m := range modules {
 		res = append(res, m)
 	}
-	sort.Strings(res)
+	slices.Sort(res)
 	return res, nil
 }
 

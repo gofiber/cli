@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
+	"slices"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -250,9 +251,7 @@ func insertDeferStatements(content string, points []releasePoint) string {
 		}
 	}
 
-	for i := len(points) - 1; i >= 0; i-- {
-		p := points[i]
-
+	for _, p := range slices.Backward(points) {
 		if p.line >= len(lines) {
 			continue
 		}

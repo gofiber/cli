@@ -29,6 +29,8 @@ type templateGoModPatterns struct {
 // templateTargets maps template packages to their minimum module path and version
 // required for Fiber v3 core compatibility. Source:
 // https://github.com/gofiber/template/pull/437
+//
+//nolint:goconst // each template's minimum version moves on its own
 var templateTargets = map[string]templateTarget{
 	"ace":        {modulePath: "github.com/gofiber/template/ace/v3", version: "v3.0.0"},
 	"amber":      {modulePath: "github.com/gofiber/template/amber/v3", version: "v3.0.0"},

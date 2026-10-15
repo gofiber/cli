@@ -33,6 +33,7 @@ func parseMiddlewareImports(content string, reImport *regexp.Regexp) map[string]
 func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ctxMap := map[string][]ctxRepl{}
 
+	//nolint:goconst // lookup table, constants would hide the mapping
 	extractors := []struct {
 		pkg     string
 		field   string

@@ -92,22 +92,22 @@ func Test_Dev_Escort_WatchingPipes(t *testing.T) {
 func Test_Dev_Escort_WatchingBin(t *testing.T) {
 	t.Parallel()
 
-	var count int32
+	var count atomic.Int32
 	e := getEscort()
 	e.delay = time.Millisecond * 50
 	e.hitCh = make(chan struct{})
-	e.hitFunc = func() { atomic.AddInt32(&count, 1) }
+	e.hitFunc = func() { count.Add(1) }
 
 	go e.watchingBin()
 
 	e.hitCh <- struct{}{}
 	e.hitCh <- struct{}{}
 	require.Eventually(t, func() bool {
-		return atomic.LoadInt32(&count) == 1
+		return count.Load() == 1
 	}, time.Second, e.delay)
 	e.hitCh <- struct{}{}
 	require.Eventually(t, func() bool {
-		return atomic.LoadInt32(&count) == 2
+		return count.Load() == 2
 	}, time.Second, e.delay)
 }
 

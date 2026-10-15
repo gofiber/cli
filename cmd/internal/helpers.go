@@ -13,6 +13,8 @@ import (
 	"golang.org/x/tools/imports"
 )
 
+const vendorDir = "vendor"
+
 var term = termenv.ColorProfile()
 
 type finishedError struct{ error }
@@ -59,7 +61,7 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) (bool, error) {
 		}
 
 		// Skip directories named "vendor"
-		if info.IsDir() && info.Name() == "vendor" {
+		if info.IsDir() && info.Name() == vendorDir {
 			return filepath.SkipDir
 		}
 

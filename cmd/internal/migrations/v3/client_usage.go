@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -330,7 +330,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			for k := range headers {
 				keys = append(keys, k)
 			}
-			sort.Strings(keys)
+			slices.Sort(keys)
 			for _, k := range keys {
 				out = append(out, fmt.Sprintf("%s%s.SetHeader(%s, %s)", indent, reqVar, k, headers[k]))
 			}
@@ -996,7 +996,7 @@ func buildSimpleConfig(cfg simpleAgentConfig) string {
 		for k := range cfg.headers {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		var items []string
 		for _, k := range keys {
 			hv := cfg.headers[k]
@@ -1014,7 +1014,7 @@ func buildSimpleConfig(cfg simpleAgentConfig) string {
 		for k := range cfg.params {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		var items []string
 		for _, k := range keys {
 			items = append(items, fmt.Sprintf("%q: %q", k, cfg.params[k]))

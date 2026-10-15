@@ -20,7 +20,7 @@ func TestNewAppHealthEndpoints(t *testing.T) {
 	opts := Options{Dir: t.TempDir(), Path: "/", Health: true}
 	app := NewApp(opts)
 
-	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, healthcheck.LivenessEndpoint, nil))
+	resp, err := app.Test(httptest.NewRequestWithContext(t.Context(), fiber.MethodGet, healthcheck.LivenessEndpoint, nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -40,7 +40,7 @@ func TestNewAppServeIndex(t *testing.T) {
 	opts := Options{Dir: dir, Path: "/", Index: "index.html", Cache: time.Second}
 	app := NewApp(opts)
 
-	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/", nil))
+	resp, err := app.Test(httptest.NewRequestWithContext(t.Context(), fiber.MethodGet, "/", nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
