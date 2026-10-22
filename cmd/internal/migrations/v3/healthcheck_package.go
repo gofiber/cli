@@ -300,7 +300,7 @@ func portableEndpointText(e ast.Expr, declNames []string, pkgName string, scope 
 		right, rok := portableEndpointText(x.Y, declNames, pkgName, scope)
 		return left + " + " + right, lok && rok
 	case *ast.Ident:
-		return x.Name, scope != nil && !hcMentions(scope, x.Name)
+		return x.Name, scope != nil && !mw1UsesName(scope, x.Name)
 	case *ast.SelectorExpr:
 		for member, renamed := range hcRenamedMembers {
 			if mw1IsMember(x, declNames, member) {
@@ -309,16 +309,4 @@ func portableEndpointText(e ast.Expr, declNames []string, pkgName string, scope 
 		}
 	}
 	return "", false
-}
-
-// hcMentions reports whether an identifier called name appears below n.
-func hcMentions(n ast.Node, name string) bool {
-	found := false
-	ast.Inspect(n, func(c ast.Node) bool {
-		if id, ok := c.(*ast.Ident); ok && id.Name == name {
-			found = true
-		}
-		return !found
-	})
-	return found
 }

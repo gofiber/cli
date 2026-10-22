@@ -333,13 +333,19 @@ func healthConfig() healthcheck.Config {
 		"variable of another package": {
 			"main.go": `package main
 
-` + hcImports + `
-func routes(app *fiber.App) { app.Use(healthcheck.New(healthConfig)) }
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/healthcheck"
+
+	"example.com/app/other"
+)
+
+func routes(app *fiber.App) { app.Use(healthcheck.New(other.HealthConfig)) }
 `,
 			"other/config.go": `package other
 
 ` + hcImports + `
-var healthConfig = healthcheck.Config{LivenessProbe: func(c *fiber.Ctx) bool { return true }}
+var HealthConfig = healthcheck.Config{LivenessProbe: func(c *fiber.Ctx) bool { return true }}
 `,
 		},
 		"endpoint of another package": {
