@@ -356,13 +356,17 @@ func (env *ctxEnv) typeOfAt(e ast.Expr, stack []ast.Node, depth int) ast.Expr {
 	case *ast.StarExpr:
 		return env.typeOfAt(x.X, stack, depth+1)
 	case *ast.UnaryExpr:
-		if x.Op == token.AND {
+		switch x.Op {
+		case token.AND:
 			return env.typeOfAt(x.X, stack, depth+1)
+		case token.ARROW:
+			return ctxElementType(env.typeOfAt(x.X, stack, depth+1))
 		}
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		switch {
 		case !ok:
+			return env.siteTypeOf(x, stack, depth)
 		case d.typ != nil:
 			return d.typ
 		case d.init != nil:
@@ -382,7 +386,7 @@ func (env *ctxEnv) typeOfAt(e ast.Expr, stack []ast.Node, depth int) ast.Expr {
 	return nil
 }
 
-// ctxElementType returns the element type of an array, slice or map type.
+// ctxElementType returns the element type of an array, slice, map or channel type.
 func ctxElementType(t ast.Expr) ast.Expr {
 	for {
 		switch x := t.(type) {
@@ -394,10 +398,31 @@ func ctxElementType(t ast.Expr) ast.Expr {
 			return x.Elt
 		case *ast.MapType:
 			return x.Value
+		case *ast.ChanType:
+			return x.Value
+		case *ast.Ellipsis:
+			return x.Elt
 		default:
 			return nil
 		}
 	}
+}
+
+// siteTypeOf returns the type of a variable that resolveIdent does not follow: the
+// value of a range statement, the binding of a type switch.
+func (env *ctxEnv) siteTypeOf(id *ast.Ident, stack []ast.Node, depth int) ast.Expr {
+	site, ok := ctxResolveSite(id.Name, id.Pos(), stack)
+	switch {
+	case !ok:
+		return nil
+	case site.typ != nil:
+		return site.typ
+	case site.over != nil && !site.key:
+		return ctxElementType(env.typeOfAt(site.over, site.stack, depth+1))
+	case site.init != nil && site.over == nil && site.index < 0:
+		return env.typeOfAt(site.init, site.stack, depth+1)
+	}
+	return nil
 }
 
 // fieldTypeOf returns the type of the field or method value sel selects.
@@ -407,10 +432,10 @@ func (env *ctxEnv) fieldTypeOf(sel *ast.SelectorExpr, stack []ast.Node, depth in
 		return env.uniqueFieldType(sel.Sel.Name)
 	}
 
-	name := ctxTypeName(base)
-	spec := env.typeDecl[name]
+	spec := env.typeDecl[ctxTypeName(base)]
 	if spec == nil {
-		return nil
+		// a struct type written where it is used: s *struct{ c *fiber.Ctx }
+		return env.structFieldType(base, sel.Sel.Name, depth+1)
 	}
 	return env.structFieldType(spec.Type, sel.Sel.Name, depth+1)
 }

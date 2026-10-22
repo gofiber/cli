@@ -24,7 +24,7 @@ const (
 	ctxSetUserContext  = "SetUserContext"
 	ctxSetContext      = "SetContext"
 	ctxRequestCtxName  = "RequestCtx"
-	ctxContextCallName = ".Context("
+	ctxContextCallName = ".Context"
 )
 
 // MigrateContextMethods follows the renames of the context accessors:
@@ -33,7 +33,8 @@ const (
 //	c.UserContext()     (the context.Context)       c.Context()
 //	c.SetUserContext(x)                             c.SetContext(x)
 //
-// Only methods of a fiber context are rewritten.
+// The same goes for the methods used as values and as method expressions. Only
+// methods of a fiber context are rewritten.
 func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -82,8 +83,14 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 
 		switch sel.Sel.Name {
 		case ctxContext:
+			// The method used as a value, f := c.Context, and as a method expression,
+			// (*fiber.Ctx).Context, is the one of v2 too.
 			call, isCall := ctxParentCall(sel, stack)
-			if isCall && len(call.Args) == 0 && env.receiverKind(sel, stack, ctxRequestCtxName) == ctxYes {
+			switch {
+			case env.isCtxType(sel.X):
+				contextCalls = append(contextCalls, sel)
+			case isCall && len(call.Args) != 0:
+			case env.receiverKind(sel, stack, ctxRequestCtxName) == ctxYes:
 				contextCalls = append(contextCalls, sel)
 			}
 		case ctxSetContext:
@@ -93,7 +100,10 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 			if sel.Sel.Name == ctxSetUserContext {
 				renamed = ctxSetContext
 			}
-			kind, via := env.receiverKindVia(sel, stack, renamed)
+			kind, via := ctxYes, ""
+			if !env.isCtxType(sel.X) {
+				kind, via = env.receiverKindVia(sel, stack, renamed)
+			}
 			switch kind {
 			case ctxYes:
 				plan.qualify(g, sel, via)

@@ -91,7 +91,6 @@ func (t *ctxRangeTracker) visit(n ast.Node, stack []ast.Node) bool {
 		t.checkSource(x, stack)
 	case *ast.SelectorExpr:
 		t.checkRead(x, stack)
-		t.checkValue(x, stack)
 	case *ast.AssignStmt:
 		t.checkAssign(x, stack)
 	case *ast.CompositeLit:
@@ -162,165 +161,6 @@ func ctxIsNumericType(name string) bool {
 	}
 	basic, ok := obj.Type().Underlying().(*types.Basic)
 	return ok && basic.Info()&types.IsNumeric != 0
-}
-
-// ctxSite is a place that declares a name, with what is known about its type.
-type ctxSite struct {
-	// typ is the type it is declared with.
-	typ ast.Expr
-	// init is the value it starts with, or the call it is one of the results of.
-	init ast.Expr
-	// over is the value a range statement loops over, for the variable that
-	// takes its elements.
-	over ast.Expr
-	// stack holds the ancestors of init and over.
-	stack []ast.Node
-	// index is the position of the name among the results of init when that is
-	// a call with several, -1 otherwise.
-	index int
-}
-
-// ctxResolveSite finds the declaration that name refers to at pos, given the
-// ancestors of the use (see goSource.walk). ok is false when no declaration of a
-// function body declares it, which is the case for the names of the package,
-// the imports and the predeclared ones.
-func ctxResolveSite(name string, pos token.Pos, stack []ast.Node) (site ctxSite, ok bool) {
-	for i, node := range slices.Backward(stack) {
-		scope := stack[:i+1]
-		var stmts []ast.Stmt
-
-		switch n := node.(type) {
-		case *ast.BlockStmt:
-			stmts = n.List
-		case *ast.CaseClause:
-			stmts = n.Body
-		case *ast.CommClause:
-			stmts = append([]ast.Stmt{n.Comm}, n.Body...)
-		case *ast.IfStmt:
-			stmts = []ast.Stmt{n.Init}
-		case *ast.ForStmt:
-			stmts = []ast.Stmt{n.Init}
-		case *ast.SwitchStmt:
-			stmts = []ast.Stmt{n.Init}
-		case *ast.TypeSwitchStmt:
-			stmts = []ast.Stmt{n.Init}
-			if as, isAssign := n.Assign.(*ast.AssignStmt); isAssign && len(as.Lhs) == 1 && isIdentNamed(as.Lhs[0], name) && pos > n.Body.Lbrace {
-				return ctxSite{index: -1}, true
-			}
-		case *ast.RangeStmt:
-			if n.Tok == token.DEFINE && pos > n.Body.Lbrace {
-				switch {
-				case isIdentNamed(n.Value, name):
-					return ctxSite{over: n.X, stack: scope, index: -1}, true
-				case isIdentNamed(n.Key, name):
-					return ctxSite{index: -1}, true
-				}
-			}
-		case *ast.FuncLit:
-			if site, ok = ctxParamSite(name, pos, n.Body, n.Type, nil); ok {
-				return site, true
-			}
-		case *ast.FuncDecl:
-			if site, ok = ctxParamSite(name, pos, n.Body, n.Type, n.Recv); ok {
-				return site, true
-			}
-		}
-
-		if site, ok = ctxStmtSite(name, pos, stmts, scope); ok {
-			return site, true
-		}
-	}
-	return ctxSite{}, false
-}
-
-// ctxParamSite looks name up among the receiver, parameters and results of a
-// function whose body holds pos.
-func ctxParamSite(name string, pos token.Pos, body *ast.BlockStmt, ft *ast.FuncType, recv *ast.FieldList) (ctxSite, bool) {
-	if body == nil || pos <= body.Lbrace {
-		return ctxSite{}, false
-	}
-
-	for _, fields := range []*ast.FieldList{recv, ft.Params, ft.Results} {
-		if fields == nil {
-			continue
-		}
-		for _, f := range fields.List {
-			if slices.ContainsFunc(f.Names, func(id *ast.Ident) bool { return id.Name == name }) {
-				return ctxSite{typ: f.Type, index: -1}, true
-			}
-		}
-	}
-	return ctxSite{}, false
-}
-
-// ctxStmtSite looks for the declaration of name among the statements that end
-// before pos, the closest first. scope holds the ancestors of the statements.
-func ctxStmtSite(name string, pos token.Pos, stmts []ast.Stmt, scope []ast.Node) (ctxSite, bool) {
-	for _, stmt := range slices.Backward(stmts) {
-		if stmt == nil || stmt.End() > pos {
-			continue
-		}
-
-		switch s := stmt.(type) {
-		case *ast.AssignStmt:
-			if s.Tok != token.DEFINE {
-				continue
-			}
-			for j, lhs := range s.Lhs {
-				if !isIdentNamed(lhs, name) {
-					continue
-				}
-				site := ctxSite{stack: slices.Concat(scope, []ast.Node{s}), index: -1}
-				switch {
-				case len(s.Rhs) == len(s.Lhs):
-					site.init = s.Rhs[j]
-				case len(s.Rhs) == 1:
-					site.init, site.index = s.Rhs[0], j
-				}
-				return site, true
-			}
-		case *ast.DeclStmt:
-			gd, ok := s.Decl.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			if site, found := ctxSpecSite(name, gd, slices.Concat(scope, []ast.Node{s, gd})); found {
-				return site, true
-			}
-		}
-	}
-	return ctxSite{}, false
-}
-
-// ctxSpecSite looks for the declaration of name among the specs of gd, whose
-// ancestors, itself included, are stack.
-func ctxSpecSite(name string, gd *ast.GenDecl, stack []ast.Node) (ctxSite, bool) {
-	for _, spec := range gd.Specs {
-		switch sp := spec.(type) {
-		case *ast.TypeSpec:
-			if sp.Name.Name == name {
-				return ctxSite{index: -1}, true
-			}
-		case *ast.ValueSpec:
-			for j, id := range sp.Names {
-				if id.Name != name {
-					continue
-				}
-				site := ctxSite{index: -1}
-				if gd.Tok == token.VAR {
-					site.typ, site.stack = sp.Type, slices.Concat(stack, []ast.Node{sp})
-					switch {
-					case len(sp.Values) == len(sp.Names):
-						site.init = sp.Values[j]
-					case len(sp.Values) == 1:
-						site.init, site.index = sp.Values[0], j
-					}
-				}
-				return site, true
-			}
-		}
-	}
-	return ctxSite{}, false
 }
 
 // kindOf says what the expression e is, given the ancestors of it.
@@ -494,21 +334,6 @@ func (t *ctxRangeTracker) isRangeCall(call *ast.CallExpr, stack []ast.Node) bool
 	}
 	kind, _ := t.env.receiverKindVia(sel, stack, "")
 	return kind == ctxYes
-}
-
-// checkValue reports c.Range used as a value, without being called: the
-// function it stands for takes an int64 and returns int64 ranges now, and what
-// is done with it can not be followed.
-func (t *ctxRangeTracker) checkValue(sel *ast.SelectorExpr, stack []ast.Node) {
-	if sel.Sel.Name != ctxRange {
-		return
-	}
-	if _, isCall := ctxParentCall(sel, stack); isCall {
-		return
-	}
-	if kind, _ := t.env.receiverKindVia(sel, stack, ""); kind == ctxYes {
-		t.noter.oncef("range", sel.Pos(), ctxRangeNote)
-	}
 }
 
 // checkSource looks at where the two results of c.Range(size) go. They are

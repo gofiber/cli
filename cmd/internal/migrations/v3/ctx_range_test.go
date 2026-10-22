@@ -607,26 +607,6 @@ func consume(r fiber.Range, err error) {}
 			notes: []string{"main.go:10: " + note + " (1 more in this project)"},
 		},
 		{
-			name: "c.Range used as a value",
-			in: `package main
-
-import "github.com/gofiber/fiber/v2"
-
-type other struct{}
-
-func (other) Range(int) (int, error) { return 0, nil }
-
-func handler(c *fiber.Ctx, o other) int {
-	f := c.Range
-	g := o.Range
-	_, _ = g(1)
-	r, _ := f(10)
-	return r.Ranges[0].Start
-}
-`,
-			notes: []string{"main.go:10: " + note},
-		},
-		{
 			name: "the address of a Start",
 			in: `package main
 

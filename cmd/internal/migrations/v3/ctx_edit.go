@@ -184,12 +184,18 @@ func (p *ctxPlan) qualify(g *goSource, sel *ast.SelectorExpr, via string) {
 	})
 }
 
+// run runs the queued rewrites against edits, which may hold more edits of the
+// same file already.
+func (p *ctxPlan) run(edits *editSet) {
+	for _, step := range slices.Backward(p.steps) {
+		step(edits)
+	}
+}
+
 // apply runs the queued rewrites and returns src with them applied.
 func (p *ctxPlan) apply(src string) string {
 	var edits editSet
-	for _, step := range slices.Backward(p.steps) {
-		step(&edits)
-	}
+	p.run(&edits)
 	return edits.apply(src)
 }
 

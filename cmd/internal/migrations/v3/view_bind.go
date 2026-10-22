@@ -11,8 +11,9 @@ import (
 )
 
 // MigrateViewBind renames c.Bind(vars), which added variables to the views, to
-// c.ViewBind(vars): v3 uses Bind for the request binders. Only the calls of a
-// fiber context are rewritten.
+// c.ViewBind(vars): v3 uses Bind for the request binders. The method used as a
+// value or as a method expression is renamed too. Only the methods of a fiber
+// context are rewritten.
 func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -31,7 +32,7 @@ func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error
 }
 
 func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) string {
-	if !ctxContainsAny(content, ".Bind(") {
+	if !ctxContainsAny(content, ".Bind") {
 		return content
 	}
 	names := fiberNames(content)
@@ -48,22 +49,30 @@ func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) != 1 {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok || sel.Sel.Name != "Bind" {
 			return true
 		}
 
-		kind, via := env.receiverKindVia(sel, stack, "ViewBind")
+		// c.Bind(vars) adds view variables; c.Bind() is the binder of v3. The
+		// method used as a value, f := c.Bind, and as a method expression,
+		// (*fiber.Ctx).Bind, is the one of v2.
+		call, isCall := ctxParentCall(sel, stack)
+		expr := env.isCtxType(sel.X)
+		if isCall && !expr && len(call.Args) != 1 {
+			return true
+		}
+
+		kind, via := ctxYes, ""
+		if !expr {
+			kind, via = env.receiverKindVia(sel, stack, "ViewBind")
+		}
 		switch kind {
 		case ctxYes:
 			plan.qualify(g, sel, via)
 			plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, "ViewBind") })
 		case ctxUnknown:
-			if ctxIsFiberMap(call.Args[0], env) {
+			if isCall && ctxIsFiberMap(call.Args[0], env) {
 				noter.notef(sel.Pos(),
 					"%s adds view variables in Fiber v2 and is called ViewBind in v3, but %s is not known to be a fiber context here, so it was left as is",
 					g.text(sel), g.text(sel.X))

@@ -14,12 +14,16 @@ import (
 
 // ctxGenericHelpers maps the typed getters of the v2 Ctx to the generic
 // helpers of v3: c.QueryInt(k, d) is fiber.Query[int](c, k, d).
-var ctxGenericHelpers = map[string]struct{ fn, typ string }{
+var ctxGenericHelpers = map[string]ctxHelper{
 	"ParamsInt":  {fn: "Params", typ: ctxGoInt},
 	"QueryInt":   {fn: ctxFnQuery, typ: ctxGoInt},
 	"QueryFloat": {fn: ctxFnQuery, typ: "float64"},
 	"QueryBool":  {fn: ctxFnQuery, typ: "bool"},
 }
+
+// ctxHelper is the generic helper of v3 that stands for a typed getter: its name
+// and the type it is instantiated with.
+type ctxHelper struct{ fn, typ string }
 
 // ctxFnQuery is the generic helper for the query string, ctxGoInt the type of
 // the integer helpers.
@@ -84,12 +88,19 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	if strconvName == "" {
 		strconvName = "strconv"
 	}
-	needStrconv := false
+	fmtName := ctxImportName(content, "fmt", "fmt")
+	if fmtName == "" {
+		fmtName = "fmt"
+	}
+	needStrconv, needFmt := false, false
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		if sel, isSel := n.(*ast.SelectorExpr); isSel {
-			ctxNoteHelperValue(noter, env, sel, stack)
+			if ctxQueueHelperValue(&plan, noter, env, sel, stack, strconvName, fmtName) {
+				needStrconv = needStrconv || sel.Sel.Name == ctxParamsInt
+				needFmt = needFmt || sel.Sel.Name == ctxParamsInt
+			}
 			return true
 		}
 		call, ok := n.(*ast.CallExpr)
@@ -97,7 +108,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
+		if !ok || env.isCtxType(sel.X) {
 			return true
 		}
 		helper, ok := ctxGenericHelpers[sel.Sel.Name]
@@ -106,8 +117,14 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 		}
 
 		generic := env.qual(helper.fn) + "[" + helper.typ + "]"
-		switch env.receiverKind(sel, stack, "Params") {
+		switch env.receiverKind(sel, stack) {
 		case ctxYes:
+			// A type that embeds the context hands the embedded one to the helper: the
+			// helper takes a fiber.Ctx, the type may declare methods that make it none,
+			// and the method of v2 used the members of the context and not those of the
+			// type.
+			via := env.embeddedCtxOf(sel.X, stack)
+
 			// The getters that return one value take the same default values in v3, a
 			// slice spread included. ParamsInt does not: whether it returns an error
 			// depends on the number of defaults, which is only known when it runs.
@@ -115,7 +132,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 				!importsShadowed(strconvName, call.Pos(), stack) {
 				needStrconv = true
 				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
-				ctxQueueParamsIntLiteral(&plan, env, call, sel, strconvName)
+				ctxQueueParamsIntLiteral(&plan, env, call, sel, strconvName, via)
 				return true
 			}
 			if len(call.Args) == 0 || (call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt) {
@@ -131,7 +148,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			if useAtoi {
 				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
 			}
-			ctxQueueHelper(&plan, g, call, sel, generic, strconvName, useAtoi, twoValued && !useAtoi)
+			ctxQueueHelper(&plan, g, call, sel, generic, strconvName, via, useAtoi, twoValued && !useAtoi)
 		case ctxUnknown:
 			noter.notef(sel.Pos(),
 				"%s was removed in Fiber v3, but %s is not known to be a fiber context here, so it was left as is: use %s(ctx, key) instead",
@@ -145,24 +162,57 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	if needStrconv {
 		out = ctxAddImport(out, "strconv", "strconv")
 	}
+	if needFmt {
+		out = ctxAddImport(out, "fmt", "fmt")
+	}
 	return out
 }
 
-// ctxNoteHelperValue reports a typed getter of the context that is used as a
-// value, without being called, which the generic helper can not stand in for.
-func ctxNoteHelperValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+// ctxQueueHelperValue queues the replacement of a typed getter that is used as a
+// value, without being called, with a function literal that has the signature of
+// the v2 method (see ctxValueBuilder). It reports whether it queued one; the
+// literal of ParamsInt needs strconv and fmt, which the caller imports.
+func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node, strconvName, fmtName string) bool {
 	helper, ok := ctxGenericHelpers[sel.Sel.Name]
 	if !ok {
-		return
+		return false
 	}
-	if _, isCall := ctxParentCall(sel, stack); isCall {
-		return
+
+	// A method expression, (*fiber.Ctx).QueryInt, is a value even when it is
+	// called: the context is its first argument.
+	kind := ctxYes
+	if !env.isCtxType(sel.X) {
+		if _, isCall := ctxParentCall(sel, stack); isCall {
+			return false
+		}
+		kind = env.receiverKind(sel, stack)
 	}
-	if env.receiverKind(sel, stack, "Params") == ctxYes {
+	switch kind {
+	case ctxYes:
+	case ctxUnknown:
 		noter.notef(sel.Pos(),
-			"%s is used as a value and was removed in Fiber v3: call %s[%s](c, key, ...) from a function literal instead",
-			env.g.text(sel), env.qual(helper.fn), helper.typ)
+			"%s was removed in Fiber v3 and is used as a value, but %s is not known to be a fiber context here, so it was left as is: call %s[%s](ctx, key, ...) from a function literal",
+			env.g.text(sel), env.g.text(sel.X), env.qual(helper.fn), helper.typ)
+		return false
+	case ctxNo:
+		return false
 	}
+
+	if sel.Sel.Name != ctxParamsInt {
+		b := env.newValueBuilder(sel, stack)
+		plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.query(helper))) })
+		return false
+	}
+
+	if importsShadowed(strconvName, sel.Pos(), stack) || importsShadowed(fmtName, sel.Pos(), stack) {
+		noter.notef(sel.Pos(),
+			"%s was removed in Fiber v3 and is used as a value, but %s or %s is declared here, so the function that replaces it can not be written: use strconv.Atoi(c.Params(key)) from a function literal",
+			env.g.text(sel), strconvName, fmtName)
+		return false
+	}
+	b := env.newValueBuilder(sel, stack, strconvName, fmtName)
+	plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.paramsInt(strconvName, fmtName))) })
+	return true
 }
 
 // ctxQueueHelper queues the rewrite of one call of a typed getter. The
@@ -171,9 +221,12 @@ func ctxNoteHelperValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, sta
 //	c.QueryInt(k, d)         generic(c, k, d)
 //	c.ParamsInt(k)           strconv.Atoi(c.Params(k))             (atoi)
 //	c.ParamsInt(k, d)        generic(c, k, d), error(nil)          (nilErr)
-func ctxQueueHelper(plan *ctxPlan, g *goSource, call *ast.CallExpr, sel *ast.SelectorExpr, generic, strconvName string, atoi, nilErr bool) {
+func ctxQueueHelper(plan *ctxPlan, g *goSource, call *ast.CallExpr, sel *ast.SelectorExpr, generic, strconvName, via string, atoi, nilErr bool) {
 	plan.add(func(e *editSet) {
 		recv := ctxRenderNode(e, g, sel.X)
+		if via != "" {
+			recv += "." + via
+		}
 
 		head, tail := generic+"("+recv+", ", ""
 		switch {
@@ -208,12 +261,16 @@ func ctxQueueHelper(plan *ctxPlan, g *goSource, call *ast.CallExpr, sel *ast.Sel
 //	    }
 //	    return value, nil
 //	}()
-func ctxQueueParamsIntLiteral(plan *ctxPlan, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr, strconvName string) {
+func ctxQueueParamsIntLiteral(plan *ctxPlan, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr, strconvName, via string) {
 	g := env.g
 	plan.add(func(e *editSet) {
 		key, defaults := call.Args[0], call.Args[1]
 		lit := &ctxLiteral{namer: newCtxNamer([]ast.Expr{sel.X, key, defaults}, append(ctxFiberNames(env), strconvName)...)}
-		recv := lit.bind(ctxOperand{expr: sel.X, text: ctxRenderNode(e, g, sel.X), typ: env.qual(ctxTypeCtx), name: "c"})
+		recvText := ctxRenderNode(e, g, sel.X)
+		if via != "" {
+			recvText += "." + via
+		}
+		recv := lit.bind(ctxOperand{expr: sel.X, text: recvText, typ: env.qual(ctxTypeCtx), name: "c"})
 		keyRef := lit.bind(ctxOperand{expr: key, text: ctxRenderNode(e, g, key), typ: ctxLitString, name: ctxLitKey})
 		defaultsRef := lit.bind(ctxOperand{expr: defaults, text: ctxRenderNode(e, g, defaults), typ: ctxLitInts, name: "defaults", spread: true})
 

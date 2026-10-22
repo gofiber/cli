@@ -359,12 +359,15 @@ type a struct{ ctx *fiber.Ctx }
 type b struct{ ctx string }
 
 func handlers(list []a) {
-	for _, s := range list {
+	for _, s := range lookup() {
 		s.ctx.probe("ambiguous")
+	}
+	for _, s := range list {
+		s.ctx.probe("the range variable has the element type")
 	}
 }
 `,
-			want: map[string]ctxKind{`"ambiguous"`: ctxUnknown},
+			want: map[string]ctxKind{`"ambiguous"`: ctxUnknown, `"the range variable has the element type"`: ctxYes},
 		},
 		{
 			name: "fields of embedded structs",
