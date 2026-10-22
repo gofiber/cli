@@ -85,6 +85,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateStorageVersions,
 			v3migrations.MigrateStorageInterface,
 			v3migrations.MigrateTemplateVersions,
+			MigrateReplaceDirectives,
 			v3migrations.MigrateSessionRelease,
 			v3migrations.MigrateKeyAuthConfig,
 			v3migrations.MigrateJWTExtractor,
@@ -95,7 +96,6 @@ var Migrations = []Migration{
 			v3migrations.MigrateBasicauthStorePassword,
 			v3migrations.MigrateReqHeaderParser,
 			MigrateGoVersion,
-			MigrateReplaceDirectives,
 		},
 	},
 	{
