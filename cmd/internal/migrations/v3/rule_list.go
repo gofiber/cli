@@ -3,11 +3,10 @@ package v3
 import (
 	"cmp"
 	"fmt"
-	"go/scanner"
+	"go/ast"
 	"go/token"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -19,14 +18,24 @@ import (
 // ruleListPackages are the middlewares that took a rule map and now take an
 // ordered list. Both deprecated the map for the same reason and their new
 // fields are spelled the same, so one migration serves them.
-var ruleListPackages = []struct{ name, patternBytes string }{
-	// patternBytes are the key bytes ranked as syntax rather than path text:
-	// redirect compiles a key as a regexp, rewrite reads only "*".
+var ruleListPackages = []ruleListPackage{
 	{name: "redirect", patternBytes: `*.[](){}+?^|\$`},
-	{name: "rewrite", patternBytes: "*"},
+	{name: "rewrite", patternBytes: "*", quotedKeys: true},
 }
 
-var reRuleMap = regexp.MustCompile(`\bRules:\s*map\[string\]string\{`)
+type ruleListPackage struct {
+	name string
+	// patternBytes are the key bytes ranked as syntax rather than path text:
+	// redirect compiles a key as a regexp, rewrite reads only "*".
+	patternBytes string
+	// quotedKeys is whether the middleware takes every byte of a key but "*"
+	// for itself: a key written with regexp syntax matches that text in v3.
+	quotedKeys bool
+}
+
+// ruleRegexpSyntax are the bytes of a key that v2 compiled as a regular
+// expression and that rewrite v3 reads as the path text they spell.
+const ruleRegexpSyntax = `[](){}+?^|\$`
 
 // MigrateRuleList rewrites a Rules map into the RuleList slice that replaced it.
 //
@@ -37,8 +46,12 @@ var reRuleMap = regexp.MustCompile(`\bRules:\s*map\[string\]string\{`)
 // the order they were written: a list is tried top to bottom, so writing
 // "/api/*" above the "/api/users" it also matches would change which rule
 // answers.
+//
+// A rewrite key that relies on regular-expression syntax is dead in v3 whether
+// it sits in the map or the list, since the middleware quotes the key: such a
+// map is left as it is and reported.
 func MigrateRuleList(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContent(cwd, migrateRuleListContent)
+	changed, err := internal.ChangeFileContentInfo(cwd, migrateRuleListContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate redirect and rewrite rules: %w", err)
 	}
@@ -50,47 +63,98 @@ func MigrateRuleList(cmd *cobra.Command, cwd string, _, _ *semver.Version) error
 	return nil
 }
 
-func migrateRuleListContent(content string) string {
+func migrateRuleListContent(content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, "Rules") || !strings.Contains(content, "middleware/") {
+		return content
+	}
+
+	type target struct {
+		pkg   ruleListPackage
+		names []string
+	}
+	var targets []target
 	for _, pkg := range ruleListPackages {
-		for _, alias := range collectAliases(content, importRe(pkg.name), []string{pkg.name}) {
-			pattern := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config\{`)
-			content = IterateConfigBlocks(content, pattern, func(cfg string) string {
-				return rewriteRuleMap(cfg, alias, pkg.patternBytes)
-			})
+		re := regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/` + pkg.name + `$`)
+		if names := importNames(content, re, pkg.name); len(names) > 0 {
+			targets = append(targets, target{pkg: pkg, names: names})
 		}
 	}
-	return content
-}
-
-func importRe(pkg string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w.]+)\s+)?"github\.com/gofiber/fiber/v3/middleware/` + pkg + `"`)
-}
-
-// rewriteRuleMap replaces the one Rules map inside a config block. The block is
-// whatever IterateConfigBlocks handed over, so a nested config of another
-// package is not reachable from here.
-func rewriteRuleMap(cfg, alias, patternBytes string) string {
-	loc := findTopLevelRuleMap(cfg)
-	if loc == nil {
-		return cfg
+	if len(targets) == 0 {
+		return content
+	}
+	g, ok := parseFile(fi, content)
+	if !ok {
+		return content
 	}
 
-	// Rules may share its line with the config's opening or another field.
-	line := cfg[strings.LastIndexByte(cfg[:loc[0]], '\n')+1 : loc[0]]
-	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-	end := extractBlock(cfg, loc[1], '{', '}')
-	if end <= loc[1] {
-		return cfg
+	var edits editSet
+	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok || lit.Type == nil {
+			return true
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != mw3Config {
+			return true
+		}
+		pkgID, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if _, shadowed := resolveIdent(pkgID.Name, pkgID.Pos(), stack); shadowed {
+			return true
+		}
+		for _, t := range targets {
+			if slices.Contains(t.names, pkgID.Name) {
+				rewriteRuleMap(g, &edits, fi, lit, pkgID.Name, t.pkg)
+			}
+		}
+		return true
+	})
+	return edits.apply(content)
+}
+
+// rewriteRuleMap replaces the Rules map of a config literal with the list.
+func rewriteRuleMap(g *goSource, edits *editSet, fi internal.FileInfo, lit *ast.CompositeLit, alias string, pkg ruleListPackage) {
+	kv := mw3Field(lit, "Rules")
+	if kv == nil {
+		return
+	}
+	mapLit, ok := kv.Value.(*ast.CompositeLit)
+	if !ok || !isStringMap(mapLit.Type) {
+		return
 	}
 
-	rules, ok := parseRuleMap(cfg[loc[1] : end-1])
+	rules, ok := parseRuleMap(mapLit)
 	if !ok {
 		// A key or value this migration cannot read verbatim, a variable for
 		// instance. Left alone rather than guessed at; the map still compiles.
-		return cfg
+		return
 	}
-	sortRules(rules, patternBytes)
 
+	if pkg.quotedKeys {
+		var dead []string
+		first := token.NoPos
+		for _, r := range rules {
+			if strings.ContainsAny(r.key, ruleRegexpSyntax) {
+				dead = append(dead, r.from)
+				if first == token.NoPos {
+					first = r.pos
+				}
+			}
+		}
+		if len(dead) > 0 {
+			internal.Notef(fi, g.line(first),
+				"the %s Rules key %s uses regular-expression syntax, which v3 no longer reads: a key is path text now, where only \"*\" is a wildcard, "+
+					"so the rule would not match what it did. Spell it with \"*\" or do the rewrite in a middleware of your own. The Rules map was left as it is.",
+				pkg.name, strings.Join(dead, ", "))
+			return
+		}
+	}
+	sortRules(rules, pkg.patternBytes)
+
+	// Rules may share its line with the config's opening or another field.
+	indent := mw3Indent(g.src, g.offset(kv.Pos()))
 	var b strings.Builder
 	fmt.Fprintf(&b, "RuleList: []%s.Rule{\n", alias)
 	for _, r := range rules {
@@ -98,95 +162,49 @@ func rewriteRuleMap(cfg, alias, patternBytes string) string {
 	}
 	fmt.Fprintf(&b, "%s}", indent)
 
-	return cfg[:loc[0]] + b.String() + cfg[end:]
+	edits.replaceNode(g, kv, b.String())
 }
 
-func findTopLevelRuleMap(cfg string) []int {
-	matches := reRuleMap.FindAllStringIndex(cfg, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-
-	candidates := make(map[int][]int, len(matches))
-	for _, loc := range matches {
-		candidates[loc[0]] = loc
-	}
-
-	fileSet := token.NewFileSet()
-	file := fileSet.AddFile("", -1, len(cfg))
-	var s scanner.Scanner
-	s.Init(file, []byte(cfg), nil, scanner.ScanComments)
-
-	depth := 0
-	for {
-		pos, tok, _ := s.Scan()
-		switch tok {
-		case token.EOF:
-			return nil
-		case token.LBRACE:
-			depth++
-		case token.RBRACE:
-			depth--
-		case token.IDENT:
-			if loc, ok := candidates[file.Offset(pos)]; ok && depth == 1 {
-				return loc
-			}
-		default:
-		}
-	}
+// isStringMap reports whether the type is map[string]string.
+func isStringMap(typ ast.Expr) bool {
+	m, ok := typ.(*ast.MapType)
+	return ok && isIdentNamed(m.Key, "string") && isIdentNamed(m.Value, "string")
 }
 
 type ruleEntry struct {
 	from string // the key as written, quotes included
 	to   string
 	key  string // the key unquoted, for ranking
+	pos  token.Pos
 }
 
-// reRuleEntry matches one "key": "value" pair, both sides Go string literals,
-// interpreted or raw, or a line comment, which captures nothing.
-var reRuleEntry = regexp.MustCompile(`//[^\n]*|("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)\s*:\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
-
-// parseRuleMap reads the entries of a map literal body. It reports false when
-// anything sits between the pairs other than separators and comments, which is
-// how a computed key or value is left alone rather than guessed at. Entries may
-// share a line, so this walks the body rather than its lines.
-func parseRuleMap(body string) ([]ruleEntry, bool) {
+// parseRuleMap reads the entries of a map literal. It reports false when an
+// entry is anything other than a string literal pair, which is how a computed
+// key or value is left alone rather than guessed at.
+func parseRuleMap(lit *ast.CompositeLit) ([]ruleEntry, bool) {
 	var rules []ruleEntry
-	last := 0
-	for _, m := range reRuleEntry.FindAllStringSubmatchIndex(body, -1) {
-		if m[2] < 0 {
-			continue // a comment: a pair commented out is not a rule
-		}
-		if !onlySeparators(body[last:m[0]]) {
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
 			return nil, false
 		}
-		key := body[m[2]:m[3]]
+		key, keyOK := kv.Key.(*ast.BasicLit)
+		value, valueOK := kv.Value.(*ast.BasicLit)
+		if !keyOK || !valueOK {
+			return nil, false
+		}
 		// Ranked by the string the middleware sees, so "\x2a" counts as the
-		// wildcard it is. A literal Go would not accept is left alone.
-		unquoted, err := strconv.Unquote(key)
-		if err != nil {
+		// wildcard it is.
+		unquoted, ok := mw3UnquoteString(key)
+		if !ok {
 			return nil, false
 		}
-		rules = append(rules, ruleEntry{from: key, to: body[m[4]:m[5]], key: unquoted})
-		last = m[1]
-	}
-	if !onlySeparators(body[last:]) {
-		return nil, false
+		if _, ok := mw3UnquoteString(value); !ok {
+			return nil, false
+		}
+		rules = append(rules, ruleEntry{from: key.Value, to: value.Value, key: unquoted, pos: key.Pos()})
 	}
 	return rules, len(rules) > 0
-}
-
-// onlySeparators reports whether the text between two entries is nothing but
-// commas, whitespace and comments.
-func onlySeparators(s string) bool {
-	for line := range strings.SplitSeq(s, "\n") {
-		trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), ","))
-		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 // sortRules puts the entries in the order the middleware ranked the map, so

@@ -352,3 +352,83 @@ var _ = redirect.New(redirect.Config{
 	assert.Equal(t, once, twice)
 	assert.Empty(t, out, "a second run must report no change")
 }
+
+// rewrite quotes the key it is given, so a key written with regular-expression
+// syntax is dead in v3 whether it is in the map or in the list: it is left in
+// the map, where the user can see it, and reported.
+func Test_MigrateRuleList_RewriteKeysThatNeedARegexp(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import "github.com/gofiber/fiber/v3/middleware/rewrite"
+
+var _ = rewrite.New(rewrite.Config{
+	Rules: map[string]string{
+		"/users/(\\d+)/profile": "/profile/$1",
+		"^/legacy":              "/modern",
+		"/plain":                "/other",
+	},
+})
+`
+	got, res := mw3RunOne(t, src, v3.MigrateRuleList)
+	assert.Equal(t, src, got)
+	assert.Empty(t, res.out)
+
+	require.Len(t, res.notes, 1)
+	assert.Equal(t, 7, res.notes[0].Line, "the first key that is dead")
+	assert.Contains(t, res.notes[0].Message, `the rewrite Rules key "/users/(\\d+)/profile", "^/legacy" uses regular-expression syntax`)
+	assert.Contains(t, res.notes[0].Message, "The Rules map was left as it is")
+}
+
+// redirect still compiles its keys as regular expressions, so the same keys keep working.
+func Test_MigrateRuleList_RedirectKeepsItsRegexpKeys(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v3/middleware/redirect"
+
+var _ = redirect.New(redirect.Config{
+	Rules: map[string]string{
+		"/users/(\\d+)/profile": "/profile/$1",
+	},
+})
+`, v3.MigrateRuleList)
+
+	assert.Contains(t, got, `{From: "/users/(\\d+)/profile", To: "/profile/$1"},`)
+	assert.Empty(t, res.notes)
+}
+
+func Test_MigrateRuleList_RewriteKeysWithADotAreText(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v3/middleware/rewrite"
+
+var _ = rewrite.New(rewrite.Config{
+	Rules: map[string]string{"/old.html": "/new.html", "/files/*": "/static/$1"},
+})
+`, v3.MigrateRuleList)
+
+	assert.Contains(t, got, `{From: "/old.html", To: "/new.html"},`)
+	assert.Empty(t, res.notes)
+}
+
+func Test_MigrateRuleList_OnlyTheMiddlewareOfTheImport(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import "example.com/project/rewrite"
+
+// rewrite.Config{Rules: map[string]string{"/a": "/b"}}
+var doc = "rewrite.Config{Rules: map[string]string{\"/a\": \"/b\"}}"
+
+var _ = rewrite.Config{Rules: map[string]string{"/a": "/b"}}
+`
+	got, res := mw3RunOne(t, src, v3.MigrateRuleList)
+	assert.Equal(t, src, got)
+	assert.Empty(t, res.out)
+}
