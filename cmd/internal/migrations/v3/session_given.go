@@ -3,6 +3,9 @@ package v3
 import (
 	"go/ast"
 	"go/token"
+	"slices"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 // A v2 config keeps the CookieName and the KeyLookup it is given as they are, until
@@ -24,6 +27,66 @@ type mw3Given struct {
 
 // mw3ConfigDefaultGiven is what session.ConfigDefault was given.
 var mw3ConfigDefaultGiven = mw3Given{lookup: mw3SourceCookie + ":" + mw3DefaultCookie}
+
+// defaultChanged reports whether a file of the module of the file assigns to the
+// lookup of session.ConfigDefault, or takes its address: then the configs that
+// are made from it have another lookup than the default.
+func (p *mw3Pkgs) defaultChanged(fi internal.FileInfo) bool {
+	mod, ok := moduleOf(fi.Path, fi.Root)
+	if !ok {
+		return false
+	}
+	if changed, done := p.defaults[mod.root]; done {
+		return changed
+	}
+	if p.defaults == nil {
+		p.defaults = map[string]bool{}
+	}
+
+	changed := false
+	ix := p.indexes.of(fi)
+	for _, path := range mw3SessionPaths {
+		for _, f := range ix.importers(path) {
+			names := f.importNames(mw3SessionPath, "session")
+			changed = changed || mw3SelectsDefault(f.g.file, names)
+		}
+	}
+	p.defaults[mod.root] = changed
+	return changed
+}
+
+// mw3SelectsDefault reports whether the file assigns to, or takes the address of,
+// the KeyLookup or the CookieName of session.ConfigDefault.
+func mw3SelectsDefault(file *ast.File, names []string) bool {
+	isLookup := func(e ast.Expr) bool {
+		field, ok := ast.Unparen(e).(*ast.SelectorExpr)
+		if !ok || (field.Sel.Name != mw3KeyLookup && field.Sel.Name != mw3CookieName) {
+			return false
+		}
+		def, ok := ast.Unparen(field.X).(*ast.SelectorExpr)
+		if !ok || def.Sel.Name != mw3ConfigDefault {
+			return false
+		}
+		id, ok := def.X.(*ast.Ident)
+		return ok && slices.Contains(names, id.Name)
+	}
+
+	changed := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			if x.Tok != token.DEFINE {
+				changed = changed || slices.ContainsFunc(x.Lhs, isLookup)
+			}
+		case *ast.UnaryExpr:
+			changed = changed || (x.Op == token.AND && isLookup(x.X))
+		case *ast.IncDecStmt:
+			changed = changed || isLookup(x.X)
+		}
+		return !changed
+	})
+	return changed
+}
 
 // mw3GivenReader reads what a config was given from the place that makes it.
 type mw3GivenReader struct {
@@ -97,7 +160,7 @@ func (r *mw3GivenReader) ofConfig(e ast.Expr, stack []ast.Node) (mw3Given, bool)
 
 	switch x := ast.Unparen(e).(type) {
 	case *ast.SelectorExpr:
-		if r.isSessionMember(x, mw3ConfigDefault, stack) {
+		if r.isSessionMember(x, mw3ConfigDefault, stack) && !r.f.pkgs.defaultChanged(r.f.fi) {
 			return mw3ConfigDefaultGiven, true
 		}
 	case *ast.CompositeLit:

@@ -184,7 +184,7 @@ func (p *mw3SessionReadsPass) known(sel *ast.SelectorExpr, field string, owner m
 	)
 	switch recv := mw3Receiver(sel, owner); {
 	case owner.defaults:
-		given, ok = mw3ConfigDefaultGiven, true
+		given, ok = mw3ConfigDefaultGiven, !p.f.pkgs.defaultChanged(p.f.fi)
 	case owner.store:
 		given, ok = r.ofStore(recv, stack)
 	default:

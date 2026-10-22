@@ -695,3 +695,40 @@ func main() {
 	assert.Empty(t, second.out)
 	assert.Empty(t, second.notes)
 }
+
+// A program that changes the lookup of the default config has configs that are
+// made from it with another lookup than the default.
+func Test_MigrateSessionReads_ADefaultThatTheProgramChanged(t *testing.T) {
+	t.Parallel()
+
+	res := mw3RunModule(t, map[string]string{
+		"init.go": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func init() {
+	session.ConfigDefault.KeyLookup = "header:X-Default"
+}
+`,
+		"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+func main() {
+	cfg := session.ConfigDefault
+	fmt.Println(cfg.KeyLookup, session.ConfigDefault.KeyLookup)
+	_ = session.New(cfg)
+}
+`,
+	}, v3.MigrateSessionExtractor)
+
+	got := res.files["main.go"]
+	assert.NotContains(t, got, `"cookie:session_id"`)
+	assert.Contains(t, got, "}(cfg.Extractor), func")
+	assert.Contains(t, got, "}(session.ConfigDefault.Extractor))")
+	assert.Contains(t, res.files["init.go"], `session.ConfigDefault.Extractor = extractors.FromHeader("X-Default")`)
+}

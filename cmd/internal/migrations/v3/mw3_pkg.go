@@ -25,6 +25,9 @@ type mw3Pkgs struct {
 	// for the session store.
 	sources map[string]*mw3SourceMode
 	stores  map[string]*mw3StoreTypes
+	// defaults tells, by module, whether the program changes the lookup of
+	// session.ConfigDefault.
+	defaults map[string]bool
 	// indexes give the view of the whole module, for the facts that reach into
 	// other packages of it.
 	indexes moduleIndexes
