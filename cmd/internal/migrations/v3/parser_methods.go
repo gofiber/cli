@@ -14,11 +14,11 @@ import (
 // ctxBinders maps the parser methods of the v2 Ctx to the binder of v3 that
 // replaces them.
 var ctxBinders = map[string]string{
-	"BodyParser":      "Body",
-	"CookieParser":    "Cookie",
-	"ParamsParser":    "URI",
-	"QueryParser":     ctxFnQuery,
-	"ReqHeaderParser": "Header",
+	nameBodyParser:      clientFieldBody,
+	nameCookieParser:    clientFieldCookie,
+	nameParamsParser:    "URI",
+	nameQueryParser:     ctxFnQuery,
+	nameReqHeaderParser: "Header",
 }
 
 // ctxAllParams is the v2 method that returned all route parameters as a map.

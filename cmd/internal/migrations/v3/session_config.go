@@ -38,7 +38,7 @@ func MigrateSessionConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 
 // mw3SessionV3Fields are the Config fields that only exist in v3. A config that
 // sets one of them is already written for v3 and keeps the lifetime it names.
-var mw3SessionV3Fields = []string{"IdleTimeout", "AbsoluteTimeout", "Extractor", "Store", "Next", "ErrorHandler"}
+var mw3SessionV3Fields = []string{"IdleTimeout", "AbsoluteTimeout", "Extractor", cacheStore, "Next", "ErrorHandler"}
 
 // mw3SessionConfigPass is the rewrite of one file by MigrateSessionConfig.
 type mw3SessionConfigPass struct {
@@ -233,7 +233,7 @@ func mw3FromOtherPackage(e ast.Expr, stack []ast.Node) bool {
 // lifetime of a config copied from ConfigDefault.
 func (p *mw3SessionConfigPass) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	g := p.f.g
-	if sel.Sel.Name == "Expiration" && p.f.isConfig(sel.X, stack) {
+	if sel.Sel.Name == cacheExpiration && p.f.isConfig(sel.X, stack) {
 		p.edits.replaceNode(g, sel.Sel, "IdleTimeout")
 		return
 	}

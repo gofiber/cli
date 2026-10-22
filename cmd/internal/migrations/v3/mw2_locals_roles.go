@@ -82,7 +82,7 @@ var mw2Roles = []*mw2Role{
 	{
 		re: mw2CSRF, pkg: mw2PkgCSRF, addPath: mw2BuiltinPath(mw2PkgCSRF),
 		field: "HandlerContextKey", defaultKey: "fiber.csrf.handler", reader: "HandlerFromContext",
-		kind: mw2KindPointer, pointers: []string{"CSRFHandler", "Handler"},
+		kind: mw2KindPointer, pointers: []string{nameCSRFHandler, "Handler"},
 	},
 	{
 		re: mw2BasicAuth, pkg: mw2PkgBasicAuth, addPath: mw2BuiltinPath(mw2PkgBasicAuth),
@@ -168,7 +168,7 @@ func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
 	if ok && c.value != nil {
 		if v, ok := mw2ConstString(c.value, kr.pkg.constValue, 1); ok {
 			switch typ := mw2TypeText(c.typ); {
-			case c.typ == nil || typ == "string":
+			case c.typ == nil || typ == nameString:
 				return mw2Key{val: v}
 			case typ != "":
 				return mw2Key{typ: typ, val: v}

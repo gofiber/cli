@@ -139,9 +139,9 @@ func (f *contribFile) pasetoLookup(c *contribConfig, names []string) (parts []co
 
 	switch source {
 	case contribSourceQuery:
-		parts = []contribExtractor{{fn: "FromQuery", arg: strconv.Quote(name)}}
+		parts = []contribExtractor{{fn: nameFromQuery, arg: strconv.Quote(name)}}
 	case contribSourceParam:
-		parts = []contribExtractor{{fn: "FromParam", arg: strconv.Quote(name)}}
+		parts = []contribExtractor{{fn: nameFromParam, arg: strconv.Quote(name)}}
 	case contribSourceCookie:
 		parts = []contribExtractor{{fn: "FromCookie", arg: strconv.Quote(name)}}
 	default:

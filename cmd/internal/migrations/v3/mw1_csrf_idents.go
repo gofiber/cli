@@ -11,10 +11,10 @@ import (
 // csrfExtractorHelpers are the helpers of v2 that moved to the extractors
 // package. CsrfFromCookie is not among them, see selector.
 var csrfExtractorHelpers = map[string]string{
-	"CsrfFromHeader": "FromHeader",
-	"CsrfFromForm":   "FromForm",
-	"CsrfFromQuery":  "FromQuery",
-	"CsrfFromParam":  "FromParam",
+	"CsrfFromHeader": nameFromHeader,
+	"CsrfFromForm":   nameFromForm,
+	"CsrfFromQuery":  nameFromQuery,
+	"CsrfFromParam":  nameFromParam,
 }
 
 // csrfMissingTokenErrors are the errors an extractor of v2 returned when the
@@ -69,7 +69,7 @@ func (m *csrfMigration) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 		m.edits.replaceNode(m.g, sel.Sel, csrfRefererNotFound)
 	case name == "ErrBadReferer":
 		m.badReferer(sel, pkg, stack)
-	case name == "CSRFHandler":
+	case name == nameCSRFHandler:
 		m.handlerType(sel, stack)
 	}
 }
@@ -430,7 +430,7 @@ func (m *csrfMigration) cookie(lit *ast.CompositeLit, kv *ast.KeyValueExpr, idx 
 // isFiberCookie reports whether e is fiber.Cookie.
 func (m *csrfMigration) isFiberCookie(e ast.Expr) bool {
 	pkg, name, ok := mw1Selector(e)
-	return ok && name == "Cookie" && slices.Contains(fiberNamesOf(m.g.src), pkg)
+	return ok && name == clientFieldCookie && slices.Contains(fiberNamesOf(m.g.src), pkg)
 }
 
 // fiberNamesOf returns the identifiers the source binds to the core package.

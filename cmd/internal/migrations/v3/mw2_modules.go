@@ -75,7 +75,7 @@ func mw2Walk(root string, fn func(path string)) error {
 			return nil //nolint:nilerr // an unreadable entry is skipped
 		}
 		if info.IsDir() {
-			if info.Name() == "vendor" {
+			if info.Name() == appVendorDir {
 				return filepath.SkipDir
 			}
 			return nil

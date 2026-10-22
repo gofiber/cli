@@ -198,15 +198,15 @@ type clientUnsupported string
 
 // clientAgentArity lists the Agent methods with a fixed number of arguments.
 var clientAgentArity = map[string]int{
-	"Set": 2, "SetBytesK": 2, "SetBytesV": 2, "SetBytesKV": 2,
+	nameSet: 2, "SetBytesK": 2, "SetBytesV": 2, "SetBytesKV": 2,
 	"Add": 2, "AddBytesK": 2, "AddBytesV": 2, "AddBytesKV": 2,
 	"ConnectionClose": 0, clientMemberUserAgent: 1, "UserAgentBytes": 1,
-	"Cookie": 2, "CookieBytesK": 2, "CookieBytesKV": 2,
-	"Referer": 1, "RefererBytes": 1, "ContentType": 1, "ContentTypeBytes": 1,
+	clientFieldCookie: 2, "CookieBytesK": 2, "CookieBytesKV": 2,
+	"Referer": 1, "RefererBytes": 1, nameContentType: 1, "ContentTypeBytes": 1,
 	"QueryString": 1, "QueryStringBytes": 1, "BasicAuth": 2, "BasicAuthBytes": 2,
-	"BodyString": 1, "Body": 1, "BodyStream": 2, "XML": 1, "Boundary": 1,
+	"BodyString": 1, clientFieldBody: 1, "BodyStream": 2, "XML": 1, "Boundary": 1,
 	"Form": 1, "MultipartForm": 1,
-	"Timeout": 1, "Reuse": 0, "InsecureSkipVerify": 0, "TLSConfig": 1,
+	"Timeout": 1, "Reuse": 0, "InsecureSkipVerify": 0, nameTLSConfig: 1,
 	"MaxRedirectsCount": 1, clientMemberJSONEncoder: 1, clientMemberJSONDecoder: 1,
 }
 
@@ -306,7 +306,7 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr, it *clientItem) (op c
 		return f.formFieldsOp(op, args[0], false)
 	case "MultipartForm":
 		return f.formFieldsOp(op, args[0], true)
-	case "SendFile":
+	case mw3SendFile:
 		return f.sendFileOp(op, call, false)
 	case "SendFiles":
 		return f.sendFileOp(op, call, true)
@@ -555,7 +555,7 @@ func clientPlainDataType(t ast.Expr) bool {
 		return true
 	case *ast.Ident:
 		switch x.Name {
-		case "string", "any", "error", "byte":
+		case nameString, "any", "error", "byte":
 			return false
 		}
 		return true

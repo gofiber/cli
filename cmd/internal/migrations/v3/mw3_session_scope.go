@@ -328,7 +328,7 @@ func (f *mw3SessionFile) isSession(e ast.Expr, stack []ast.Node) bool {
 func (f *mw3SessionFile) returnsSession(call *ast.CallExpr, stack []ast.Node) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
-		if fun.Sel.Name == "Get" || fun.Sel.Name == "GetByID" {
+		if fun.Sel.Name == appMethodGet || fun.Sel.Name == "GetByID" {
 			return f.isStore(fun.X, stack)
 		}
 	case *ast.Ident:

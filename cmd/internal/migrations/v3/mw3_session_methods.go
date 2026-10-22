@@ -92,7 +92,7 @@ func (p *mw3SessionMethodsPass) call(call *ast.CallExpr, stack []ast.Node) {
 		}
 	case sel.Sel.Name == "Reset" && len(call.Args) == 0 && p.f.isStore(sel.X, stack):
 		p.edits.replace(g.offset(call.Lparen)+1, g.offset(call.Rparen), p.context(stack))
-	case sel.Sel.Name == "Delete" && len(call.Args) == 1 && p.f.isStore(sel.X, stack):
+	case sel.Sel.Name == nameDelete && len(call.Args) == 1 && p.f.isStore(sel.X, stack):
 		start := g.offset(call.Args[0].Pos())
 		p.edits.replace(start, start, p.context(stack)+", ")
 	case sel.Sel.Name == "Keys" && len(call.Args) == 0 && p.f.isSession(sel.X, stack):

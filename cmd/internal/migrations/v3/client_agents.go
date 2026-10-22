@@ -12,7 +12,7 @@ func (f *clientFile) isAgentPtr(t ast.Expr) (*ast.SelectorExpr, bool) {
 		return nil, false
 	}
 	sel, ok := f.fiberSel(star.X)
-	if !ok || sel.Sel.Name != "Agent" {
+	if !ok || sel.Sel.Name != nameAgent {
 		return nil, false
 	}
 	return sel, true

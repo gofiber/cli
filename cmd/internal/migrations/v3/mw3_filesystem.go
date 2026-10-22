@@ -690,7 +690,7 @@ func (p *mw3FSPass) assign(a mw3FSAssign) {
 		p.edits.replaceNode(g, sel.Sel, "FS")
 		p.edits.replaceNode(g, as.Rhs[0], p.rootFS(as.Rhs[0], a.stack, as, "Root"))
 		p.imports.releaseIn(g, as.Rhs[0])
-	case "Index":
+	case nameIndex:
 		value, known := mw3StringLiteral(as.Rhs[0])
 		text := ""
 		switch {

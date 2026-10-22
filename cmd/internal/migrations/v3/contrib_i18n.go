@@ -296,7 +296,7 @@ func i18nAnalyze(g *goSource) i18nUsage {
 			}
 		case *ast.CallExpr:
 			sel, ok := x.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "New" {
+			if !ok || sel.Sel.Name != mw2New {
 				return true
 			}
 			id, ok := sel.X.(*ast.Ident)
@@ -328,7 +328,7 @@ func i18nSiteOf(call *ast.CallExpr, pkg string, stack []ast.Node) (site i18nSite
 	if !ok || stmt.X != ast.Expr(use) {
 		return i18nSite{}, false
 	}
-	if sel, isSel := use.Fun.(*ast.SelectorExpr); !isSel || sel.Sel.Name != "Use" {
+	if sel, isSel := use.Fun.(*ast.SelectorExpr); !isSel || sel.Sel.Name != nameUse {
 		return i18nSite{}, false
 	}
 

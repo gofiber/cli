@@ -85,7 +85,7 @@ const ctxCharsetMessage = "Fiber v3 adds \"; charset=utf-8\" to the Content-Type
 // which is how the comparison should be written.
 func ctxIsPrefixCheck(call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	return ok && slices.Contains([]string{"HasPrefix", "Contains", "Index"}, sel.Sel.Name)
+	return ok && slices.Contains([]string{"HasPrefix", "Contains", nameIndex}, sel.Sel.Name)
 }
 
 // ctxIsContentTypeAssertion reports whether the operands of a call or
@@ -129,9 +129,9 @@ func ctxReadsContentType(operand ast.Expr, names []string) bool {
 		}
 
 		switch sel.Sel.Name {
-		case "ContentType":
+		case nameContentType:
 			found = len(call.Args) == 0
-		case "Get", "GetRespHeader":
+		case appMethodGet, "GetRespHeader":
 			found = len(call.Args) == 1 && ctxIsContentTypeName(call.Args[0], names)
 		}
 		return !found

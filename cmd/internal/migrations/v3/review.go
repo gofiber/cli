@@ -214,7 +214,7 @@ func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	name := sel.Sel.Name
 
 	switch {
-	case (name == "SendFile" || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && isFiberCtxExpr(sel.X, rf.core, stack):
+	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && isFiberCtxExpr(sel.X, rf.core, stack):
 		rf.r.fileNameSeen = true
 		rf.notef(sel.Sel.Pos(), "%s takes the file name literally in Fiber v3 instead of percent-decoding it, so a name taken from a route parameter keeps its %%XX escapes unless fiber.Config{UnescapePath: true} is set; decode it and make sure it stays inside the directory you serve", name)
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && isFiberCtxExpr(sel.X, rf.core, stack):
@@ -279,7 +279,7 @@ func (rf *reviewFile) isRouterExpr(e ast.Expr, stack []ast.Node, depth int) bool
 			return false
 		}
 		if id, isIdent := sel.X.(*ast.Ident); isIdent && slices.Contains(rf.core, id.Name) {
-			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithCustomCtx"
+			return sel.Sel.Name == mw2New || sel.Sel.Name == "NewWithCustomCtx"
 		}
 		return sel.Sel.Name == reviewGroupType && rf.isRouterExpr(sel.X, stack, depth+1)
 	}
@@ -306,7 +306,7 @@ func (rf *reviewFile) isHooksExpr(e ast.Expr, stack []ast.Node, depth int) bool 
 		return d.init != nil && rf.isHooksExpr(d.init, stack, depth+1)
 	case *ast.CallExpr:
 		sel, ok := x.Fun.(*ast.SelectorExpr)
-		return ok && sel.Sel.Name == "Hooks" && rf.isRouterExpr(sel.X, stack, depth+1)
+		return ok && sel.Sel.Name == nameHooks && rf.isRouterExpr(sel.X, stack, depth+1)
 	}
 	return false
 }
@@ -382,7 +382,7 @@ func init() {
 		Request Response RetryIfFunc`) {
 		reviewAdvice[reviewCorePath+"."+name] = reviewClientHint
 	}
-	for _, name := range []string{"ListenMutualTLS", "ListenMutualTLSWithCertificate", "ListenTLSWithCertificate"} {
+	for _, name := range []string{nameListenMutualTLS, nameListenMutualTLSWithCertificate, nameListenTLSWithCertificate} {
 		reviewAdvice["App."+name] = reviewAdvice["App.ListenTLS"]
 	}
 	for _, typ := range []string{reviewGroupType, reviewRouterType} {

@@ -123,7 +123,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 
 	bodyType, bodyZero, bodyExpr := "[]byte", "nil", respName+".Body()"
 	if t.kind == clientTermString {
-		bodyType, bodyZero, bodyExpr = "string", `""`, "string("+respName+".Body())"
+		bodyType, bodyZero, bodyExpr = nameString, `""`, "string("+respName+".Body())"
 	}
 	var assigns []clientTermAssign
 	if !status.blank {

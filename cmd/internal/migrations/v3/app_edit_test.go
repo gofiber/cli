@@ -156,6 +156,7 @@ func appIndexOf(s, sub string) int {
 func Test_appImports(t *testing.T) {
 	t.Parallel()
 
+	// The subtests share the files, whose package index is filled lazily, so they run one after the other.
 	files := appTestFiles(t, map[string]string{
 		"go.mod": "module example.com/demo\n",
 		"a.go": `package main
@@ -183,7 +184,6 @@ func c() {}
 	})
 
 	t.Run("an import the file has is used", func(t *testing.T) {
-		t.Parallel()
 		var imps appImports
 		assert.Equal(t, "fmt.", imps.qualifier(files["a.go"], "fmt", "fmt"))
 		assert.Equal(t, "fiber.", imps.fiberQualifier(files["a.go"]))
@@ -191,7 +191,6 @@ func c() {}
 	})
 
 	t.Run("a taken name gets another one", func(t *testing.T) {
-		t.Parallel()
 		var imps appImports
 		// main.go declares a function called static
 		assert.Equal(t, "staticmw.", imps.qualifier(files["a.go"], "github.com/gofiber/fiber/v3/middleware/static", "static"))
@@ -200,7 +199,6 @@ func c() {}
 	})
 
 	t.Run("a file without fiber imports it the way the package does", func(t *testing.T) {
-		t.Parallel()
 		var imps appImports
 		assert.Equal(t, "fiber.", imps.fiberQualifier(files["c.go"]))
 		assert.Equal(t, []appImportReq{{path: "github.com/gofiber/fiber/v2"}}, imps.reqs)

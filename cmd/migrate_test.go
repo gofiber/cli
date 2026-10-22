@@ -94,7 +94,7 @@ func handler(c *fiber.Ctx) error {
     ctx := c.Context()
     uc := c.UserContext()
     c.SetUserContext(uc)
-    csrfToken := c.Locals("token").(string)
+    csrfToken := c.Locals("csrftoken").(string)
     _ = ctx
     _ = csrfToken
     return c.Bind(fiber.Map{})
@@ -106,7 +106,7 @@ func main() {
         Prefork:                 true,
         Network:                 "tcp",
     })
-    app.Use(csrf.New(csrf.Config{ContextKey: "token"}))
+    app.Use(csrf.New(csrf.Config{ContextKey: "csrftoken"}))
     app.Use(keyauth.New(keyauth.Config{}))
     app.Static("/", "./public")
     app.Add(fiber.MethodGet, "/foo", handler)
@@ -147,7 +147,7 @@ func main() {
 	at.NotContains(content, "keyauth.TokenFromContext")
 	at.NotContains(content, "ContextKey")
 	at.Contains(content, ".Use(\"/api\", app)")
-	at.Contains(content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(250) * time.Millisecond})")
+	at.Contains(content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(250) * time.Millisecond, FailOnTimeout: true})")
 	at.Contains(content, ".Listen(")
 	at.Contains(content, "MIMETextJavaScript")
 	at.NotContains(content, "MIMEApplicationJavaScript")

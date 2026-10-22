@@ -39,7 +39,7 @@ func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 // appSpreadMethods are the routing methods whose handlers are ...Handler in v2
 // and ...any in v3.
 var appSpreadMethods = []string{
-	appMethodGet, "Head", "Post", "Put", "Delete", "Connect", "Options", "Trace", "Patch", "Query", "All", appMethodAdd, appMethodGroup,
+	appMethodGet, nameHead, namePost, namePut, nameDelete, "Connect", "Options", "Trace", namePatch, "Query", "All", appMethodAdd, appMethodGroup,
 }
 
 func appMigrateAddMethodContent(ix *appIndex, content string, fi internal.FileInfo) string {

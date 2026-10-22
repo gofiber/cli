@@ -41,8 +41,8 @@ const appMaxDepth = 10
 // appRouterMethods are the methods of an app or router that return the router
 // again, so that app.Group("/a").Get(...) is still a router.
 var appRouterMethods = []string{
-	"Use", appMethodGet, "Head", "Post", "Put", "Delete", "Connect", "Options", "Trace", "Patch", "Query",
-	appMethodAdd, "All", appNameStatic, appMethodGroup, "Route", "RouteChain", "Mount", "Name", "Domain",
+	"Use", appMethodGet, nameHead, namePost, namePut, nameDelete, "Connect", "Options", "Trace", namePatch, "Query",
+	appMethodAdd, "All", appNameStatic, appMethodGroup, "Route", "RouteChain", nameMount, "Name", "Domain",
 }
 
 // isFiberQualifier reports whether name is how f refers to the fiber package.
@@ -103,7 +103,7 @@ func (f *appFile) isNewCall(call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
 		id, ok := fun.X.(*ast.Ident)
-		return ok && f.isFiberQualifier(id.Name) && (fun.Sel.Name == "New" || fun.Sel.Name == "NewWithCustomCtx")
+		return ok && f.isFiberQualifier(id.Name) && (fun.Sel.Name == mw2New || fun.Sel.Name == "NewWithCustomCtx")
 	case *ast.Ident:
 		return f.dotImportsFiber() && fun.Name == "New"
 	}
@@ -190,9 +190,9 @@ func (f *appFile) typeKind(t ast.Expr, depth int) appKind {
 		switch name {
 		case "App":
 			return appKindApp
-		case "Router", "Group":
+		case "Router", appMethodGroup:
 			return appKindRouter
-		case "Hooks":
+		case nameHooks:
 			return appKindHooks
 		case appNameConfig:
 			return appKindConfig

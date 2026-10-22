@@ -5,8 +5,6 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
-	"strings"
-	"sync"
 )
 
 // ctxKind says what is known about the type of an expression.
@@ -502,9 +500,9 @@ func (env *ctxEnv) methodCallType(call *ast.CallExpr, fun *ast.SelectorExpr, sta
 	switch name := fun.Sel.Name; {
 	case name == "AcquireCtx":
 		return env.fiberType(ctxTypeCtx)
-	case name == "Group" && len(call.Args) > 0:
+	case name == appMethodGroup && len(call.Args) > 0:
 		return env.fiberType(ctxTypeGroup)
-	case name == "New" && env.isFiberPackage(fun.X):
+	case name == mw2New && env.isFiberPackage(fun.X):
 		return env.fiberType(ctxTypeApp)
 	case slices.Contains(ctxChainMethods, name):
 		if env.typeIs(env.typeOfAt(fun.X, stack, depth+1), ctxTypeCtx) == ctxYes {
@@ -564,16 +562,6 @@ func (env *ctxEnv) declares(typeName, name string) bool {
 	})
 }
 
-// declsNamed returns the types and the initializing expressions of every
-// declaration of an identifier called name in the file, in any scope, for
-// parameters, struct fields, var declarations and assignments.
-func (env *ctxEnv) declsNamed(name string) (typs, inits []ast.Expr) {
-	if name == "" {
-		return nil, nil
-	}
-	return env.declTypes[name], env.declInits[name]
-}
-
 // indexDecls records the types and initializing expressions of the declarations
 // of the file by the name they declare.
 func (env *ctxEnv) indexDecls() {
@@ -626,100 +614,4 @@ func ctxAppendRHS(dst, values []ast.Expr, n, i int) []ast.Expr {
 		return append(dst, values[0])
 	}
 	return dst
-}
-
-// ctxEnvCache remembers the environment of the file the helpers of common.go
-// looked at last: they are called with the same source for every candidate of
-// a file.
-var ctxEnvCache struct {
-	env *ctxEnv
-	src string
-	sync.Mutex
-}
-
-// ctxEnvFor returns the environment of src, nil when src does not parse. A file
-// without a fiber import is treated as if it imported the package as "fiber",
-// so that the snippets the helpers are given without an import clause keep
-// working.
-func ctxEnvFor(src string) *ctxEnv {
-	ctxEnvCache.Lock()
-	defer ctxEnvCache.Unlock()
-
-	if ctxEnvCache.env != nil && ctxEnvCache.src == src {
-		return ctxEnvCache.env
-	}
-
-	g, ok := parseSource(src)
-	if !ok {
-		// A snippet that is only a part of a file still has declarations.
-		g, ok = parseSource("package p\n" + src)
-		if !ok {
-			return nil
-		}
-	}
-	names := fiberNames(src)
-	if len(names) == 0 {
-		names = []string{"fiber"}
-	}
-
-	ctxEnvCache.env = newCtxEnv(g, names)
-	ctxEnvCache.src = src
-	return ctxEnvCache.env
-}
-
-// ctxFileDeclares reports whether some declaration of ident in src has one of
-// the wanted fiber types, or is initialized with a value of one.
-func ctxFileDeclares(src, ident string, wanted ...string) bool {
-	env := ctxEnvFor(src)
-	if env == nil {
-		return false
-	}
-
-	typs, inits := env.declsNamed(ident)
-	for _, t := range typs {
-		if env.typeIs(t, wanted...) == ctxYes {
-			return true
-		}
-	}
-	for _, init := range inits {
-		if env.typeIs(env.typeOf(init, nil), wanted...) == ctxYes {
-			return true
-		}
-	}
-	return false
-}
-
-// ctxTypeString spells the type t without its pointers.
-func ctxTypeString(t ast.Expr) string {
-	for {
-		switch x := t.(type) {
-		case *ast.StarExpr:
-			t = x.X
-		case *ast.ParenExpr:
-			t = x.X
-		default:
-			return types.ExprString(t)
-		}
-	}
-}
-
-// ctxSpellings returns the ways the source can spell the type typ. A type of the
-// fiber package, given as "fiber.X", is spelled with the names the source has for
-// the package.
-func ctxSpellings(env *ctxEnv, typ string) []string {
-	typ = strings.TrimLeft(typ, "*")
-	rest, ok := strings.CutPrefix(typ, "fiber.")
-	if !ok {
-		return []string{typ}
-	}
-
-	spellings := make([]string, 0, len(env.names))
-	for _, name := range env.names {
-		if name == "." {
-			spellings = append(spellings, rest)
-			continue
-		}
-		spellings = append(spellings, name+"."+rest)
-	}
-	return spellings
 }

@@ -15,9 +15,9 @@ import (
 // mw2LimiterRenames maps the deprecated v2 fields of the limiter config to the
 // fields that replaced them, which are the only ones v3 has.
 var mw2LimiterRenames = map[string]string{
-	"Duration": "Expiration",
-	"Store":    "Storage",
-	"Key":      "KeyGenerator",
+	nameDuration: cacheExpiration,
+	cacheStore:   "Storage",
+	cacheKey:     "KeyGenerator",
 }
 
 // MigrateLimiterConfig moves a limiter setup to the v3 API: the deprecated

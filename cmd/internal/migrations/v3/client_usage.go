@@ -241,7 +241,7 @@ func (f *clientFile) releasedClient(s ast.Stmt, e ast.Expr) bool {
 		return false
 	}
 	sel, ok := f.fiberSel(call.Fun)
-	if !ok || sel.Sel.Name != "ReleaseClient" || len(call.Args) != 1 {
+	if !ok || sel.Sel.Name != nameReleaseClient || len(call.Args) != 1 {
 		return false
 	}
 	f.deleteStmt(f.edits.begin(), s)
@@ -335,11 +335,11 @@ func (f *clientFile) resolve(id *ast.Ident) (decl, bool) {
 // clientAPIMembers lists the members of the fiber package that belong to the v2
 // client.
 var clientAPIMembers = []string{
-	"Get", "Head", "Post", "Put", "Patch", "Delete",
-	"AcquireAgent", "ReleaseAgent", "AcquireClient", "ReleaseClient",
-	clientMemberAcquireArgs, "ReleaseArgs", "AcquireFormFile", "ReleaseFormFile",
-	"AcquireResponse", "ReleaseResponse",
-	"Agent", "Client", "Args", "FormFile", "Request", "Response", "RetryIfFunc",
+	"Get", nameHead, namePost, namePut, namePatch, nameDelete,
+	nameAcquireAgent, "ReleaseAgent", "AcquireClient", "ReleaseClient",
+	clientMemberAcquireArgs, nameReleaseArgs, nameAcquireFormFile, "ReleaseFormFile",
+	nameAcquireResponse, nameReleaseResponse,
+	nameAgent, "Client", "Args", "FormFile", clientMethodRequest, nameResponse, "RetryIfFunc",
 }
 
 // reportLeftovers reports the members of the v2 client that are still used.

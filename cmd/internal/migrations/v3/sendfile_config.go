@@ -64,7 +64,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 		}
 
 		switch sel.Sel.Name {
-		case "SendFile":
+		case mw3SendFile:
 			switch env.receiverKind(sel, stack) {
 			case ctxYes:
 				rewriteSendFileCall(g, &edits, fi, call, names, stack)

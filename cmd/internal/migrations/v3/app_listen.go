@@ -8,7 +8,7 @@ import (
 )
 
 // appTLSMethods are the variants of Listen that only exist in v2.
-var appTLSMethods = []string{"ListenTLS", "ListenTLSWithCertificate", "ListenMutualTLS", "ListenMutualTLSWithCertificate"}
+var appTLSMethods = []string{nameListenTLS, nameListenTLSWithCertificate, nameListenMutualTLS, nameListenMutualTLSWithCertificate}
 
 // appStartMethods are the methods that start an app.
 var appStartMethods = slices.Concat([]string{appNameListen, appNameListener}, appTLSMethods)
@@ -104,7 +104,7 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 			return out
 		}
 		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
-		base = []appListenField{{"TLSConfig", "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
+		base = []appListenField{{nameTLSConfig, "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
 	case "ListenMutualTLSWithCertificate":
 		if len(args) != 3 {
 			out.problem = "ListenMutualTLSWithCertificate takes an address, a certificate and a client CA pool"

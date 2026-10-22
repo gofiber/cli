@@ -15,7 +15,7 @@ import (
 func MigrateReqHeaderParser(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return ctxMigrateParserCalls(content, fi, run, []string{"ReqHeaderParser"})
+		return ctxMigrateParserCalls(content, fi, run, []string{nameReqHeaderParser})
 	})
 	run.report(cwd)
 	if err != nil {

@@ -12,8 +12,8 @@ import (
 // aliases of fasthttp: the types of the request, of the response and of the
 // arguments, and their pools.
 var clientFasthttpAliases = []string{
-	"Args", clientMemberAcquireArgs, "ReleaseArgs", "Request", "Response",
-	"AcquireResponse", "ReleaseResponse", "RetryIfFunc",
+	nameArgs, clientMemberAcquireArgs, nameReleaseArgs, "Request", nameResponse,
+	nameAcquireResponse, nameReleaseResponse, nameRetryIfFunc,
 }
 
 // renameAliases points the aliases of fasthttp at the package they come from.
@@ -43,7 +43,7 @@ func clientIsInit(e ast.Expr, fiberNames []string) bool {
 	case *ast.CallExpr:
 		if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
 			id, isIdent := sel.X.(*ast.Ident)
-			return isIdent && slices.Contains(fiberNames, id.Name) && sel.Sel.Name == "AcquireClient"
+			return isIdent && slices.Contains(fiberNames, id.Name) && sel.Sel.Name == nameAcquireClient
 		}
 		return isIdentNamed(x.Fun, "new") && len(x.Args) == 1 && isFiberType(x.Args[0], fiberNames, "Client")
 	}
@@ -188,7 +188,7 @@ func (f *clientFile) rewriteClients() {
 				f.rewriteClientLit(x, stack)
 			}
 		case *ast.StarExpr:
-			if sel, ok := f.fiberSel(x.X); ok && sel.Sel.Name == "Client" {
+			if sel, ok := f.fiberSel(x.X); ok && sel.Sel.Name == nameClient {
 				f.renameFiberSelector(sel, "client")
 			}
 		case *ast.FuncType:

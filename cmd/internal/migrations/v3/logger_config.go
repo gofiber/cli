@@ -92,7 +92,7 @@ func migrateLoggerTimestamp(g *goSource, edits *editSet, fi internal.FileInfo, a
 		return
 	}
 	field, ok := loadSel.X.(*ast.SelectorExpr)
-	if !ok || field.Sel.Name != "Timestamp" {
+	if !ok || field.Sel.Name != nameTimestamp {
 		return
 	}
 	data, ok := field.X.(*ast.Ident)

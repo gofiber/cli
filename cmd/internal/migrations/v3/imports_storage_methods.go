@@ -93,7 +93,7 @@ func importsScanStorage(root string) (importsStoragePackages, error) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case "vendor", "node_modules", ".git":
+			case "vendor", nameNodeModules, nameDotGit:
 				return filepath.SkipDir
 			}
 			return nil
@@ -309,7 +309,7 @@ func (t *importsStorageType) missing() []string {
 func importsMethodSignature(name string, ft *ast.FuncType) string {
 	params := importsFieldTypes(ft.Params)
 	for i, p := range params {
-		if _, dur, ok := strings.Cut(p, "."); ok && dur == "Duration" {
+		if _, dur, ok := strings.Cut(p, "."); ok && dur == nameDuration {
 			params[i] = "time.Duration"
 		}
 	}
@@ -369,7 +369,7 @@ func (p importsStoragePackages) addMethods(content string, fi internal.FileInfo)
 	added := false
 	for _, decl := range g.file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "Set" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		if !ok || fn.Name.Name != nameSet || fn.Recv == nil || len(fn.Recv.List) != 1 {
 			continue
 		}
 		name := importsReceiverType(fn.Recv.List[0].Type)

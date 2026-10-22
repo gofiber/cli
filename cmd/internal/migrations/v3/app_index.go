@@ -348,7 +348,7 @@ func (ix *appIndex) loadModules() {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case appVendorDir, ".git", "node_modules":
+			case appVendorDir, nameDotGit, nameNodeModules:
 				return filepath.SkipDir
 			}
 			return nil

@@ -146,7 +146,7 @@ func importsUtilsCalled(id *ast.Ident, stack []ast.Node) bool {
 	case *ast.CallExpr:
 		return parent.Fun == id
 	case *ast.UnaryExpr:
-		return parent.Op == token.AND && id.Name == "Timestamp"
+		return parent.Op == token.AND && id.Name == nameTimestamp
 	}
 	return false
 }

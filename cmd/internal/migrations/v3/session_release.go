@@ -86,7 +86,7 @@ func mw3ReleaseGet(f *mw3SessionFile, edits *editSet, as *ast.AssignStmt, stack 
 		return
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != "Get" && sel.Sel.Name != "GetByID") || !f.isStore(sel.X, stack) {
+	if !ok || (sel.Sel.Name != appMethodGet && sel.Sel.Name != "GetByID") || !f.isStore(sel.X, stack) {
 		return
 	}
 	sess, ok := as.Lhs[0].(*ast.Ident)

@@ -174,21 +174,3 @@ func Test_isFiberType(t *testing.T) {
 	assert.False(t, isFiberType(parse("*fiber.App"), []string{"fiber"}, "Ctx"))
 	assert.False(t, isFiberType(parse("Ctx"), []string{"fiber"}, "Ctx"))
 }
-
-func Test_replaceKeyLookup_OneLineTODO(t *testing.T) {
-	t.Parallel()
-
-	repl := func(indent, val, comma, comment, newline string) string {
-		return FormatFieldWithComment(indent, "Extractor", val, comma, comment, newline)
-	}
-
-	// The unmigratable value must not turn the rest of the line into a comment.
-	got := replaceKeyLookup(`keyauth.Config{KeyLookup: cfg.Lookup, Next: skip}`, repl)
-	assert.Equal(t, `keyauth.Config{/* TODO: migrate KeyLookup: cfg.Lookup */ Next: skip}`, got)
-
-	got = replaceKeyLookup(`keyauth.Config{Next: skip, KeyLookup: cfg.Lookup}`, repl)
-	assert.Equal(t, `keyauth.Config{Next: skip, /* TODO: migrate KeyLookup: cfg.Lookup */ }`, got)
-
-	got = replaceKeyLookup("keyauth.Config{\n\tKeyLookup: cfg.Lookup,\n\tNext: skip,\n}", repl)
-	assert.Equal(t, "keyauth.Config{\n\t// TODO: migrate KeyLookup: cfg.Lookup\n\tNext: skip,\n}", got)
-}

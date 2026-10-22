@@ -51,8 +51,8 @@ var hcV2OnlyFields = []string{hcLivenessProbe, hcLivenessEndpoint, hcReadinessPr
 
 // hcRenamedMembers are the members of the package that v3 renamed.
 var hcRenamedMembers = map[string]string{
-	"DefaultLivenessEndpoint":  "LivenessEndpoint",
-	"DefaultReadinessEndpoint": "ReadinessEndpoint",
+	nameDefaultLivenessEndpoint:  "LivenessEndpoint",
+	nameDefaultReadinessEndpoint: "ReadinessEndpoint",
 }
 
 // hcMigration is the state of the rewrite of one file.
@@ -187,7 +187,7 @@ func (h *hcMigration) isNewCall(e ast.Expr) (*ast.CallExpr, bool) {
 // the call, and everything inside it, has been dealt with.
 func (h *hcMigration) rewriteCall(call *ast.CallExpr, stack []ast.Node) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != "Use" && sel.Sel.Name != "Group") {
+	if !ok || (sel.Sel.Name != nameUse && sel.Sel.Name != appMethodGroup) {
 		return false
 	}
 

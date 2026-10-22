@@ -45,7 +45,7 @@ func contribHeaderExtractor(name string, scheme contribString) (e contribExtract
 	case strings.EqualFold(name, contribAuthorizationHeader):
 		return contribExtractor{fn: "FromAuthHeader", arg: scheme.text}, true
 	case scheme.known && scheme.value == "":
-		return contribExtractor{fn: "FromHeader", arg: strconv.Quote(name)}, true
+		return contribExtractor{fn: nameFromHeader, arg: strconv.Quote(name)}, true
 	}
 	return contribExtractor{}, false
 }
@@ -188,13 +188,13 @@ func (f *contribFile) jwtLookup(c *contribConfig) (parts []contribExtractor, rea
 			}
 			parts = append(parts, e)
 		case contribSourceQuery:
-			parts = append(parts, contribExtractor{fn: "FromQuery", arg: name})
+			parts = append(parts, contribExtractor{fn: nameFromQuery, arg: name})
 		case contribSourceParam:
-			parts = append(parts, contribExtractor{fn: "FromParam", arg: name})
+			parts = append(parts, contribExtractor{fn: nameFromParam, arg: name})
 		case contribSourceCookie:
 			parts = append(parts, contribExtractor{fn: "FromCookie", arg: name})
 		case contribSourceForm:
-			parts = append(parts, contribExtractor{fn: "FromForm", arg: name})
+			parts = append(parts, contribExtractor{fn: nameFromForm, arg: name})
 		default:
 			// v2 skipped the sources it did not know.
 		}

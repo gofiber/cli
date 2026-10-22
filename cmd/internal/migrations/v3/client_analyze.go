@@ -173,7 +173,7 @@ func (f *clientFile) useReason(s ast.Stmt) clientUnsupported {
 // isRelease recognizes fiber.ReleaseAgent(name).
 func (f *clientFile) isRelease(call *ast.CallExpr, name string) bool {
 	sel, ok := f.fiberSel(call.Fun)
-	return ok && sel.Sel.Name == "ReleaseAgent" && len(call.Args) == 1 && isIdentNamed(call.Args[0], name)
+	return ok && sel.Sel.Name == nameReleaseAgent && len(call.Args) == 1 && isIdentNamed(call.Args[0], name)
 }
 
 // clientReqPath is a call on the fasthttp request of an agent, such as

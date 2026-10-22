@@ -204,7 +204,7 @@ func (r *mw2KeyAuthRewriter) assignment(as *ast.AssignStmt, stack []ast.Node) {
 			return
 		}
 		slot := &lookupAs
-		if sel.Sel.Name == "AuthScheme" {
+		if sel.Sel.Name == nameAuthScheme {
 			slot = &schemeAs
 		}
 		if *slot != nil {
@@ -249,7 +249,7 @@ func (r *mw2KeyAuthRewriter) lookupAssignment(as *ast.AssignStmt, stack []ast.No
 		return "", "", false
 	}
 	sel, ok := as.Lhs[0].(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != "KeyLookup" && sel.Sel.Name != "AuthScheme") {
+	if !ok || (sel.Sel.Name != csrfKeyLookup && sel.Sel.Name != "AuthScheme") {
 		return "", "", false
 	}
 	if _, isVar := sel.X.(*ast.Ident); !isVar || !mw2IsTyped(sel.X, r.names, mw2ConfigType, stack, 0) {

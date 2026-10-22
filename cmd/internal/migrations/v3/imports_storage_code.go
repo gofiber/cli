@@ -180,7 +180,7 @@ func (s *importsStorageFile) isStorage(e ast.Expr, p *importsStoragePkg, stack [
 		return s.isStorage(x.X, p, stack, depth+1)
 	case *ast.CallExpr:
 		sel, ok := x.Fun.(*ast.SelectorExpr)
-		return ok && sel.Sel.Name == "New" && s.pkgRef(sel.X, p, stack)
+		return ok && sel.Sel.Name == mw2New && s.pkgRef(sel.X, p, stack)
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		if !ok {

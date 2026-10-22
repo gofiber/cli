@@ -46,7 +46,7 @@ func appMigrateMountContent(ix *appIndex, content string, fi internal.FileInfo) 
 			return true
 		}
 		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if isSel && sel.Sel.Name == "Mount" && f.receiverKind(call, sel).isRouter() {
+		if isSel && sel.Sel.Name == nameMount && f.receiverKind(call, sel).isRouter() {
 			edits.replaceNode(f.g, sel.Sel, "Use")
 		}
 		return true

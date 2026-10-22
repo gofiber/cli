@@ -67,7 +67,7 @@ func mw3IsUseArgument(call *ast.CallExpr, stack []ast.Node) bool {
 		return false
 	}
 	sel, ok := outer.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Use" {
+	if !ok || sel.Sel.Name != nameUse {
 		return false
 	}
 	return slices.Contains(outer.Args, ast.Expr(call))

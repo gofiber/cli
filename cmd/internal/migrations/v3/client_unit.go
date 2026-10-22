@@ -216,7 +216,7 @@ func clientFiberRoot(sel *ast.SelectorExpr, call *ast.CallExpr) (clientRoot, boo
 	switch {
 	case clientIsMethod(sel.Sel.Name) && len(call.Args) == 1 && !call.Ellipsis.IsValid():
 		return clientRoot{kind: clientFiberFunc, sel: sel, call: call, url: call.Args[0], method: sel.Sel.Name}, true
-	case sel.Sel.Name == "AcquireAgent" && len(call.Args) == 0:
+	case sel.Sel.Name == nameAcquireAgent && len(call.Args) == 0:
 		return clientRoot{kind: clientAcquire, sel: sel, call: call}, true
 	}
 	return clientRoot{}, false
@@ -225,7 +225,7 @@ func clientFiberRoot(sel *ast.SelectorExpr, call *ast.CallExpr) (clientRoot, boo
 // clientIsMethod reports whether name is one of the verbs of the v2 client.
 func clientIsMethod(name string) bool {
 	switch name {
-	case clientMethodGet, "Head", "Post", "Put", "Patch", "Delete":
+	case clientMethodGet, nameHead, namePost, namePut, namePatch, nameDelete:
 		return true
 	}
 	return false

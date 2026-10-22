@@ -55,7 +55,7 @@ func (x *mw1Index) build() {
 			return nil //nolint:nilerr // keep walking
 		}
 		if d.IsDir() {
-			if d.Name() == "vendor" {
+			if d.Name() == appVendorDir {
 				return filepath.SkipDir
 			}
 			return nil

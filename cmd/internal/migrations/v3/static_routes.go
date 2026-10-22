@@ -160,7 +160,7 @@ func (r *appStaticRewrite) selector(sel *ast.SelectorExpr) {
 		return
 	}
 
-	if sel.Sel.Name != "Index" {
+	if sel.Sel.Name != nameIndex {
 		return
 	}
 	t, tf := f.valueType(sel.X, 0)

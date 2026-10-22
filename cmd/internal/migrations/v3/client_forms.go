@@ -267,7 +267,7 @@ func (f *clientFile) formFileVar(id *ast.Ident, it *clientItem) (*clientFormFile
 	switch rhs := create.Rhs[0].(type) {
 	case *ast.CallExpr:
 		sel, isFiber := f.fiberSel(rhs.Fun)
-		if !isFiber || sel.Sel.Name != "AcquireFormFile" || len(rhs.Args) != 0 {
+		if !isFiber || sel.Sel.Name != nameAcquireFormFile || len(rhs.Args) != 0 {
 			return nil, unknown
 		}
 		ff.valueText = f.use(clientPkgPath, "client") + ".AcquireFile()"
@@ -327,7 +327,7 @@ func (f *clientFile) isFormFileRelease(g clientRefGroup, name string) bool {
 		return false
 	}
 	sel, ok := f.fiberSel(call.Fun)
-	return ok && sel.Sel.Name == "ReleaseFormFile" && len(call.Args) == 1 && isIdentNamed(call.Args[0], name)
+	return ok && sel.Sel.Name == nameReleaseFormFile && len(call.Args) == 1 && isIdentNamed(call.Args[0], name)
 }
 
 // isFormFileHandover recognizes a statement in which every reference is an

@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// replaceField (common.go) is no longer used by a migration since the paseto
-// one works on the syntax tree; its behavior stays pinned until it is removed.
-func Test_replaceField(t *testing.T) {
-	t.Parallel()
-
-	src := "Config{\n\tTokenLookup: [2]string{\"header\", \"Authorization\"}, // where\n\tTokenPrefix: \"Bearer\",\n}"
-
-	got := replaceField(src, "TokenLookup", func(indent, val, comma, comment, newline string) string {
-		return FormatFieldWithComment(indent, "Extractor", "x("+val+")", comma, comment, newline)
-	})
-
-	assert.Equal(t, "Config{\n\tExtractor: x([2]string{\"header\", \"Authorization\"}), // where\n\tTokenPrefix: \"Bearer\",\n}", got)
-}
-
 // A rewrite that moves every use of a contrib package away leaves its import
 // behind, and goimports does not always remove it: with an empty module cache it
 // keeps the imports of a file that refers to a name it cannot place.

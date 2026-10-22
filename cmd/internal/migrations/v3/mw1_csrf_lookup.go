@@ -12,7 +12,7 @@ import (
 // "param") to the extractors of v3.
 var csrfSources = func() map[string]string {
 	sources := map[string]string{}
-	for _, fn := range []string{"FromHeader", "FromForm", "FromQuery", "FromParam"} {
+	for _, fn := range []string{"FromHeader", nameFromForm, "FromQuery", "FromParam"} {
 		sources[strings.ToLower(strings.TrimPrefix(fn, "From"))] = fn
 	}
 	return sources
