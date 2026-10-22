@@ -28,7 +28,7 @@ const appStaticImport = "github.com/gofiber/fiber/v3/middleware/static"
 func MigrateStaticRoutes(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateStaticContent(ix, content, fi)
+		return appMigrateStaticContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate static usages: %w", err)
@@ -48,7 +48,7 @@ type appStaticRewrite struct {
 	imps  appImports
 }
 
-func migrateStaticContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateStaticContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "Static") {
 		return content
 	}
@@ -117,7 +117,7 @@ func (r *appStaticRewrite) call(call *ast.CallExpr, sel *ast.SelectorExpr) {
 func (r *appStaticRewrite) pathText(path ast.Expr) string {
 	value, constant := r.f.constString(path, 0)
 	switch {
-	case constant && isLiteralConcat(path):
+	case constant && appIsLiteralConcat(path):
 		return strconv.Quote(appStaticRoute(value))
 	case constant && strings.HasSuffix(value, "*"):
 		return r.f.g.text(path)
@@ -138,15 +138,15 @@ func appStaticRoute(prefix string) string {
 	}
 }
 
-// isLiteralConcat reports whether e is made of string literals and +.
-func isLiteralConcat(e ast.Expr) bool {
+// appIsLiteralConcat reports whether e is made of string literals and +.
+func appIsLiteralConcat(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.BasicLit:
 		return true
 	case *ast.ParenExpr:
-		return isLiteralConcat(x.X)
+		return appIsLiteralConcat(x.X)
 	case *ast.BinaryExpr:
-		return isLiteralConcat(x.X) && isLiteralConcat(x.Y)
+		return appIsLiteralConcat(x.X) && appIsLiteralConcat(x.Y)
 	}
 	return false
 }

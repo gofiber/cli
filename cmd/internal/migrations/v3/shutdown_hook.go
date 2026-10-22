@@ -22,7 +22,7 @@ import (
 func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateShutdownHookContent(ix, content, fi)
+		return appMigrateShutdownHookContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate shutdown hooks: %w", err)
@@ -35,7 +35,7 @@ func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 	return nil
 }
 
-func migrateShutdownHookContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateShutdownHookContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "OnShutdown") {
 		return content
 	}
@@ -62,16 +62,16 @@ func migrateShutdownHookContent(ix *appIndex, content string, fi internal.FileIn
 			return true
 		}
 		for _, arg := range call.Args {
-			migrateShutdownHandler(f, &edits, arg)
+			appMigrateShutdownHandler(f, &edits, arg)
 		}
 		return true
 	})
 	return edits.apply(content)
 }
 
-// migrateShutdownHandler adapts one OnShutdown handler, a func() error, to the
+// appMigrateShutdownHandler adapts one OnShutdown handler, a func() error, to the
 // func(error) error that OnPostShutdown takes.
-func migrateShutdownHandler(f *appFile, edits *editSet, arg ast.Expr) {
+func appMigrateShutdownHandler(f *appFile, edits *editSet, arg ast.Expr) {
 	switch h := arg.(type) {
 	case *ast.FuncLit:
 		if h.Type.Params == nil || len(h.Type.Params.List) > 0 {

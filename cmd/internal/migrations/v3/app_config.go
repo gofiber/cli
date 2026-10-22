@@ -31,7 +31,7 @@ const appETagImport = "github.com/gofiber/fiber/v3/middleware/etag"
 func MigrateAppConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateAppConfigContent(ix, content, fi)
+		return appMigrateAppConfigContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate app config fields: %w", err)
@@ -51,7 +51,7 @@ type appConfigRewrite struct {
 	imps  appImports
 }
 
-func migrateAppConfigContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateAppConfigContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "ETag") && !strings.Contains(content, "CompressedFileSuffix") {
 		return content
 	}
@@ -111,7 +111,7 @@ func (r *appConfigRewrite) literal(lit *ast.CompositeLit) {
 // app the literal creates. It returns why that cannot be done.
 func (r *appConfigRewrite) etag(lit *ast.CompositeLit, kv *ast.KeyValueExpr, edits *editSet) string {
 	g := r.f.g
-	if isIdentNamed(kv.Value, litFalseName) {
+	if isIdentNamed(kv.Value, appLitFalse) {
 		return "" // nothing was generated
 	}
 
@@ -123,7 +123,7 @@ func (r *appConfigRewrite) etag(lit *ast.CompositeLit, kv *ast.KeyValueExpr, edi
 	etagQ := r.imps.qualifier(r.f, appETagImport, "etag")
 	use := func(recv string) string {
 		call := recv + ".Use(" + etagQ + "New())"
-		if isIdentNamed(kv.Value, litTrueName) {
+		if isIdentNamed(kv.Value, appLitTrue) {
 			return call
 		}
 		return "if " + g.text(kv.Value) + " {\n" + call + "\n}"
@@ -142,8 +142,8 @@ func (r *appConfigRewrite) etag(lit *ast.CompositeLit, kv *ast.KeyValueExpr, edi
 	return ""
 }
 
-// litTrueName is the predeclared identifier true.
-const litTrueName = "true"
+// appLitTrue is the predeclared identifier true.
+const appLitTrue = "true"
 
 // creationsOf finds the fiber.New calls that take the literal: it is their
 // argument, or the variable that holds it is.

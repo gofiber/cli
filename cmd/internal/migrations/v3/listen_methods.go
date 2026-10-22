@@ -24,7 +24,7 @@ import (
 func MigrateListenMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateListenMethodsContent(ix, content, fi)
+		return appMigrateListenMethodsContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listen methods: %w", err)
@@ -37,7 +37,7 @@ func MigrateListenMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
-func migrateListenMethodsContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateListenMethodsContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "ListenTLS") && !strings.Contains(content, "ListenMutualTLS") {
 		return content
 	}
@@ -67,14 +67,14 @@ func migrateListenMethodsContent(ix *appIndex, content string, fi internal.FileI
 			internal.Notef(fi, line, "%s", note)
 		}
 	}
-	noteUnknownReceivers(f, known)
+	appNoteUnknownReceivers(f, known)
 	return imps.apply(edits.apply(content))
 }
 
-// noteUnknownReceivers points at the calls of the removed methods whose
+// appNoteUnknownReceivers points at the calls of the removed methods whose
 // receiver is not known to be a fiber app, in a file that imports fiber: only
 // fiber has these methods, so the call will not compile.
-func noteUnknownReceivers(f *appFile, known map[*ast.CallExpr]bool) {
+func appNoteUnknownReceivers(f *appFile, known map[*ast.CallExpr]bool) {
 	if len(f.names) == 0 {
 		return
 	}

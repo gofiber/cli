@@ -118,17 +118,17 @@ func Test_appWholeLines(t *testing.T) {
 	t.Parallel()
 
 	src := "a\n\tx := 1 // note\n\ty := 2, /* c */\n\tz := 3; w := 4\n"
-	x := indexOf(src, "x :=")
+	x := appIndexOf(src, "x :=")
 	from, to, ok := appWholeLines(src, x, x+len("x := 1"))
 	require.True(t, ok)
 	assert.Equal(t, "\tx := 1 // note\n", src[from:to])
 
-	y := indexOf(src, "y :=")
+	y := appIndexOf(src, "y :=")
 	from, to, ok = appWholeLines(src, y, y+len("y := 2"))
 	require.True(t, ok)
 	assert.Equal(t, "\ty := 2, /* c */\n", src[from:to])
 
-	z := indexOf(src, "z :=")
+	z := appIndexOf(src, "z :=")
 	_, _, ok = appWholeLines(src, z, z+len("z := 3"))
 	assert.False(t, ok, "another statement follows on the line")
 }
@@ -144,7 +144,7 @@ func appFormat(t *testing.T, src string) string {
 	return string(out)
 }
 
-func indexOf(s, sub string) int {
+func appIndexOf(s, sub string) int {
 	for i := range s {
 		if len(s)-i >= len(sub) && s[i:i+len(sub)] == sub {
 			return i

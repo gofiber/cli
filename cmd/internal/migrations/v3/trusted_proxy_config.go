@@ -23,7 +23,7 @@ import (
 func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateTrustedProxyContent(ix, content, fi)
+		return appMigrateTrustedProxyContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate trusted proxy config: %w", err)
@@ -36,7 +36,7 @@ func MigrateTrustedProxyConfig(cmd *cobra.Command, cwd string, _, _ *semver.Vers
 	return nil
 }
 
-func migrateTrustedProxyContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateTrustedProxyContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "TrustedProxies") &&
 		!strings.Contains(content, "EnableTrustedProxyCheck") &&
 		!strings.Contains(content, "ProxyHeader") {
@@ -52,10 +52,10 @@ func migrateTrustedProxyContent(ix *appIndex, content string, fi internal.FileIn
 		switch x := n.(type) {
 		case *ast.CompositeLit:
 			if x.Type != nil && f.fiberTypeName(x.Type) == appNameConfig {
-				migrateProxyLiteral(f, &edits, x)
+				appMigrateProxyLiteral(f, &edits, x)
 			}
 		case *ast.SelectorExpr:
-			migrateProxySelector(f, &edits, x)
+			appMigrateProxySelector(f, &edits, x)
 		}
 		return true
 	})
@@ -69,8 +69,8 @@ const (
 	appFieldTrustProxy       = "TrustProxy"
 )
 
-// migrateProxyLiteral migrates the proxy settings of a fiber.Config literal.
-func migrateProxyLiteral(f *appFile, edits *editSet, lit *ast.CompositeLit) {
+// appMigrateProxyLiteral migrates the proxy settings of a fiber.Config literal.
+func appMigrateProxyLiteral(f *appFile, edits *editSet, lit *ast.CompositeLit) {
 	g := f.g
 	_, enable := appKeyedElement(lit, appFieldEnableProxyCheck)
 	if enable != nil {
@@ -110,7 +110,7 @@ const (
 func (f *appFile) literalTrustsProxies(lit *ast.CompositeLit) bool {
 	for _, key := range []string{appFieldEnableProxyCheck, appFieldTrustProxy} {
 		if _, kv := appKeyedElement(lit, key); kv != nil {
-			return !isIdentNamed(kv.Value, litFalseName)
+			return !isIdentNamed(kv.Value, appLitFalse)
 		}
 	}
 
@@ -121,8 +121,8 @@ func (f *appFile) literalTrustsProxies(lit *ast.CompositeLit) bool {
 	return src.assigns(appFieldEnableProxyCheck, appFieldTrustProxy)
 }
 
-// litFalseName is the predeclared identifier false.
-const litFalseName = "false"
+// appLitFalse is the predeclared identifier false.
+const appLitFalse = "false"
 
 // assigns reports whether the variable that holds the source is assigned one of
 // the fields.
@@ -154,9 +154,9 @@ func appIsEmptyString(e ast.Expr) bool {
 	return ok && lit.Kind == token.STRING && (lit.Value == `""` || lit.Value == "``")
 }
 
-// migrateProxySelector migrates a use of the proxy settings through a config
+// appMigrateProxySelector migrates a use of the proxy settings through a config
 // variable or app.Config(): cfg.TrustedProxies = ... and the like.
-func migrateProxySelector(f *appFile, edits *editSet, sel *ast.SelectorExpr) {
+func appMigrateProxySelector(f *appFile, edits *editSet, sel *ast.SelectorExpr) {
 	switch sel.Sel.Name {
 	case appFieldEnableProxyCheck, appFieldTrustedProxies, appFieldProxyHeader:
 	default:

@@ -24,7 +24,7 @@ var appRemovedCallbacks = []string{"OnShutdownError", "OnShutdownSuccess"}
 func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateListenerCallbacksContent(ix, content, fi)
+		return appMigrateListenerCallbacksContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listener callbacks: %w", err)
@@ -37,7 +37,7 @@ func MigrateListenerCallbacks(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	return nil
 }
 
-func migrateListenerCallbacksContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateListenerCallbacksContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "OnShutdownError") && !strings.Contains(content, "OnShutdownSuccess") {
 		return content
 	}
@@ -51,7 +51,7 @@ func migrateListenerCallbacksContent(ix *appIndex, content string, fi internal.F
 		switch x := n.(type) {
 		case *ast.CompositeLit:
 			if x.Type != nil && slices.Contains([]string{appNameListenConfig, "ListenerConfig"}, f.fiberTypeName(x.Type)) {
-				commentOutCallbacks(f, &edits, x)
+				appCommentOutCallbacks(f, &edits, x)
 			}
 		case *ast.SelectorExpr:
 			if slices.Contains(appRemovedCallbacks, x.Sel.Name) {
@@ -67,9 +67,9 @@ func migrateListenerCallbacksContent(ix *appIndex, content string, fi internal.F
 
 const appCallbackNote = "%s was removed from fiber.ListenConfig before v3.0.0: run that code from app.Hooks().OnPostShutdown(func(err error) error { ... }) instead"
 
-// commentOutCallbacks replaces the removed callbacks of a fiber.ListenConfig
+// appCommentOutCallbacks replaces the removed callbacks of a fiber.ListenConfig
 // literal by TODO comments that hold their code.
-func commentOutCallbacks(f *appFile, edits *editSet, lit *ast.CompositeLit) {
+func appCommentOutCallbacks(f *appFile, edits *editSet, lit *ast.CompositeLit) {
 	g := f.g
 	oneLine := g.line(lit.Lbrace) == g.line(lit.Rbrace)
 

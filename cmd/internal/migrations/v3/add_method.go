@@ -23,7 +23,7 @@ import (
 func MigrateAddMethod(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateAddMethodContent(ix, content, fi)
+		return appMigrateAddMethodContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Add method calls: %w", err)
@@ -42,7 +42,7 @@ var appSpreadMethods = []string{
 	appMethodGet, "Head", "Post", "Put", "Delete", "Connect", "Options", "Trace", "Patch", "Query", "All", appMethodAdd, appMethodGroup,
 }
 
-func migrateAddMethodContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateAddMethodContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, ".Add(") && !strings.Contains(content, "...)") {
 		return content
 	}

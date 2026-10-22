@@ -117,7 +117,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 
 	for _, src := range pl.sources {
 		reason := pl.move(src)
-		noteLeftovers(src, reason)
+		appNoteLeftovers(src, reason)
 	}
 	return pl.plan, nil
 }
@@ -321,10 +321,10 @@ func (pl *appPlanner) dropCosmetic(src *appListenSource, movable []*appSourceFie
 	return reason
 }
 
-// noteLeftovers tells the user about the settings that stay where they are:
+// appNoteLeftovers tells the user about the settings that stay where they are:
 // every setting of a source that could not move, and the settings that cannot
 // move whatever the source.
-func noteLeftovers(src *appListenSource, reason string) {
+func appNoteLeftovers(src *appListenSource, reason string) {
 	for _, fld := range src.fields {
 		why := fld.problem
 		if why == "" {

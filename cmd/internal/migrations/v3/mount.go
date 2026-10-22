@@ -17,7 +17,7 @@ import (
 func MigrateMount(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateMountContent(ix, content, fi)
+		return appMigrateMountContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Mount usages: %w", err)
@@ -30,7 +30,7 @@ func MigrateMount(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	return nil
 }
 
-func migrateMountContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateMountContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "Mount") {
 		return content
 	}

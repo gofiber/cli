@@ -19,7 +19,7 @@ import (
 func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	ix := newAppIndex(cwd)
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateAppTestContent(ix, content, fi)
+		return appMigrateTestContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate app.Test calls: %w", err)
@@ -32,7 +32,7 @@ func MigrateAppTestConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
-func migrateAppTestContent(ix *appIndex, content string, fi internal.FileInfo) string {
+func appMigrateTestContent(ix *appIndex, content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "Test") {
 		return content
 	}
@@ -68,26 +68,26 @@ func migrateAppTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 			return true // migrated already
 		}
 
-		edits.replaceNode(f.g, arg, testConfigFor(f, arg, &imps))
+		edits.replaceNode(f.g, arg, appTestConfigFor(f, arg, &imps))
 		return true
 	})
 	return imps.apply(edits.apply(content))
 }
 
-// testConfigFor returns the fiber.TestConfig that stands for the timeout arg of
+// appTestConfigFor returns the fiber.TestConfig that stands for the timeout arg of
 // app.Test in milliseconds.
-func testConfigFor(f *appFile, arg ast.Expr, imps *appImports) string {
+func appTestConfigFor(f *appFile, arg ast.Expr, imps *appImports) string {
 	cfg := imps.fiberQualifier(f) + "TestConfig"
-	if isNegativeNumber(arg) {
+	if appIsNegativeNumber(arg) {
 		return cfg + "{Timeout: 0, FailOnTimeout: false}"
 	}
 	timeQ := imps.qualifier(f, "time", "time")
 	return cfg + "{Timeout: " + timeQ + "Duration(" + f.g.text(arg) + ") * " + timeQ + "Millisecond, FailOnTimeout: true}"
 }
 
-// isNegativeNumber reports whether e is a negative numeric literal such as -1,
+// appIsNegativeNumber reports whether e is a negative numeric literal such as -1,
 // which v2 read as "no timeout".
-func isNegativeNumber(e ast.Expr) bool {
+func appIsNegativeNumber(e ast.Expr) bool {
 	u, ok := e.(*ast.UnaryExpr)
 	if !ok || u.Op != token.SUB {
 		return false
