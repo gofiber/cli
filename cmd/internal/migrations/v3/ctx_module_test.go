@@ -484,6 +484,33 @@ func local(web holder, c *web.Context) int {
 `},
 		},
 		{
+			name:    "the call written over several lines",
+			migrate: v3.MigrateGenericHelpers,
+			files: map[string]string{xpkgHandlers: `package handlers
+
+import "example.com/app/internal/web"
+
+func a(c *web.Context) int {
+	return c.
+		QueryInt("a",
+			1)
+}
+`},
+			want: map[string]string{xpkgHandlers: `package handlers
+
+import (
+	"example.com/app/internal/web"
+	"github.com/gofiber/fiber/v2"
+)
+
+func a(c *web.Context) int {
+	return fiber.Query[int](c.Ctx, "a",
+		1)
+}
+`},
+			msg: "Migrating generic",
+		},
+		{
 			name:    "a literal of a generic func type",
 			migrate: v3.MigrateGenericHelpers,
 			files: map[string]string{xpkgHandlers: `package handlers
