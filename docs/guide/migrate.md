@@ -11,7 +11,9 @@ necessary migration steps.
 
 Run it in the directory of the module. In the root of a repository that has no
 `go.mod` of its own (several modules, with or without a `go.work`), it starts from the
-oldest Fiber version the modules below it require and migrates all of them.
+oldest Fiber version the modules below it require and migrates all of them. It treats
+the files below the directory as one project, so run it in each module when the
+modules of a repository are on different Fiber versions.
 
 ## Usage
 
