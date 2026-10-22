@@ -28,8 +28,12 @@ var (
 const vendorDir = "vendor"
 
 const (
+	// contribModulePrefix is the module path of the contrib modules for Fiber v3:
+	// the /v3 is a directory of the repository, not a module major version.
 	contribModulePrefix = "github.com/gofiber/contrib/v3/"
-	contribRepoPrefix   = "gofiber/contrib/v3"
+	// contribRepo is the GitHub repository that holds them, the one a commit
+	// hash is looked up in.
+	contribRepo = "gofiber/contrib"
 )
 
 func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
@@ -81,11 +85,11 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("parse version: %w", err)
 			}
-			pv, err := pseudoVersionFromHash(contribRepoPrefix, base, hash)
+			pv, err := pseudoVersionFromHash(contribRepo, base, hash)
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
-			versions[targetModule] = pv
+			versions[targetModule] = moduleVersion(pv)
 		}
 	}
 	if len(versions) == 0 {
@@ -198,6 +202,15 @@ func latestContribVersion(module string) string {
 	return data.Version
 }
 
+// moduleVersion returns v the way go.mod spells a version, with the leading
+// "v". pseudoVersionFromHash returns it without, for semver.
+func moduleVersion(v string) string {
+	if strings.HasPrefix(v, "v") {
+		return v
+	}
+	return "v" + v
+}
+
 func majorFromVersion(v string) string {
 	v = strings.TrimPrefix(v, "v")
 	idx := strings.IndexAny(v, ".-")
@@ -239,7 +252,7 @@ func refreshThirdParty(cmd *cobra.Command, cwd, hash, repo, label string, latest
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
-			ver = pv
+			ver = moduleVersion(pv)
 		}
 		versions[mod] = ver
 	}
