@@ -56,10 +56,8 @@ func mw3AddElement(g *goSource, edits *editSet, lit *ast.CompositeLit, text stri
 }
 
 // mw3RemoveElement schedules the removal of the element of a composite literal,
-// together with its comma. When comment is not empty it takes the place of the
-// element, as a line comment where the element had its line to itself and as a
-// block comment otherwise.
-func mw3RemoveElement(g *goSource, edits *editSet, elt ast.Expr, comment string) {
+// together with its comma, and with its line when it has the line to itself.
+func mw3RemoveElement(g *goSource, edits *editSet, elt ast.Expr) {
 	src := g.src
 	start, end := g.offset(elt.Pos()), g.offset(elt.End())
 
@@ -81,18 +79,14 @@ func mw3RemoveElement(g *goSource, edits *editSet, elt ast.Expr, comment string)
 		ownLine = rest == "" || strings.HasPrefix(rest, "//")
 	}
 
-	switch {
-	case ownLine && comment == "":
-		lineEnd := mw3LineEnd(src, afterComma)
-		if lineEnd < len(src) {
-			lineEnd++
-		}
-		edits.replace(lineStart, lineEnd, "")
-	case ownLine:
-		edits.replace(start, afterComma, "// "+comment)
-	case comment == "":
+	if !ownLine {
+		// What is left, a trailing comma included, is valid in a literal.
 		edits.replace(start, afterComma, "")
-	default:
-		edits.replace(start, afterComma, "/* "+strings.ReplaceAll(comment, "*/", "* /")+" */")
+		return
 	}
+	lineEnd := mw3LineEnd(src, afterComma)
+	if lineEnd < len(src) {
+		lineEnd++
+	}
+	edits.replace(lineStart, lineEnd, "")
 }

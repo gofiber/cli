@@ -143,7 +143,7 @@ func (p *mw3SessionConfigPass) newCall(call *ast.CallExpr, stack []ast.Node) {
 	if _, isLit := p.f.isConfigLit(arg, stack); isLit {
 		return
 	}
-	if p.f.isMember(arg, "ConfigDefault", stack) {
+	if p.f.isMember(arg, mw3ConfigDefault, stack) {
 		p.edits.replaceNode(g, arg, config)
 		return
 	}
@@ -191,7 +191,7 @@ func (p *mw3SessionConfigPass) selector(sel *ast.SelectorExpr, stack []ast.Node)
 		p.edits.replaceNode(g, sel.Sel, "IdleTimeout")
 		return
 	}
-	if p.f.isMember(sel, "ConfigDefault", stack) {
+	if p.f.isMember(sel, mw3ConfigDefault, stack) {
 		p.configDefault(sel, stack)
 	}
 }
@@ -219,7 +219,7 @@ func (p *mw3SessionConfigPass) configDefault(sel *ast.SelectorExpr, stack []ast.
 // zeroConfig handles a session.Config variable that is declared without a
 // value: a zero config has no IdleTimeout, which v3 takes for 30 minutes.
 func (p *mw3SessionConfigPass) zeroConfig(spec *ast.ValueSpec, stack []ast.Node) {
-	if spec.Type == nil || len(spec.Values) > 0 || !p.f.isMember(spec.Type, "Config", stack) {
+	if spec.Type == nil || len(spec.Values) > 0 || !p.f.isMember(spec.Type, mw3Config, stack) {
 		return
 	}
 	for _, name := range spec.Names {

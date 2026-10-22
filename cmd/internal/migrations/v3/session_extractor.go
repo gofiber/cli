@@ -149,12 +149,12 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 			p.edits.replaceNode(g, cookie, "Extractor: "+p.extractorsName()+".FromCookie("+strconv.Quote(name)+")")
 			p.imports.releaseIn(g, cookie)
 			if lookup != nil {
-				mw3RemoveElement(g, &p.edits, lookup, "")
+				mw3RemoveElement(g, &p.edits, lookup)
 				p.imports.releaseIn(g, lookup)
 			}
 			return
 		}
-		mw3RemoveElement(g, &p.edits, cookie, "") // an empty name is no name
+		mw3RemoveElement(g, &p.edits, cookie) // an empty name is no name
 		p.imports.releaseIn(g, cookie)
 	}
 	if lookup == nil {
@@ -167,7 +167,7 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 		return
 	}
 	if value == "" {
-		mw3RemoveElement(g, &p.edits, lookup, "") // v2 took an empty lookup for the default
+		mw3RemoveElement(g, &p.edits, lookup) // v2 took an empty lookup for the default
 		p.imports.releaseIn(g, lookup)
 		return
 	}

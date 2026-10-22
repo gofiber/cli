@@ -51,10 +51,12 @@ func Test_MigrateFilesystemMiddleware_WithNotFoundFile(t *testing.T) {
 
 	file := writeTempFile(t, dir, `package main
 import (
+    "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/filesystem"
     "net/http"
 )
 func main() {
+    app := fiber.New()
     app.All("/*", filesystem.New(filesystem.Config{
         Root:         http.Dir("./dist"),
         NotFoundFile: "index.html",
@@ -67,10 +69,13 @@ func main() {
 	require.NoError(t, v3.MigrateFilesystemMiddleware(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	// Check that NotFoundFile is commented out
-	assert.Contains(t, content, "// NotFoundFile: \"index.html\"")
-	// Check that TODO comment is added
-	assert.Contains(t, content, "// TODO: Migrate to NotFoundHandler (fiber.Handler) - NotFoundFile is deprecated")
+	// The SPA fallback is kept: the file is sent from the same file system, and
+	// with a 200, because the file server has set the 404 by then.
+	assert.Contains(t, content, "NotFoundHandler: func(c fiber.Ctx) error {")
+	assert.Contains(t, content, "c.Status(fiber.StatusOK)")
+	assert.Contains(t, content, `return c.SendFile("index.html", fiber.SendFile{FS: os.DirFS("./dist")})`)
+	assert.NotContains(t, content, "NotFoundFile")
+	assert.NotContains(t, content, "TODO")
 	// Check that static migration happened
 	assert.Contains(t, content, `static.New("", static.Config{`)
 	assert.Contains(t, content, `FS: os.DirFS("./dist")`)
@@ -86,10 +91,12 @@ func Test_MigrateFilesystemMiddleware_NotFoundFileIdempotent(t *testing.T) {
 
 	file := writeTempFile(t, dir, `package main
 import (
+    "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/filesystem"
     "net/http"
 )
 func main() {
+    app := fiber.New()
     app.All("/*", filesystem.New(filesystem.Config{
         Root:         http.Dir("./dist"),
         NotFoundFile: "index.html",
@@ -111,11 +118,10 @@ func main() {
 
 	// Content should be exactly the same after second migration
 	assert.Equal(t, firstContent, secondContent, "Migration should be idempotent")
+	assert.Empty(t, buf.String(), "a second run changes nothing and says nothing")
 
-	// Verify the TODO comment is only present once
-	assert.Equal(t, 1, strings.Count(secondContent, "TODO: Migrate to NotFoundHandler"))
-	// Verify the NotFoundFile comment is only present once
-	assert.Equal(t, 1, strings.Count(secondContent, "// NotFoundFile:"))
+	// The handler is there once.
+	assert.Equal(t, 1, strings.Count(secondContent, "NotFoundHandler:"))
 }
 
 // Test_MigrateFilesystemMiddleware_WithHTTPFS tests migration of http.FS() usage.

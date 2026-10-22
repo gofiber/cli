@@ -193,7 +193,7 @@ func (f *mw3SessionFile) isConfigLit(e ast.Expr, stack []ast.Node) (*ast.Composi
 	if !ok || lit.Type == nil {
 		return nil, false
 	}
-	return lit, f.isMember(lit.Type, "Config", stack)
+	return lit, f.isMember(lit.Type, mw3Config, stack)
 }
 
 // isStoreCall reports whether e creates a store, and with which function.
@@ -337,7 +337,7 @@ func (f *mw3SessionFile) isConfigValue(e ast.Expr, stack []ast.Node) bool {
 		return false
 	}
 	if d.typ != nil {
-		return mw3IsSessionType(d.typ, f.names, "Config")
+		return mw3IsSessionType(d.typ, f.names, mw3Config)
 	}
 	init := d.init
 	if un, isUnary := init.(*ast.UnaryExpr); isUnary {
@@ -346,5 +346,5 @@ func (f *mw3SessionFile) isConfigValue(e ast.Expr, stack []ast.Node) bool {
 	if _, isLit := f.isConfigLit(init, stack); isLit {
 		return true
 	}
-	return init != nil && f.isMember(init, "ConfigDefault", stack)
+	return init != nil && f.isMember(init, mw3ConfigDefault, stack)
 }
