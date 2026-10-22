@@ -697,3 +697,39 @@ var both = session.New(session.Config{CookieName: os.Getenv("COOKIE"), KeyLookup
 	require.Len(t, msgs, 1)
 	assert.Contains(t, msgs[0], "CookieName is not a constant string")
 }
+
+// Where a variable hides the extractors package the file imports, the lookup is
+// written with a second import of it.
+func Test_MigrateSessionExtractor_ExtractorsHiddenByAVariable(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v3/extractors"
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var plain = extractors.FromCookie("plain")
+
+func build() *session.Store {
+	extractors := []string{"unrelated"}
+	fmt.Println(extractors)
+	cfg := session.Config{KeyLookup: "header:X-SID"}
+	cfg.CookieName = "sid"
+	return session.New(cfg)
+}
+`, v3.MigrateSessionExtractor)
+
+	assert.Contains(t, got, "\tfiberextractors \"github.com/gofiber/fiber/v3/extractors\"\n")
+	assert.Contains(t, got, `cfg := session.Config{Extractor: fiberextractors.FromHeader("X-SID")}`)
+	assert.Contains(t, got, `cfg.Extractor = fiberextractors.FromCookie("sid")`)
+	assert.Contains(t, got, `var plain = extractors.FromCookie("plain")`)
+	assert.Empty(t, res.notes)
+
+	again, second := mw3RunOne(t, got, v3.MigrateSessionExtractor)
+	assert.Equal(t, got, again)
+	assert.Empty(t, second.out)
+}
