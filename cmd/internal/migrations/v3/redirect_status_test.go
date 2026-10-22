@@ -328,6 +328,32 @@ func (c *Context) Back(codes ...int) error {
 			msg: "Migrating redirect methods",
 		},
 		{
+			name: "a method used as a value is reported",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type other struct{}
+
+func (other) RedirectBack(string) error { return nil }
+
+func handler(c *fiber.Ctx, o other) error {
+	back := c.RedirectBack
+	route := c.RedirectToRoute
+	redirect := c.Redirect
+	_, _ = route, redirect
+	own := o.RedirectBack
+	_ = own
+	return back("/")
+}
+`,
+			notes: []string{
+				"main.go:10: c.RedirectBack is used as a value, which does not exist in Fiber v3",
+				"main.go:11: c.RedirectToRoute is used as a value",
+				"main.go:12: c.Redirect is used as a value",
+			},
+		},
+		{
 			name: "the v3 forms are left alone",
 			in: `package main
 

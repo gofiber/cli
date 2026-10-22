@@ -295,6 +295,30 @@ func handler(c *Ctx, defaults []int) (int, error) {
 			msg: "Migrating generic helpers",
 		},
 		{
+			name: "the getters used as values are reported",
+			in: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+type reader struct{}
+
+func (reader) QueryInt(string, ...int) int { return 0 }
+
+func handler(c *f.Ctx, r reader) {
+	id := c.ParamsInt
+	page := c.QueryInt
+	ok := c.QueryBool
+	own := r.QueryInt
+	_, _, _, _ = id, page, ok, own
+}
+`,
+			notes: []string{
+				"main.go:10: c.ParamsInt is used as a value and was removed in Fiber v3: call f.Params[int](c, key, ...) from a function literal",
+				"main.go:11: c.QueryInt is used as a value",
+				"main.go:12: c.QueryBool is used as a value",
+			},
+		},
+		{
 			name: "a strconv that a variable hides is reported",
 			in: `package main
 

@@ -253,6 +253,58 @@ func use(c *fiber.Ctx) int {
 			msg: "Migrating context method renames",
 		},
 		{
+			name: "a struct that embeds a range has its fields",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type wrapped struct {
+	fiber.Range
+	note string
+}
+
+type one struct {
+	fiber.RangeSet
+	note string
+}
+
+func handler(c *fiber.Ctx, o one) int {
+	w := wrapped{note: "x"}
+	var err error
+	w.Range, err = c.Range(10)
+	if err != nil {
+		return 0
+	}
+	return w.Ranges[0].Start + w.Ranges[0].End + o.Start
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type wrapped struct {
+	fiber.Range
+	note string
+}
+
+type one struct {
+	fiber.RangeSet
+	note string
+}
+
+func handler(c *fiber.Ctx, o one) int {
+	w := wrapped{note: "x"}
+	var err error
+	w.Range, err = c.Range(10)
+	if err != nil {
+		return 0
+	}
+	return int(w.Ranges[0].Start) + int(w.Ranges[0].End) + int(o.Start)
+}
+`,
+			msg: "Migrating context method renames",
+		},
+		{
 			name: "conversions the code has already stay",
 			in: `package main
 
@@ -553,6 +605,26 @@ func third(c *fiber.Ctx) {
 func consume(r fiber.Range, err error) {}
 `,
 			notes: []string{"main.go:10: " + note + " (1 more in this project)"},
+		},
+		{
+			name: "c.Range used as a value",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type other struct{}
+
+func (other) Range(int) (int, error) { return 0, nil }
+
+func handler(c *fiber.Ctx, o other) int {
+	f := c.Range
+	g := o.Range
+	_, _ = g(1)
+	r, _ := f(10)
+	return r.Ranges[0].Start
+}
+`,
+			notes: []string{"main.go:10: " + note},
 		},
 		{
 			name: "the address of a Start",

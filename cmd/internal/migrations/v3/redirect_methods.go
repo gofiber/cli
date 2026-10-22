@@ -66,6 +66,10 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if sel, isSel := n.(*ast.SelectorExpr); isSel {
+			ctxNoteRedirectValue(noter, env, sel, stack)
+			return true
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -103,6 +107,22 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	})
 
 	return plan.apply(content)
+}
+
+// ctxNoteRedirectValue reports a redirect method of the context that is used as a
+// value, without being called, which no call of the builder can stand in for.
+func ctxNoteRedirectValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+	if _, isCall := ctxParentCall(sel, stack); isCall {
+		return
+	}
+	if _, ok := ctxRedirectTarget[sel.Sel.Name]; !ok {
+		return
+	}
+	if kind, _ := env.receiverKindVia(sel, stack, ctxRedirect); kind == ctxYes {
+		noter.notef(sel.Pos(),
+			"%s is used as a value, which does not exist in Fiber v3: call the Redirect() builder (Status(code).To, Back or Route) from a function literal instead",
+			env.g.text(sel))
+	}
 }
 
 // ctxRedirectTarget is the method of the v3 builder that ends the chain, the

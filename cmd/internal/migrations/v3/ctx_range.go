@@ -91,6 +91,7 @@ func (t *ctxRangeTracker) visit(n ast.Node, stack []ast.Node) bool {
 		t.checkSource(x, stack)
 	case *ast.SelectorExpr:
 		t.checkRead(x, stack)
+		t.checkValue(x, stack)
 	case *ast.AssignStmt:
 		t.checkAssign(x, stack)
 	case *ast.CompositeLit:
@@ -342,12 +343,10 @@ func (t *ctxRangeTracker) kindOf(e ast.Expr, stack []ast.Node, depth int) ctxRan
 			return t.siteKind(site, depth+1)
 		}
 	case *ast.SelectorExpr:
-		switch base := t.kindOf(x.X, stack, depth+1); {
-		case base == ctxRangeValue && x.Sel.Name == ctxFieldRanges:
+		if t.kindOf(x.X, stack, depth+1) == ctxRangeValue && x.Sel.Name == ctxFieldRanges {
 			return ctxRangeSlice
-		case base == ctxRangeNone:
-			return t.typeKind(t.env.typeOf(x, stack), depth+1)
 		}
+		return t.typeKind(t.env.typeOf(x, stack), depth+1)
 	case *ast.IndexExpr:
 		if t.kindOf(x.X, stack, depth+1) == ctxRangeSlice {
 			return ctxRangeSet
@@ -411,6 +410,16 @@ func (t *ctxRangeTracker) typeKind(typ ast.Expr, depth int) ctxRangeKind {
 		if spec := t.env.typeDecl[x.Name]; spec != nil {
 			return t.typeKind(spec.Type, depth+1)
 		}
+	case *ast.StructType:
+		// A struct that embeds a range has its fields.
+		if x.Fields != nil {
+			for _, f := range x.Fields.List {
+				if kind := t.typeKind(f.Type, depth+1); len(f.Names) == 0 && (kind == ctxRangeValue || kind == ctxRangeSet) {
+					return kind
+				}
+			}
+		}
+		return ctxRangeNone
 	}
 
 	// The type may be declared in another file of the package, which can bind the
@@ -485,6 +494,21 @@ func (t *ctxRangeTracker) isRangeCall(call *ast.CallExpr, stack []ast.Node) bool
 	}
 	kind, _ := t.env.receiverKindVia(sel, stack, "")
 	return kind == ctxYes
+}
+
+// checkValue reports c.Range used as a value, without being called: the
+// function it stands for takes an int64 and returns int64 ranges now, and what
+// is done with it can not be followed.
+func (t *ctxRangeTracker) checkValue(sel *ast.SelectorExpr, stack []ast.Node) {
+	if sel.Sel.Name != ctxRange {
+		return
+	}
+	if _, isCall := ctxParentCall(sel, stack); isCall {
+		return
+	}
+	if kind, _ := t.env.receiverKindVia(sel, stack, ""); kind == ctxYes {
+		t.noter.oncef("range", sel.Pos(), ctxRangeNote)
+	}
 }
 
 // checkSource looks at where the two results of c.Range(size) go. They are

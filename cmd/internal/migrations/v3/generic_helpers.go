@@ -81,6 +81,10 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if sel, isSel := n.(*ast.SelectorExpr); isSel {
+			ctxNoteHelperValue(noter, env, sel, stack)
+			return true
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -131,6 +135,23 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 		out = ctxAddImport(out, "strconv", "strconv")
 	}
 	return out
+}
+
+// ctxNoteHelperValue reports a typed getter of the context that is used as a
+// value, without being called, which the generic helper can not stand in for.
+func ctxNoteHelperValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+	helper, ok := ctxGenericHelpers[sel.Sel.Name]
+	if !ok {
+		return
+	}
+	if _, isCall := ctxParentCall(sel, stack); isCall {
+		return
+	}
+	if env.receiverKind(sel, stack, "Params") == ctxYes {
+		noter.notef(sel.Pos(),
+			"%s is used as a value and was removed in Fiber v3: call %s[%s](c, key, ...) from a function literal instead",
+			env.g.text(sel), env.qual(helper.fn), helper.typ)
+	}
 }
 
 // ctxQueueHelper queues the rewrite of one call of a typed getter. The
