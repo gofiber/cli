@@ -117,6 +117,7 @@ func ChangeFileContentInfo(cwd string, processorFn FileProcessorInfo) (bool, err
 				return nil
 			}
 			processed = string(fixed)
+			rememberOriginal(cwd, path, original)
 			if err2 := os.WriteFile(path, []byte(processed), 0o600); err2 != nil {
 				return fmt.Errorf("write file %s: %w", path, err2)
 			}

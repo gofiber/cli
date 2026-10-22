@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -191,4 +192,96 @@ func Test_DoMigration_NoNotesNoReport(t *testing.T) {
 	require.NoError(t, migrations.DoMigration(cmd, dir,
 		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
 	assert.NotContains(t, buf.String(), "review by hand")
+}
+
+// The files are formatted while the migrations rewrite them, and the author's text is put back where no
+// migration changed it: the comment that is not formatted, the order of the imports and the line endings.
+func Test_DoMigration_KeepsWhatTheAuthorWrote(t *testing.T) {
+	source := `package main
+
+import (
+	"os"
+	"github.com/gofiber/fiber/v2"
+)
+
+//Handler says hi.
+func Handler(c *fiber.Ctx) error {
+	_ = os.Args
+	return c.SendString("hi")
+}
+
+//Other is not touched.
+func Other(a   int) int { return a }
+`
+	want := strings.NewReplacer("github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v3", "c *fiber.Ctx", "c fiber.Ctx").Replace(source)
+
+	for _, tc := range []struct {
+		name    string
+		newline string
+	}{
+		{name: "LF", newline: "\n"},
+		{name: "CRLF", newline: "\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			main := filepath.Join(dir, "main.go")
+			require.NoError(t, os.WriteFile(main, []byte(strings.ReplaceAll(source, "\n", tc.newline)), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			require.NoError(t, migrations.DoMigration(cmd, dir,
+				semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+			content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			assert.Equal(t, strings.ReplaceAll(want, "\n", tc.newline), string(content))
+
+			// a second run changes nothing
+			var again bytes.Buffer
+			cmd.SetOut(&again)
+			require.NoError(t, migrations.DoMigration(cmd, dir,
+				semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+			secondContent, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			assert.Equal(t, string(content), string(secondContent))
+		})
+	}
+}
+
+// A note points at the line the file has when the run is over, also when putting the author's text back moved it.
+func Test_DoMigration_NotesFollowTheLinesOfTheRestoredFile(t *testing.T) {
+	// the author wrote two blank lines before the handler, the formatter keeps one
+	source := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.Download(\"report.txt\")\n}\n"
+	dir := t.TempDir()
+	main := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(main, []byte(source), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, migrations.DoMigration(cmd, dir,
+		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+	content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "\n\n\n\nfunc Handler(c fiber.Ctx) error {", "the blank lines of the author are back")
+	lines := strings.Split(string(content), "\n")
+	found := false
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "main.go:") || !strings.Contains(line, "no longer serves byte ranges") {
+			continue
+		}
+		// "main.go:N: ..." must name the line of the file that has the call the note is about
+		number := strings.SplitN(strings.TrimSpace(line), ":", 3)[1]
+		n, convErr := strconv.Atoi(number)
+		require.NoError(t, convErr, line)
+		assert.Contains(t, lines[n-1], "c.Download(", "the note %q points at line %d: %q", line, n, lines[n-1])
+		found = true
+	}
+	assert.True(t, found, "a note about the byte ranges of Download: %s", buf.String())
 }

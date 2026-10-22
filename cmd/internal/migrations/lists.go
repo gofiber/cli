@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
@@ -186,6 +187,10 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	defer internal.SetFileFilters(nil, nil)
 	// Whatever an earlier run in this process left behind is not ours to report.
 	internal.DrainNotes(cwd)
+	// The files are formatted as they are rewritten; the text the author wrote is
+	// put back where no migration changed it once they all ran.
+	internal.BeginRun(cwd)
+	defer internal.AbandonRun(cwd)
 	var errs []error
 	var notes []internal.Note
 	var reviews []func(cwd string)
@@ -226,6 +231,12 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		}
 	}
 
+	moved, err := internal.FinishRun(cwd)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("restore the formatting: %w", err))
+	}
+	notes = followLines(notes, moved)
+
 	if !skipGoMod {
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
@@ -249,6 +260,17 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	}
 
 	return nil
+}
+
+// followLines gives the notes the line numbers of the files as they are after the
+// formatting of the author was put back (see internal.FinishRun).
+func followLines(notes []internal.Note, moved map[string]func(line int) int) []internal.Note {
+	for i, n := range notes {
+		if remap, ok := moved[filepath.ToSlash(n.File)]; ok && n.Line > 0 {
+			notes[i].Line = remap(n.Line)
+		}
+	}
+	return notes
 }
 
 // printNotes tells the user what the migrations left for them to look at. The

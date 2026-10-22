@@ -119,6 +119,11 @@ func tidyImports(filename string, src []byte) ([]byte, error) {
 	return imports.Process(filename, src, importsOptions) //nolint:wrapcheck // the caller names the file
 }
 
+// formatOnly formats src like tidyImports does and keeps every import.
+func formatOnly(filename string, src []byte) ([]byte, error) {
+	return imports.Process(filename, src, importsOptions) //nolint:wrapcheck // the caller names the file
+}
+
 // importName returns the identifier the file refers to the import by, or "" when
 // it cannot be known from the path or the import is not subject to tidying (a
 // blank, dot or cgo import).
