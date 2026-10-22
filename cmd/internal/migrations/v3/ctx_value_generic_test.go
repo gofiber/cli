@@ -270,6 +270,126 @@ func handler(c *fiber.Ctx, s *server) {
 			msg: "Migrating generic helpers",
 		},
 		{
+			name: "receivers that are calls of function values",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type getter func() *fiber.Ctx
+
+type server struct {
+	get   func() *fiber.Ctx
+	named getter
+}
+
+func handler(c *fiber.Ctx, s *server, param func() *fiber.Ctx) int {
+	get := func() *fiber.Ctx { return c }
+	page := get().QueryInt
+	ratio := s.get().QueryFloat
+	flag := s.named().QueryBool
+	other := param().QueryInt
+	once := func() *fiber.Ctx { return c }().QueryInt
+	_, _, _, _, _ = page, ratio, flag, other, once
+	return get().QueryInt("page", 1)
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type getter func() *fiber.Ctx
+
+type server struct {
+	get   func() *fiber.Ctx
+	named getter
+}
+
+func handler(c *fiber.Ctx, s *server, param func() *fiber.Ctx) int {
+	get := func() *fiber.Ctx { return c }
+	page := func(c fiber.Ctx) func(key string, defaultValue ...int) int {
+		return func(key string, defaultValue ...int) int {
+			return fiber.Query[int](c, key, defaultValue...)
+		}
+	}(get())
+	ratio := func(c fiber.Ctx) func(key string, defaultValue ...float64) float64 {
+		return func(key string, defaultValue ...float64) float64 {
+			return fiber.Query[float64](c, key, defaultValue...)
+		}
+	}(s.get())
+	flag := func(c fiber.Ctx) func(key string, defaultValue ...bool) bool {
+		return func(key string, defaultValue ...bool) bool {
+			return fiber.Query[bool](c, key, defaultValue...)
+		}
+	}(s.named())
+	other := func(c fiber.Ctx) func(key string, defaultValue ...int) int {
+		return func(key string, defaultValue ...int) int {
+			return fiber.Query[int](c, key, defaultValue...)
+		}
+	}(param())
+	once := func(c fiber.Ctx) func(key string, defaultValue ...int) int {
+		return func(key string, defaultValue ...int) int {
+			return fiber.Query[int](c, key, defaultValue...)
+		}
+	}(func() *fiber.Ctx { return c }())
+	_, _, _, _, _ = page, ratio, flag, other, once
+	return fiber.Query[int](get(), "page", 1)
+}
+`,
+			msg: "Migrating generic helpers",
+		},
+		{
+			name: "receivers whose type comes from the results of a call, an interface or a generic function",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type provider interface{ Ctx() *fiber.Ctx }
+
+type box[T any] struct{ v T }
+
+func (b box[T]) get() T { return b.v }
+
+func two(c *fiber.Ctx) (int, *fiber.Ctx) { return 1, c }
+
+func first[T any](xs []T) T { return xs[0] }
+
+func handler(c *fiber.Ctx, p provider, ch chan *fiber.Ctx, b box[*fiber.Ctx]) int {
+	_, cc := two(c)
+	total := cc.QueryInt("a") + p.Ctx().QueryInt("b") + b.get().QueryInt("c") + b.v.QueryInt("d")
+	total += first([]*fiber.Ctx{c}).QueryInt("e")
+	for x := range ch {
+		total += x.QueryInt("f")
+	}
+	return total
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type provider interface{ Ctx() *fiber.Ctx }
+
+type box[T any] struct{ v T }
+
+func (b box[T]) get() T { return b.v }
+
+func two(c *fiber.Ctx) (int, *fiber.Ctx) { return 1, c }
+
+func first[T any](xs []T) T { return xs[0] }
+
+func handler(c *fiber.Ctx, p provider, ch chan *fiber.Ctx, b box[*fiber.Ctx]) int {
+	_, cc := two(c)
+	total := fiber.Query[int](cc, "a") + fiber.Query[int](p.Ctx(), "b") + fiber.Query[int](b.get(), "c") + fiber.Query[int](b.v, "d")
+	total += fiber.Query[int](first([]*fiber.Ctx{c}), "e")
+	for x := range ch {
+		total += fiber.Query[int](x, "f")
+	}
+	return total
+}
+`,
+			msg: "Migrating generic helpers",
+		},
+		{
 			name: "method expressions take the context as their first argument",
 			in: `package main
 

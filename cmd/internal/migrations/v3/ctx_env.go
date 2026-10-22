@@ -379,25 +379,34 @@ func (env *ctxEnv) typeOfAt(e ast.Expr, stack []ast.Node, depth int) ast.Expr {
 		case token.AND:
 			return env.typeOfAt(x.X, stack, depth+1)
 		case token.ARROW:
-			return ctxElementType(env.typeOfAt(x.X, stack, depth+1))
+			return env.elementType(env.typeOfAt(x.X, stack, depth+1))
 		default:
 		}
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		switch {
 		case !ok:
-			return env.siteTypeOf(x, stack, depth)
+			if t := env.siteTypeOf(x, stack, depth); t != nil {
+				return t
+			}
+			return env.pkgVarType(x.Name, depth)
 		case d.typ != nil:
 			return d.typ
 		case d.init != nil:
+			// n, c := two(): c is the second result of the call
+			if site, found := ctxResolveSite(x.Name, x.Pos(), stack); found && site.index >= 0 && site.init == d.init {
+				return env.resultTypeAt(d.init, site.index, stack, depth+1)
+			}
 			return env.typeOfAt(d.init, stack, depth+1)
 		}
 	case *ast.CompositeLit:
 		return x.Type
+	case *ast.FuncLit:
+		return x.Type
 	case *ast.TypeAssertExpr:
 		return x.Type
 	case *ast.IndexExpr:
-		return ctxElementType(env.typeOfAt(x.X, stack, depth+1))
+		return env.elementType(env.typeOfAt(x.X, stack, depth+1))
 	case *ast.SelectorExpr:
 		return env.fieldTypeOf(x, stack, depth)
 	case *ast.CallExpr:
@@ -437,9 +446,11 @@ func (env *ctxEnv) siteTypeOf(id *ast.Ident, stack []ast.Node, depth int) ast.Ex
 		return nil
 	case site.typ != nil:
 		return site.typ
-	case site.over != nil && !site.key:
-		return ctxElementType(env.typeOfAt(site.over, site.stack, depth+1))
-	case site.init != nil && site.over == nil && site.index < 0:
+	case site.over != nil:
+		return env.rangeElemType(env.typeOfAt(site.over, site.stack, depth+1), site.key)
+	case site.init != nil && site.index >= 0:
+		return env.resultTypeAt(site.init, site.index, site.stack, depth+1)
+	case site.init != nil:
 		return env.typeOfAt(site.init, site.stack, depth+1)
 	}
 	return nil
@@ -449,15 +460,46 @@ func (env *ctxEnv) siteTypeOf(id *ast.Ident, stack []ast.Node, depth int) ast.Ex
 func (env *ctxEnv) fieldTypeOf(sel *ast.SelectorExpr, stack []ast.Node, depth int) ast.Expr {
 	base := env.typeOfAt(sel.X, stack, depth+1)
 	if base == nil {
+		// a method expression: holder.get, (*holder).get
+		if ft := env.methodExprType(sel); ft != nil {
+			return ft
+		}
 		return env.uniqueFieldType(sel.Sel.Name)
 	}
 
-	spec := env.typeDecl[ctxTypeName(base)]
-	if spec == nil {
+	var found ast.Expr
+	if spec := env.typeDecl[ctxTypeName(base)]; spec == nil {
 		// a struct type written where it is used: s *struct{ c *fiber.Ctx }
-		return env.structFieldType(base, sel.Sel.Name, depth+1)
+		found = env.structFieldType(base, sel.Sel.Name, depth+1)
+	} else if found = env.structFieldType(spec.Type, sel.Sel.Name, depth+1); found != nil {
+		// the fields of kbox[*fiber.Ctx] are those of kbox[T] with the T put in
+		found = ctxSubst(found, ctxBindParams(ctxTypeParams(spec.TypeParams), ctxTypeArgs(base)))
 	}
-	return env.structFieldType(spec.Type, sel.Sel.Name, depth+1)
+	if found != nil {
+		return found
+	}
+
+	// a method used as a value: get := h.get
+	if ft, bind := env.methodFuncType(base, sel.Sel.Name, 0); ft != nil {
+		return ctxSubst(ft, bind)
+	}
+	return nil
+}
+
+// methodExprType returns the type of the method expression sel, T.method or
+// (*T).method with T a type declared in the file; the receiver is not among the
+// parameters of the type, which only serves for the results.
+func (env *ctxEnv) methodExprType(sel *ast.SelectorExpr) ast.Expr {
+	x := ast.Unparen(sel.X)
+	if star, ok := x.(*ast.StarExpr); ok {
+		x = ast.Unparen(star.X)
+	}
+	if id, ok := x.(*ast.Ident); ok && env.typeDecl[id.Name] != nil {
+		if ft, _ := env.methodFuncType(id, sel.Sel.Name, 0); ft != nil {
+			return ft
+		}
+	}
+	return nil
 }
 
 // uniqueFieldType is the guess for a selector whose base has no known type: the
@@ -523,42 +565,116 @@ func (env *ctxEnv) structFieldType(t ast.Expr, name string, depth int) ast.Expr 
 
 // callTypeOf returns the type of the (first) value a call returns.
 func (env *ctxEnv) callTypeOf(call *ast.CallExpr, stack []ast.Node, depth int) ast.Expr {
-	switch fun := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		return env.methodCallType(call, fun, stack, depth)
-	case *ast.Ident:
-		switch {
-		case env.funcDecl[fun.Name] != nil:
-			return ctxFirstFieldType(env.funcDecl[fun.Name].Type.Results)
-		case env.typeDecl[fun.Name] != nil:
-			return fun
-		case fun.Name == mw3BuiltinNew && len(call.Args) == 1:
-			return call.Args[0]
-		}
-	case *ast.ParenExpr, *ast.StarExpr, *ast.ArrayType, *ast.MapType:
-		return fun
+	if results := env.callResults(call, stack, depth); len(results) > 0 {
+		return results[0]
 	}
 	return nil
 }
 
-// methodCallType is callTypeOf for a call of a selector.
-func (env *ctxEnv) methodCallType(call *ast.CallExpr, fun *ast.SelectorExpr, stack []ast.Node, depth int) ast.Expr {
-	switch name := fun.Sel.Name; {
-	case name == "AcquireCtx":
-		return env.fiberType(ctxTypeCtx)
-	case name == appMethodGroup && len(call.Args) > 0:
-		return env.fiberType(ctxTypeGroup)
-	case name == mw2New && env.isFiberPackage(fun.X):
-		return env.fiberType(ctxTypeApp)
-	case slices.Contains(ctxChainMethods, name):
-		if env.typeIs(env.typeOfAt(fun.X, stack, depth+1), ctxTypeCtx) == ctxYes {
-			return env.fiberType(ctxTypeCtx)
+// callResults returns the types of the values a call returns. A conversion
+// returns the type it converts to.
+func (env *ctxEnv) callResults(call *ast.CallExpr, stack []ast.Node, depth int) []ast.Expr {
+	if depth > ctxMaxDepth {
+		return nil
+	}
+
+	switch fun := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		return env.methodCallResults(call, fun, stack, depth)
+	case *ast.Ident:
+		return env.identCallResults(call, fun, nil, stack, depth)
+	case *ast.IndexExpr:
+		// f[int](x), or the conversion box[int](x)
+		if id, ok := fun.X.(*ast.Ident); ok {
+			return env.identCallResults(call, id, []ast.Expr{fun.Index}, stack, depth)
+		}
+	case *ast.IndexListExpr:
+		if id, ok := fun.X.(*ast.Ident); ok {
+			return env.identCallResults(call, id, fun.Indices, stack, depth)
+		}
+	case *ast.FuncLit:
+		return ctxResultTypes(fun.Type)
+	case *ast.ParenExpr, *ast.StarExpr, *ast.ArrayType, *ast.MapType:
+		return []ast.Expr{fun}
+	}
+	return nil
+}
+
+// identCallResults is callResults for the call of the name id. explicit are the
+// type arguments written after it.
+func (env *ctxEnv) identCallResults(call *ast.CallExpr, id *ast.Ident, explicit []ast.Expr, stack []ast.Node, depth int) []ast.Expr {
+	// a variable that holds a function: get := func() *fiber.Ctx { ... }
+	if explicit == nil {
+		if held := env.funcTypeOf(env.typeOfAt(id, stack, depth+1), depth+1); held != nil {
+			return ctxResultTypes(held)
 		}
 	}
 
-	if recv := ctxTypeName(env.typeOfAt(fun.X, stack, depth+1)); recv != "" {
-		if method := env.methods[recv+"."+fun.Sel.Name]; method != nil {
-			return ctxFirstFieldType(method.Type.Results)
+	switch {
+	case env.funcDecl[id.Name] != nil:
+		return env.funcResults(env.funcDecl[id.Name].Type, call, explicit, stack, depth)
+	case env.typeDecl[id.Name] != nil:
+		return []ast.Expr{call.Fun}
+	case id.Name == mw3BuiltinNew && len(call.Args) == 1:
+		return []ast.Expr{call.Args[0]}
+	case id.Name == mw3BuiltinMake && len(call.Args) > 0:
+		return []ast.Expr{call.Args[0]}
+	case id.Name == mw3BuiltinAppend && len(call.Args) > 0:
+		return []ast.Expr{env.typeOfAt(call.Args[0], stack, depth+1)}
+	}
+	return nil
+}
+
+// methodCallResults is callResults for a call of a selector.
+func (env *ctxEnv) methodCallResults(call *ast.CallExpr, fun *ast.SelectorExpr, stack []ast.Node, depth int) []ast.Expr {
+	switch name := fun.Sel.Name; {
+	case name == "AcquireCtx":
+		return []ast.Expr{env.fiberType(ctxTypeCtx)}
+	case name == appMethodGroup && len(call.Args) > 0:
+		return []ast.Expr{env.fiberType(ctxTypeGroup)}
+	case name == mw2New && env.isFiberPackage(fun.X):
+		return []ast.Expr{env.fiberType(ctxTypeApp)}
+	case slices.Contains(ctxChainMethods, name):
+		if env.typeIs(env.typeOfAt(fun.X, stack, depth+1), ctxTypeCtx) == ctxYes {
+			return []ast.Expr{env.fiberType(ctxTypeCtx)}
+		}
+	}
+
+	// a method of a type of the file, of an interface, or one that a type embeds
+	if recv := env.typeOfAt(fun.X, stack, depth+1); recv != nil {
+		if ft, bind := env.methodFuncType(recv, fun.Sel.Name, 0); ft != nil {
+			results := ctxResultTypes(ft)
+			for i, r := range results {
+				results[i] = ctxSubst(r, bind)
+			}
+			return results
+		}
+	}
+
+	// a field that holds a function: s.getCtx()
+	if held := env.funcTypeOf(env.fieldTypeOf(fun, stack, depth), depth+1); held != nil {
+		return ctxResultTypes(held)
+	}
+	return nil
+}
+
+// funcTypeOf returns the function type that t stands for: one written out, or a
+// type declared by name as one. It is nil for any other type.
+func (env *ctxEnv) funcTypeOf(t ast.Expr, depth int) *ast.FuncType {
+	for ; depth <= ctxMaxDepth; depth++ {
+		switch x := t.(type) {
+		case *ast.FuncType:
+			return x
+		case *ast.ParenExpr:
+			t = x.X
+		case *ast.Ident:
+			spec := env.typeDecl[x.Name]
+			if spec == nil {
+				return nil
+			}
+			t = spec.Type
+		default:
+			return nil
 		}
 	}
 	return nil

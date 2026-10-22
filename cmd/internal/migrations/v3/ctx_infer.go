@@ -113,7 +113,7 @@ func (t *ctxRangeTracker) instantiated(base ast.Expr, args []ast.Expr, subst map
 		}
 	case *ast.SelectorExpr:
 		// iter.Seq[V] and iter.Seq2[K, V] are functions that call a function with the values
-		if pkg, ok := b.X.(*ast.Ident); ok && t.imports[pkg.Name] == "iter" && (b.Sel.Name == "Seq" || b.Sel.Name == "Seq2") {
+		if pkg, ok := b.X.(*ast.Ident); ok && t.imports[pkg.Name] == ctxIterPackage && (b.Sel.Name == "Seq" || b.Sel.Name == "Seq2") {
 			return sequenceOf(shapes)
 		}
 		if t.harmless[ctxRootName(b)] && !slices.ContainsFunc(shapes, func(s *rshape) bool { return s != nil && s.holdsRange() }) {
