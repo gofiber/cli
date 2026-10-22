@@ -14,7 +14,6 @@ import (
 
 	"github.com/containerd/console"
 	"github.com/muesli/termenv"
-	"golang.org/x/tools/imports"
 )
 
 const vendorDir = "vendor"
@@ -112,7 +111,7 @@ func ChangeFileContentInfo(cwd string, processorFn FileProcessorInfo) (bool, err
 		original := string(fileContent)
 		processed := processorFn(original, fi)
 		if processed != original {
-			fixed, err := imports.Process(path, []byte(processed), nil)
+			fixed, err := tidyImports(path, []byte(processed))
 			if err != nil {
 				noteSkippedFile(fi, original, err)
 				return nil
