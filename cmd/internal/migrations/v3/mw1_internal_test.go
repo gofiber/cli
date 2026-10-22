@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"go/ast"
 	"os"
 	"path/filepath"
 	"strings"
@@ -418,4 +419,49 @@ func Test_allEqual(t *testing.T) {
 	assert.True(t, allEqual([]int{3, 3}, 3))
 	assert.False(t, allEqual([]int{3, 2}, 3))
 	assert.False(t, allEqual([]int(nil), 3))
+}
+
+func Test_mw1AddElements(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		lit  string
+		want string
+	}{
+		{"empty", `T{}`, `T{A: 1, }`},
+		{"single line", `T{X: 2, Y: 3}`, `T{A: 1, X: 2, Y: 3}`},
+		{"multi-line", "T{\n\tX: 2,\n}", "T{\n\tX: 2,\n\tA: 1,\n}"},
+		{"empty multi-line", "T{\n}", "T{\n\tA: 1,\n}"},
+		{"brace after the last element", "T{\n\tX: 2,\n\tY: 3}", "T{\n\tX: 2,\n\tA: 1,\n\tY: 3}"},
+		{"nested", "[]T{\n\t{\n\t\tX: 2,\n\t},\n}", "[]T{\n\t{\n\t\tX: 2,\n\t\tA: 1,\n\t},\n}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := "package p\n\nvar _ = " + tt.lit + "\n"
+			g, ok := parseSource(src)
+			require.True(t, ok)
+
+			var lit *ast.CompositeLit
+			g.walk(func(n ast.Node, _ []ast.Node) bool {
+				if c, isLit := n.(*ast.CompositeLit); isLit && lit == nil {
+					lit = c
+				}
+				return true
+			})
+			require.NotNil(t, lit)
+			if len(lit.Elts) > 0 && tt.name == "nested" {
+				inner, isLit := lit.Elts[0].(*ast.CompositeLit)
+				require.True(t, isLit)
+				lit = inner
+			}
+
+			var edits editSet
+			start, end, text := mw1AddElements(g, lit, []string{"A: 1"})
+			edits.replace(start, end, text)
+			assert.Equal(t, "package p\n\nvar _ = "+tt.want+"\n", edits.apply(src))
+		})
+	}
 }
