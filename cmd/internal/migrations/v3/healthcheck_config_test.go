@@ -672,3 +672,65 @@ func main() {
 	assert.Empty(t, second.stdout)
 	assert.Empty(t, second.notes)
 }
+
+func Test_MigrateHealthcheckConfig_HandlerThatIsPassedOn(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+` + hcImports + `
+func health() fiber.Handler {
+	return healthcheck.New()
+}
+
+func main() {
+	app := fiber.New()
+	app.Use(health())
+	app.Get("/healthz", healthcheck.New())
+	app.Get("/ready", func(c *fiber.Ctx) error { return c.Next() }, healthcheck.New())
+	handlers := []fiber.Handler{healthcheck.New()}
+	_ = handlers
+}
+`
+	res := mw1Run(t, v3.MigrateHealthcheckConfig, src)
+
+	assert.Equal(t, src, res.file())
+	if assert.Len(t, res.notes, 2) {
+		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: healthcheck.New() was left as it is: it is not registered on a route here", mw1LineOf(t, src, "return healthcheck.New()")))
+		assert.Contains(t, res.notes[1], fmt.Sprintf("main.go:%d: ", mw1LineOf(t, src, "[]fiber.Handler{healthcheck.New()}")))
+	}
+}
+
+func Test_MigrateHealthcheckConfig_PathOrHandler(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateHealthcheckConfig, `package main
+
+`+hcImports+`
+const base = "/base"
+
+var prefix = "/var"
+
+func requests(c *fiber.Ctx) error { return c.Next() }
+
+var limit = func(c *fiber.Ctx) error { return c.Next() }
+
+func main(app *fiber.App, auth fiber.Handler, unknown func() fiber.Handler) {
+	app.Use(base, healthcheck.New())
+	app.Use(prefix, healthcheck.New())
+	app.Use(requests, healthcheck.New())
+	app.Use(limit, healthcheck.New())
+	app.Use(auth, healthcheck.New())
+	app.Use(unknown(), healthcheck.New())
+}
+`)
+
+	file := res.file()
+	assert.Contains(t, file, `app.Get(base+healthcheck.LivenessEndpoint, healthcheck.New())`)
+	assert.Contains(t, file, `app.Get(prefix+healthcheck.LivenessEndpoint, healthcheck.New())`)
+	assert.Contains(t, file, "app.Use(requests)\n\tapp.Get(healthcheck.LivenessEndpoint")
+	assert.Contains(t, file, "app.Use(limit)\n\tapp.Get(healthcheck.LivenessEndpoint")
+	assert.Contains(t, file, "app.Use(auth)\n\tapp.Get(healthcheck.LivenessEndpoint")
+	assert.Contains(t, file, "app.Use(unknown())\n\tapp.Get(healthcheck.LivenessEndpoint")
+	assert.Empty(t, res.notes)
+}

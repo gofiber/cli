@@ -65,6 +65,18 @@ func mw1IsMember(e ast.Expr, names []string, member string) bool {
 	return ok && sel == member && slices.Contains(names, x)
 }
 
+// mw1IsMemberOf is mw1IsMember for a member that may be wrapped in parentheses.
+func mw1IsMemberOf(e ast.Expr, names []string, member string) bool {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		e = p.X
+	}
+	return mw1IsMember(e, names, member)
+}
+
 // mw1ConfigLit reports whether n is a composite literal of the Config type of
 // the package bound to names, and returns it.
 func mw1ConfigLit(n ast.Node, names []string) (*ast.CompositeLit, bool) {
@@ -214,6 +226,32 @@ func mw1ElementSpan(g *goSource, lit *ast.CompositeLit, i int) (start, end int) 
 	default:
 		return start, end
 	}
+}
+
+// mw1StatementSpan returns the byte range that removes a statement that takes
+// its lines on its own in a block: the statement and its line break. ok is false
+// for any other statement.
+func mw1StatementSpan(g *goSource, stmt ast.Stmt, stack []ast.Node) (start, end int, ok bool) {
+	if len(stack) == 0 {
+		return 0, 0, false
+	}
+	switch stack[len(stack)-1].(type) {
+	case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
+	default:
+		return 0, 0, false
+	}
+
+	start = g.offset(stmt.Pos())
+	end = g.offset(stmt.End())
+	rest := mw1TrailingComment(g.src, end)
+	after := mw1SkipSpaces(g.src, rest)
+	if !mw1StartsLine(g.src, start) || (after < len(g.src) && g.src[after] != '\n') {
+		return 0, 0, false
+	}
+	if after < len(g.src) {
+		after++ // the line break
+	}
+	return start - len(mw1Indent(g.src, start)), after, true
 }
 
 // mw1MultiLine reports whether the literal spans more than one line.

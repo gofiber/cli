@@ -3,7 +3,6 @@ package v3
 import (
 	"fmt"
 	"go/ast"
-	"go/token"
 	"strconv"
 	"strings"
 
@@ -175,31 +174,10 @@ func (m *envvarMigration) assignment(as *ast.AssignStmt, field string, stack []a
 	case envvarExportVars:
 		m.exported = true
 	case envvarExcludeVars:
-		if m.isLineStatement(as, stack) {
-			start := m.g.offset(as.Pos())
-			lineStart := start - len(mw1Indent(m.g.src, start))
-			end := m.g.offset(as.End())
-			if end < len(m.g.src) && m.g.src[end] == '\n' {
-				end++
-			}
-			m.edits.replace(lineStart, end, "")
+		if start, end, ok := mw1StatementSpan(m.g, as, stack); ok {
+			m.edits.replace(start, end, "")
 			return
 		}
 		m.rep.notef(as, "envvar.Config has no ExcludeVars in v3: remove this assignment, and list the variables to expose in ExportVars")
 	}
-}
-
-// isLineStatement reports whether the assignment is a statement of a block that
-// takes its line on its own.
-func (m *envvarMigration) isLineStatement(as *ast.AssignStmt, stack []ast.Node) bool {
-	if len(stack) == 0 || as.Tok != token.ASSIGN {
-		return false
-	}
-	switch stack[len(stack)-1].(type) {
-	case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
-	default:
-		return false
-	}
-	end := mw1SkipSpaces(m.g.src, m.g.offset(as.End()))
-	return mw1StartsLine(m.g.src, m.g.offset(as.Pos())) && (end >= len(m.g.src) || m.g.src[end] == '\n')
 }

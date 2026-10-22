@@ -89,7 +89,10 @@ func migrateHealthcheckContent(content string, fi internal.FileInfo) string {
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
-			return !h.rewriteCall(x, stack)
+			if h.rewriteCall(x, stack) {
+				return false
+			}
+			h.strayNew(x, stack)
 		case *ast.CompositeLit:
 			h.collectV2Config(x)
 		}
@@ -180,18 +183,6 @@ func (h *hcMigration) isNewCall(e ast.Expr) (*ast.CallExpr, bool) {
 	return call, true
 }
 
-// mw1IsMemberOf is mw1IsMember for a member that may be wrapped in parentheses.
-func mw1IsMemberOf(e ast.Expr, names []string, member string) bool {
-	for {
-		p, ok := e.(*ast.ParenExpr)
-		if !ok {
-			break
-		}
-		e = p.X
-	}
-	return mw1IsMember(e, names, member)
-}
-
 // rewriteCall handles a call that registers the middleware. It reports whether
 // the call, and everything inside it, has been dealt with.
 func (h *hcMigration) rewriteCall(call *ast.CallExpr, stack []ast.Node) bool {
@@ -220,6 +211,29 @@ func (h *hcMigration) rewriteCall(call *ast.CallExpr, stack []ast.Node) bool {
 		return true
 	}
 	return h.rewriteUse(call, sel, idx, stack)
+}
+
+// routeMethods are the methods that register a handler on a path.
+var routeMethods = strings.Fields("Get Head Post Put Delete Patch Options Connect Trace All Add Query")
+
+// strayNew reports a healthcheck.New() that is neither registered on a route nor
+// kept in a variable, which Use reports where it registers it: the handler is
+// returned or passed on, and v3 will answer every GET it receives.
+func (h *hcMigration) strayNew(call *ast.CallExpr, stack []ast.Node) {
+	if _, isNew := h.isNewCall(call); !isNew || len(stack) == 0 {
+		return
+	}
+
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.AssignStmt, *ast.ValueSpec:
+		return
+	case *ast.CallExpr:
+		// app.Get(path, healthcheck.New()), the form of v3
+		if sel, ok := parent.Fun.(*ast.SelectorExpr); ok && slices.Contains(routeMethods, sel.Sel.Name) && len(parent.Args) > 1 && parent.Args[0] != ast.Expr(call) {
+			return
+		}
+	}
+	h.reportUnmigrated(call, "it is not registered on a route here")
 }
 
 // reportHandlerVariable reports a Use that registers a variable holding the
@@ -298,8 +312,6 @@ type hcConfig struct {
 	readiness hcProbe
 	// multiline is whether the literal spans several lines.
 	multiline bool
-	// present is set when the call passes a config at all.
-	present bool
 }
 
 // rewriteUse replaces `X.Use(..., healthcheck.New(cfg), ...)` with one route per
@@ -307,7 +319,7 @@ type hcConfig struct {
 func (h *hcMigration) rewriteUse(call *ast.CallExpr, sel *ast.SelectorExpr, idx int, stack []ast.Node) bool {
 	newCall, _ := h.isNewCall(call.Args[idx])
 
-	prefix, handlersFrom, ok := h.prefixOf(call, idx)
+	prefix, handlersFrom, ok := h.prefixOf(call, idx, stack)
 	if !ok {
 		h.reportUnmigrated(call, "its first argument may be a path or a handler")
 		return true
@@ -365,24 +377,46 @@ func (h *hcMigration) args(prefix ast.Expr, handlers []ast.Expr) string {
 }
 
 // prefixOf returns the path a Use call mounts its handlers on, and the index of
-// the first handler.
-func (h *hcMigration) prefixOf(call *ast.CallExpr, idx int) (prefix ast.Expr, first int, ok bool) {
+// the first handler. Whether the first argument is the path or a handler is
+// told by what it is; ok is false when that cannot be told.
+func (h *hcMigration) prefixOf(call *ast.CallExpr, idx int, stack []ast.Node) (prefix ast.Expr, first int, ok bool) {
 	if idx == 0 {
 		return nil, 0, true
 	}
-	switch first := call.Args[0].(type) {
+	switch arg := call.Args[0].(type) {
 	case *ast.BasicLit:
-		if first.Kind == token.STRING {
-			return first, 1, true
+		if arg.Kind == token.STRING {
+			return arg, 1, true
 		}
 	case *ast.CallExpr, *ast.FuncLit:
 		return nil, 0, true
 	case *ast.Ident:
-		if _, isConst := mw1StringConsts(h.g.file)[first.Name]; isConst {
-			return first, 1, true
+		if _, isConst := mw1StringConsts(h.g.file)[arg.Name]; isConst {
+			return arg, 1, true
+		}
+		if len(mw1FuncParamCounts(h.g.file, arg.Name)) > 0 {
+			return nil, 0, true // a function used as a handler
+		}
+		if d, found := resolveIdent(arg.Name, arg.Pos(), stack); found {
+			if isStringDecl(d) {
+				return arg, 1, true
+			}
+			if d.typ != nil || d.init != nil {
+				return nil, 0, true
+			}
 		}
 	}
 	return nil, 0, false
+}
+
+// isStringDecl reports whether the declaration holds a string: it has the type,
+// or is initialized with a string literal.
+func isStringDecl(d decl) bool {
+	if d.typ != nil {
+		return isIdentNamed(d.typ, "string")
+	}
+	lit, ok := d.init.(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING
 }
 
 // route renders the path a probe is registered on: the path the Use call was
@@ -509,7 +543,6 @@ func (h *hcMigration) configOf(newCall *ast.CallExpr, stack []ast.Node) (cfg hcC
 
 // parseConfig reads a healthcheck.Config literal of v2.
 func (h *hcMigration) parseConfig(lit *ast.CompositeLit) (cfg hcConfig, ok bool) {
-	cfg.present = true
 	cfg.multiline = mw1MultiLine(h.g, lit)
 	var next *hcElement
 	for _, elt := range lit.Elts {
@@ -618,7 +651,7 @@ func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack
 	if !hasV2OnlyField(lit) {
 		// nothing to split: both routes can share it
 		split = hcSplit{liveness: id.Name, readiness: id.Name}
-		return hcConfig{present: true}, split, true
+		return hcConfig{}, split, true
 	}
 
 	if countIdent(h.g.file, id.Name) != 2 {

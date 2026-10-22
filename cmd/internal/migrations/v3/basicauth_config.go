@@ -137,32 +137,13 @@ func (m *basicauthMigration) assignment(as *ast.AssignStmt, field string, stack 
 		if field == basicauthContextPassword {
 			m.reportPassword(as)
 		}
-		if len(stack) > 0 && m.isLineStatement(as, stack) {
-			start := m.g.offset(as.Pos())
-			end := m.g.offset(as.End())
-			lineStart := start - len(mw1Indent(m.g.src, start))
-			if end < len(m.g.src) && m.g.src[end] == '\n' {
-				end++
-			}
-			m.edits.replace(lineStart, end, "")
+		if start, end, ok := mw1StatementSpan(m.g, as, stack); ok {
+			m.edits.replace(start, end, "")
 			return
 		}
 		m.rep.notef(as,
 			"basicauth.Config has no %s in v3: remove this assignment (the username is read with basicauth.UsernameFromContext(c))", field)
 	}
-}
-
-// isLineStatement reports whether the assignment is a statement of a block that
-// takes its line on its own.
-func (m *basicauthMigration) isLineStatement(as *ast.AssignStmt, stack []ast.Node) bool {
-	switch stack[len(stack)-1].(type) {
-	case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
-	default:
-		return false
-	}
-	start := m.g.offset(as.Pos())
-	end := mw1SkipSpaces(m.g.src, m.g.offset(as.End()))
-	return mw1StartsLine(m.g.src, start) && (end >= len(m.g.src) || m.g.src[end] == '\n')
 }
 
 func (m *basicauthMigration) reportPassword(at ast.Node) {

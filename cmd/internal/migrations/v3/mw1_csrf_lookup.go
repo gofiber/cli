@@ -3,6 +3,7 @@ package v3
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -181,6 +182,10 @@ func (m *csrfMigration) wrapCustom(e ast.Expr, lit *ast.FuncLit) {
 	m.usesExtractors = true
 }
 
+// requestReaders are the methods of the context that read one named value of
+// the request.
+var requestReaders = strings.Fields("Get FormValue Query Params Cookies")
+
 // lookedUpKey returns the name an extractor function reads when it reads a
 // single one, which is what the metadata of an extractor is for.
 func lookedUpKey(lit *ast.FuncLit) (string, bool) {
@@ -194,8 +199,7 @@ func lookedUpKey(lit *ast.FuncLit) (string, bool) {
 		if !isSel {
 			return true
 		}
-		switch sel.Sel.Name {
-		case "Get", "FormValue", "Query", "Params", "Cookies":
+		if slices.Contains(requestReaders, sel.Sel.Name) {
 			if s, isLiteral := mw1StringLiteral(call.Args[0]); isLiteral && s != "" {
 				keys = append(keys, s)
 			}
