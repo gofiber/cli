@@ -28,41 +28,41 @@ const (
 type clientItemKind int
 
 const (
-	// itemSetter configures the request.
-	itemSetter clientItemKind = iota
-	// itemTerm sends the request and reads the response.
-	itemTerm
-	// itemDrop is a statement the v3 client does not need.
-	itemDrop
-	// itemParse is a call of Parse, which v3 has no counterpart for.
-	itemParse
-	// itemEscape hands the request to other code, unchanged.
-	itemEscape
+	// clientItemSetter configures the request.
+	clientItemSetter clientItemKind = iota
+	// clientItemTerm sends the request and reads the response.
+	clientItemTerm
+	// clientItemDrop is a statement the v3 client does not need.
+	clientItemDrop
+	// clientItemParse is a call of Parse, which v3 has no counterpart for.
+	clientItemParse
+	// clientItemEscape hands the request to other code, unchanged.
+	clientItemEscape
 )
 
 // clientTermKind says what a terminal call returns as the body.
 type clientTermKind int
 
 const (
-	termNone clientTermKind = iota
-	termBytes
-	termString
-	termStruct
+	clientTermNone clientTermKind = iota
+	clientTermBytes
+	clientTermString
+	clientTermStruct
 )
 
 // Names of the Agent methods the migration treats specially.
 const (
-	methodRequest = "Request"
-	methodParse   = "Parse"
-	methodGet     = "Get"
+	clientMethodRequest = "Request"
+	clientMethodParse   = "Parse"
+	clientMethodGet     = "Get"
 )
 
 // clientTerminals maps the Agent methods that send the request to the kind of
 // body they return.
 var clientTerminals = map[string]clientTermKind{
-	"Bytes":  termBytes,
-	"String": termString, //nolint:usestdlibvars // the String method of an Agent, not a go/constant kind
-	"Struct": termStruct,
+	"Bytes":  clientTermBytes,
+	"String": clientTermString, //nolint:usestdlibvars // the String method of an Agent, not a go/constant kind
+	"Struct": clientTermStruct,
 }
 
 // clientTerminalKind returns the kind of the terminal call called name.
@@ -101,7 +101,7 @@ func (c clientChain) terminal() *clientCall {
 		return nil
 	}
 	last := &c.calls[len(c.calls)-1]
-	if clientTerminalKind(last.name) == termNone {
+	if clientTerminalKind(last.name) == clientTermNone {
 		return nil
 	}
 	return last
@@ -152,6 +152,10 @@ type clientAlias struct {
 type clientUnit struct {
 	f      *clientFile
 	create ast.Stmt
+	// anchor is where the request is reported when it has no root selector.
+	anchor ast.Node
+	// retExpr is the expression of a return statement that creates the request.
+	retExpr ast.Expr
 	// creationCalls are the calls chained to the creation expression.
 	creationCalls []clientCall
 	url           ast.Expr
@@ -184,14 +188,14 @@ func (f *clientFile) decompose(e ast.Expr) (clientChain, bool) {
 			return ch, false
 		}
 		if f.isFiberName(sel.X) {
-			root, ok := fiberRoot(sel, call)
+			root, ok := clientFiberRoot(sel, call)
 			if !ok {
 				return ch, false
 			}
 			slices.Reverse(calls)
 			return clientChain{root: root, calls: calls}, true
 		}
-		if isClientMethod(sel.Sel.Name) && len(call.Args) == 1 && f.isFiberClientExpr(sel.X) {
+		if clientIsMethod(sel.Sel.Name) && len(call.Args) == 1 && f.isFiberClientExpr(sel.X) {
 			root := clientRoot{kind: clientViaClient, sel: sel, call: call, url: call.Args[0], client: sel.X, method: sel.Sel.Name}
 			slices.Reverse(calls)
 			return clientChain{root: root, calls: calls}, true
@@ -207,10 +211,10 @@ func (f *clientFile) decompose(e ast.Expr) (clientChain, bool) {
 	return clientChain{root: clientRoot{kind: clientVar, ident: id}, calls: calls}, true
 }
 
-// fiberRoot recognizes fiber.Get(url) and fiber.AcquireAgent().
-func fiberRoot(sel *ast.SelectorExpr, call *ast.CallExpr) (clientRoot, bool) {
+// clientFiberRoot recognizes fiber.Get(url) and fiber.AcquireAgent().
+func clientFiberRoot(sel *ast.SelectorExpr, call *ast.CallExpr) (clientRoot, bool) {
 	switch {
-	case isClientMethod(sel.Sel.Name) && len(call.Args) == 1 && !call.Ellipsis.IsValid():
+	case clientIsMethod(sel.Sel.Name) && len(call.Args) == 1 && !call.Ellipsis.IsValid():
 		return clientRoot{kind: clientFiberFunc, sel: sel, call: call, url: call.Args[0], method: sel.Sel.Name}, true
 	case sel.Sel.Name == "AcquireAgent" && len(call.Args) == 0:
 		return clientRoot{kind: clientAcquire, sel: sel, call: call}, true
@@ -218,17 +222,12 @@ func fiberRoot(sel *ast.SelectorExpr, call *ast.CallExpr) (clientRoot, bool) {
 	return clientRoot{}, false
 }
 
-// isClientMethod reports whether name is one of the verbs of the v2 client.
-func isClientMethod(name string) bool {
+// clientIsMethod reports whether name is one of the verbs of the v2 client.
+func clientIsMethod(name string) bool {
 	switch name {
-	case methodGet, "Head", "Post", "Put", "Patch", "Delete":
+	case clientMethodGet, "Head", "Post", "Put", "Patch", "Delete":
 		return true
 	}
-	return false
-}
-
-// isFiberClientExpr reports whether e is a fiber.Client.
-func (*clientFile) isFiberClientExpr(_ ast.Expr) bool {
 	return false
 }
 
@@ -286,13 +285,13 @@ func (f *clientFile) fluentUnit(l clientList, idx int, stmt ast.Stmt, rhs ast.Ex
 		return nil
 	}
 	term.kind = clientTerminalKind(last.name)
-	if term.kind == termStruct {
+	if term.kind == clientTermStruct {
 		if len(last.call.Args) != 1 || last.call.Ellipsis.IsValid() {
 			return nil
 		}
 		term.structArg = f.text(last.call.Args[0])
 	}
-	it := &clientItem{stmt: stmt, list: l, idx: idx, kind: itemTerm, term: term}
+	it := &clientItem{stmt: stmt, list: l, idx: idx, kind: clientItemTerm, term: term}
 	return &clientUnit{
 		f: f, list: l, idx: idx, kind: clientFluent, root: ch.root, url: ch.root.url,
 		client: ch.root.client, method: ch.root.method,
@@ -300,8 +299,8 @@ func (f *clientFile) fluentUnit(l clientList, idx int, stmt ast.Stmt, rhs ast.Ex
 	}
 }
 
-// refGroup is the references to a variable made by one statement.
-type refGroup struct {
+// clientRefGroup is the references to a variable made by one statement.
+type clientRefGroup struct {
 	stmt   ast.Stmt
 	list   clientList
 	refs   []clientRef
@@ -309,13 +308,13 @@ type refGroup struct {
 	nested bool
 }
 
-// groupRefs sorts the references by the statement that holds them. base is
+// clientGroupRefs sorts the references by the statement that holds them. base is
 // the list the variable was declared in.
-func groupRefs(base clientList, refs []clientRef) ([]refGroup, bool) {
-	var groups []refGroup
+func clientGroupRefs(base clientList, refs []clientRef) ([]clientRefGroup, bool) {
+	var groups []clientRefGroup
 	byStmt := map[ast.Stmt]int{}
 	for _, r := range refs {
-		m, ok := memberOf(base, r)
+		m, ok := clientMemberOf(base, r)
 		if !ok {
 			return nil, false
 		}
@@ -324,7 +323,7 @@ func groupRefs(base clientList, refs []clientRef) ([]refGroup, bool) {
 			continue
 		}
 		byStmt[m.stmt] = len(groups)
-		groups = append(groups, refGroup{stmt: m.stmt, list: m.list, idx: m.idx, refs: []clientRef{r}, nested: m.list.owner != base.owner})
+		groups = append(groups, clientRefGroup{stmt: m.stmt, list: m.list, idx: m.idx, refs: []clientRef{r}, nested: m.list.owner != base.owner})
 	}
 	return groups, true
 }
@@ -336,8 +335,8 @@ type clientMember struct {
 	idx  int
 }
 
-// memberOf finds the statement of a statement list that holds the reference.
-func memberOf(base clientList, r clientRef) (clientMember, bool) {
+// clientMemberOf finds the statement of a statement list that holds the reference.
+func clientMemberOf(base clientList, r clientRef) (clientMember, bool) {
 	st := r.stack
 	for k, n := range slices.Backward(st) {
 		s, isStmt := n.(ast.Stmt)

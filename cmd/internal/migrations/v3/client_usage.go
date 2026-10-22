@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"regexp"
 	"slices"
 
@@ -20,9 +21,9 @@ import (
 // statements it recognizes is rewritten, every other request is left as it is
 // and reported, so that no setting of a request is ever dropped silently.
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	pkgs := newClientPackages()
+	pkgs := clientNewPackages()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateClientContent(content, fi, pkgs)
+		return clientMigrateContent(content, fi, pkgs)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate client usage: %w", err)
@@ -38,9 +39,9 @@ func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 // clientErrorsPath and clientLogPaths match the packages whose functions only
 // format the errors they are given.
 var (
-	reClientErrors = regexp.MustCompile(`^errors$`)
-	reClientFmt    = regexp.MustCompile(`^fmt$`)
-	reClientLog    = regexp.MustCompile(`^log$`)
+	clientReErrors = regexp.MustCompile(`^errors$`)
+	clientReFmt    = regexp.MustCompile(`^fmt$`)
+	clientReLog    = regexp.MustCompile(`^log$`)
 )
 
 // clientFile is the file being migrated.
@@ -62,7 +63,7 @@ type clientFile struct {
 	edits    clientEdits
 }
 
-func migrateClientContent(content string, fi internal.FileInfo, pkgs *clientPackages) string {
+func clientMigrateContent(content string, fi internal.FileInfo, pkgs *clientPackages) string {
 	names := fiberNames(content)
 	names = slices.DeleteFunc(names, func(n string) bool { return n == "." })
 	if len(names) == 0 {
@@ -78,9 +79,9 @@ func migrateClientContent(content string, fi internal.FileInfo, pkgs *clientPack
 		pkgs:     pkgs,
 		fi:       fi,
 		fiber:    names,
-		errors:   importNames(content, reClientErrors, "errors"),
-		fmt:      importNames(content, reClientFmt, "fmt"),
-		log:      importNames(content, reClientLog, "log"),
+		errors:   importNames(content, clientReErrors, "errors"),
+		fmt:      importNames(content, clientReFmt, "fmt"),
+		log:      importNames(content, clientReLog, "log"),
 		pkgNames: map[string]string{},
 		handled:  map[ast.Node]bool{},
 		reported: map[ast.Node]bool{},
@@ -93,8 +94,10 @@ func migrateClientContent(content string, fi internal.FileInfo, pkgs *clientPack
 
 // run migrates the requests of the file.
 func (f *clientFile) run() {
+	f.renameAliases()
+	f.rewriteClients()
 	for _, decl := range f.g.file.Decls {
-		f.walkDecl(decl, newClientFunc(decl))
+		f.walkDecl(decl, clientNewFunc(decl))
 	}
 	f.reportLeftovers()
 }
@@ -153,8 +156,10 @@ func (f *clientFile) leave(node ast.Node, parents []ast.Node, fn *clientFunc) {
 		switch p := parent.(type) {
 		case *ast.FuncDecl:
 			l.bound = clientFuncNames(p.Recv, p.Type)
+			f.agentParams(p.Type, l)
 		case *ast.FuncLit:
 			l.bound = clientFuncNames(nil, p.Type)
+			f.agentParams(p.Type, l)
 		}
 	case *ast.CaseClause:
 		l.stmts = x.Body
@@ -197,13 +202,68 @@ func clientFuncNames(recv *ast.FieldList, ft *ast.FuncType) []string {
 
 // processList migrates the requests that start in a statement list.
 func (f *clientFile) processList(l clientList) {
-	for idx := range l.stmts {
-		u := f.creationAt(l, idx)
-		if u == nil {
+	for idx, s := range l.stmts {
+		if f.clientStatement(s) {
 			continue
 		}
-		f.migrate(u)
+		if ret, ok := s.(*ast.ReturnStmt); ok {
+			f.returnedAgents(l, ret)
+			continue
+		}
+		u := f.creationAt(l, idx)
+		if u == nil {
+			u = f.agentFromHelper(l, idx)
+		}
+		if u != nil {
+			f.migrate(u)
+		}
 	}
+}
+
+// clientStatement handles the statements about fiber.Client values: releasing
+// one is not needed any more, and its fields have setters now.
+func (f *clientFile) clientStatement(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.ExprStmt:
+		return f.releasedClient(s, x.X)
+	case *ast.DeferStmt:
+		return f.releasedClient(s, x.Call)
+	case *ast.AssignStmt:
+		return f.clientFieldAssign(x)
+	}
+	return false
+}
+
+// releasedClient removes fiber.ReleaseClient(c).
+func (f *clientFile) releasedClient(s ast.Stmt, e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := f.fiberSel(call.Fun)
+	if !ok || sel.Sel.Name != "ReleaseClient" || len(call.Args) != 1 {
+		return false
+	}
+	f.deleteStmt(f.edits.begin(), s)
+	f.handled[sel] = true
+	return true
+}
+
+// clientFieldAssign rewrites c.UserAgent = "x" on a fiber.Client to its setter.
+func (f *clientFile) clientFieldAssign(s *ast.AssignStmt) bool {
+	if len(s.Lhs) != 1 || len(s.Rhs) != 1 || s.Tok != token.ASSIGN {
+		return false
+	}
+	sel, ok := s.Lhs[0].(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	setter, known := clientFieldSetters[sel.Sel.Name]
+	if !known || !f.isFiberClientExpr(sel.X) {
+		return false
+	}
+	f.replaceStmt(f.edits.begin(), s, f.text(sel.X)+"."+setter+"("+f.text(s.Rhs[0])+")")
+	return true
 }
 
 // text returns the source text of n, with the edits inside it applied.
@@ -271,7 +331,7 @@ func (f *clientFile) resolve(id *ast.Ident) (decl, bool) {
 var clientAPIMembers = []string{
 	"Get", "Head", "Post", "Put", "Patch", "Delete",
 	"AcquireAgent", "ReleaseAgent", "AcquireClient", "ReleaseClient",
-	"AcquireArgs", "ReleaseArgs", "AcquireFormFile", "ReleaseFormFile",
+	clientMemberAcquireArgs, "ReleaseArgs", "AcquireFormFile", "ReleaseFormFile",
 	"AcquireResponse", "ReleaseResponse",
 	"Agent", "Client", "Args", "FormFile", "Request", "Response", "RetryIfFunc",
 }

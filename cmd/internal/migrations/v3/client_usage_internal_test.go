@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bodyStmts parses the statements of a function body.
-func bodyStmts(t *testing.T, body string) []ast.Stmt {
+// clientBodyStmts parses the statements of a function body.
+func clientBodyStmts(t *testing.T, body string) []ast.Stmt {
 	t.Helper()
 
 	file, err := parser.ParseFile(token.NewFileSet(), "", "package p\nfunc f() {\n"+body+"\n}", parser.SkipObjectResolution)
@@ -48,7 +48,7 @@ func Test_clientRefsIn_HonorsScopes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			refs, end := clientRefsIn("errs", bodyStmts(t, tt.body))
+			refs, end := clientRefsIn("errs", clientBodyStmts(t, tt.body))
 			assert.Len(t, refs, tt.refs)
 			assert.Equal(t, tt.end, end)
 		})
@@ -76,13 +76,13 @@ func Test_clientConfigLit(t *testing.T) {
 		clientConfigLit("client", []clientCfg{{field: "Timeout", val: "5 * time.Second"}}))
 	assert.Equal(t, `, client.Config{Header: map[string]string{"A": a, "B": b}, Referer: r}`,
 		clientConfigLit("client", []clientCfg{
-			{field: fieldHeader, key: `"A"`, val: "a"},
+			{field: clientFieldHeader, key: `"A"`, val: "a"},
 			{field: "Referer", val: "r"},
-			{field: fieldHeader, key: `"B"`, val: "b"},
+			{field: clientFieldHeader, key: `"B"`, val: "b"},
 		}))
 	lit := clientConfigLit("c", []clientCfg{
-		{field: fieldHeader, key: `"A"`, val: "a"},
-		{field: fieldCookie, key: `"k"`, val: "v"},
+		{field: clientFieldHeader, key: `"A"`, val: "a"},
+		{field: clientFieldCookie, key: `"k"`, val: "v"},
 		{field: "Timeout", val: "d"},
 	})
 	assert.Equal(t, ", c.Config{\nHeader: map[string]string{\"A\": a},\nCookie: map[string]string{\"k\": v},\nTimeout: d,\n}", lit)
@@ -128,7 +128,7 @@ func Test_clientLenComparison(t *testing.T) {
 	}
 }
 
-func gofmtSource(t *testing.T, src string) string {
+func clientGofmtSource(t *testing.T, src string) string {
 	t.Helper()
 
 	formatted, err := format.Source([]byte(src))
@@ -136,8 +136,8 @@ func gofmtSource(t *testing.T, src string) string {
 	return strings.TrimSpace(string(formatted)) + "\n"
 }
 
-func Test_gofmtSource(t *testing.T) {
+func Test_clientGofmtSource(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "package p\n", gofmtSource(t, "package   p"))
+	assert.Equal(t, "package p\n", clientGofmtSource(t, "package   p"))
 }

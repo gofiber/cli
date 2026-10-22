@@ -21,11 +21,11 @@ type clientRun struct {
 	notes  []string
 }
 
-// runClientMigration writes files (name to content) into a fresh directory,
+// clientRunMigration writes files (name to content) into a fresh directory,
 // runs MigrateClientUsage on it and returns what it did. The files are valid
 // Fiber v2 programs. MigrateGoPkgs moves the fiber import to v3 before the
 // client migration runs, so the same is done here to the input.
-func runClientMigration(t *testing.T, files map[string]string) clientRun {
+func clientRunMigration(t *testing.T, files map[string]string) clientRun {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -62,16 +62,16 @@ func runClientMigration(t *testing.T, files map[string]string) clientRun {
 	return run
 }
 
-// migrateClientSource migrates a single file and returns the result.
-func migrateClientSource(t *testing.T, src string) clientRun {
+// clientMigrateSource migrates a single file and returns the result.
+func clientMigrateSource(t *testing.T, src string) clientRun {
 	t.Helper()
-	return runClientMigration(t, map[string]string{"main.go": src})
+	return clientRunMigration(t, map[string]string{"main.go": src})
 }
 
-// assertClientSource compares a migrated file with the expected source after
+// clientAssertSource compares a migrated file with the expected source after
 // both were formatted.
-func assertClientSource(t *testing.T, want, got string) {
+func clientAssertSource(t *testing.T, want, got string) {
 	t.Helper()
 
-	assert.Equal(t, gofmtSource(t, want), gofmtSource(t, got))
+	assert.Equal(t, clientGofmtSource(t, want), clientGofmtSource(t, got))
 }

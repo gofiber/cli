@@ -18,18 +18,29 @@ const (
 	clientBase64Path = "encoding/base64"
 )
 
+// Members of the v2 client that several places of the migration refer to.
+const (
+	clientMemberName        = "Name"
+	clientMemberUserAgent   = "UserAgent"
+	clientMemberJSONEncoder = "JSONEncoder"
+	clientMemberJSONDecoder = "JSONDecoder"
+	clientMemberAcquireArgs = "AcquireArgs"
+	clientMemberFieldname   = "Fieldname"
+	clientMemberContent     = "Content"
+)
+
 // Agent methods that take any number of cookies.
 const (
-	methodCookies      = "Cookies"
-	methodCookiesBytes = "CookiesBytesKV"
+	clientMethodCookies      = "Cookies"
+	clientMethodCookiesBytes = "CookiesBytesKV"
 )
 
 // The fields of a client.Config that hold more than one value or that other
 // code refers to.
 const (
-	fieldHeader = "Header"
-	fieldCookie = "Cookie"
-	fieldBody   = "Body"
+	clientFieldHeader = "Header"
+	clientFieldCookie = "Cookie"
+	clientFieldBody   = "Body"
 )
 
 // clientBodyKind says how an op sets the request body.
@@ -40,6 +51,8 @@ const (
 	clientBodyRaw
 	clientBodyJSON
 	clientBodyXML
+	clientBodyForm
+	clientBodyMultipart
 )
 
 // clientBodyMedia is the media type the v3 client gives a body it encodes.
@@ -49,6 +62,10 @@ func clientBodyMedia(k clientBodyKind) string {
 		return "application/json"
 	case clientBodyXML:
 		return "application/xml"
+	case clientBodyForm:
+		return "application/x-www-form-urlencoded"
+	case clientBodyMultipart:
+		return "multipart/form-data"
 	default:
 		return ""
 	}
@@ -73,15 +90,17 @@ type clientParam struct{ key, val string }
 // clientOp is one setting of a v2 request that the migration understood: the
 // v3 spelling of it on a request and, when there is one, in a client.Config.
 type clientOp struct {
+	// urlArg is the argument of an op that sets the URL.
+	urlArg ast.Expr
+	// stmt renders a complete statement for the request recv, for the ops that
+	// cannot be chained.
+	stmt func(recv string) string
 	// method is the v2 method the op comes from.
 	method string
 	// req is the call to make on the request, without the receiver.
 	req string
 	// cli is the call to make on the client that sends the request.
 	cli string
-	// stmt is a complete statement, with %[1]s standing for the request, for the
-	// ops that cannot be chained.
-	stmt string
 	// note is reported when the op was migrated but the behavior differs.
 	note string
 	// header is the lower-case name of the literal header the op sets, and
@@ -90,6 +109,8 @@ type clientOp struct {
 	headerVal string
 	// rawQuery is the literal query string of a QueryString op.
 	rawQuery string
+	// files are the FormFile variables the op hands to the request.
+	files []*clientFormFile
 	// cfg is the client.Config form of the op, empty when it has none.
 	cfg []clientCfg
 	// query holds the pairs of a literal query string.
@@ -97,13 +118,15 @@ type clientOp struct {
 	// line is the line of the call in the source.
 	line int
 	body clientBodyKind
+	// form says what the op does for a form request.
+	form clientFormRole
 	// hasQuery marks a QueryString op.
 	hasQuery bool
 	// dropped marks an op that has no v3 call at all.
 	dropped bool
 	// setsMethod marks an op that changes the HTTP method.
 	setsMethod bool
-	// setsURL marks an op that sets the URL.
+	// setsURL marks an op that sets the URL, urlArg is its argument.
 	setsURL bool
 }
 
@@ -174,24 +197,25 @@ type clientUnsupported string
 var clientAgentArity = map[string]int{
 	"Set": 2, "SetBytesK": 2, "SetBytesV": 2, "SetBytesKV": 2,
 	"Add": 2, "AddBytesK": 2, "AddBytesV": 2, "AddBytesKV": 2,
-	"ConnectionClose": 0, "UserAgent": 1, "UserAgentBytes": 1,
+	"ConnectionClose": 0, clientMemberUserAgent: 1, "UserAgentBytes": 1,
 	"Cookie": 2, "CookieBytesK": 2, "CookieBytesKV": 2,
 	"Referer": 1, "RefererBytes": 1, "ContentType": 1, "ContentTypeBytes": 1,
 	"QueryString": 1, "QueryStringBytes": 1, "BasicAuth": 2, "BasicAuthBytes": 2,
 	"BodyString": 1, "Body": 1, "BodyStream": 2, "XML": 1, "Boundary": 1,
+	"Form": 1, "MultipartForm": 1,
 	"Timeout": 1, "Reuse": 0, "InsecureSkipVerify": 0, "TLSConfig": 1,
-	"MaxRedirectsCount": 1, "JSONEncoder": 1, "JSONDecoder": 1,
+	"MaxRedirectsCount": 1, clientMemberJSONEncoder: 1, clientMemberJSONDecoder: 1,
 }
 
-// hostReason is the explanation for the Host setters, which v3 cannot express.
-const hostReason = "Host(): the v3 client cannot send a Host header that differs from the URL " +
+// clientHostReason is the explanation for the Host setters, which v3 cannot express.
+const clientHostReason = "Host(): the v3 client cannot send a Host header that differs from the URL " +
 	"(use a custom dialer, client.New().SetDial(...), with the virtual host in the URL)"
 
 // agentOp maps the call of the v2 Agent method m to the v3 spelling.
-func (f *clientFile) agentOp(m string, call *ast.CallExpr) (op clientOp, reason clientUnsupported) {
+func (f *clientFile) agentOp(m string, call *ast.CallExpr, it *clientItem) (op clientOp, reason clientUnsupported) {
 	args := call.Args
 	op = clientOp{method: m, line: f.g.line(call.Pos())}
-	if call.Ellipsis.IsValid() && m != methodCookies && m != methodCookiesBytes {
+	if call.Ellipsis.IsValid() && m != clientMethodCookies && m != clientMethodCookiesBytes {
 		return op, clientUnsupported("a spread argument of " + m + "()")
 	}
 	if want, fixed := clientAgentArity[m]; fixed && len(args) != want {
@@ -202,63 +226,63 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr) (op clientOp, reason 
 
 	switch m {
 	case "Set":
-		return headerOp(op, "SetHeader", args[0], a(0), a(1), true)
+		return clientHeaderOp(op, "SetHeader", args[0], a(0), a(1), true)
 	case "SetBytesK":
-		return headerOp(op, "SetHeader", args[0], s(0), a(1), true)
+		return clientHeaderOp(op, "SetHeader", args[0], s(0), a(1), true)
 	case "SetBytesV":
-		return headerOp(op, "SetHeader", args[0], a(0), s(1), true)
+		return clientHeaderOp(op, "SetHeader", args[0], a(0), s(1), true)
 	case "SetBytesKV":
-		return headerOp(op, "SetHeader", args[0], s(0), s(1), true)
+		return clientHeaderOp(op, "SetHeader", args[0], s(0), s(1), true)
 	case "Add":
-		return headerOp(op, "AddHeader", args[0], a(0), a(1), false)
+		return clientHeaderOp(op, "AddHeader", args[0], a(0), a(1), false)
 	case "AddBytesK":
-		return headerOp(op, "AddHeader", args[0], s(0), a(1), false)
+		return clientHeaderOp(op, "AddHeader", args[0], s(0), a(1), false)
 	case "AddBytesV":
-		return headerOp(op, "AddHeader", args[0], a(0), s(1), false)
+		return clientHeaderOp(op, "AddHeader", args[0], a(0), s(1), false)
 	case "AddBytesKV":
-		return headerOp(op, "AddHeader", args[0], s(0), s(1), false)
+		return clientHeaderOp(op, "AddHeader", args[0], s(0), s(1), false)
 	case "ContentType":
-		return headerOp(op, "SetHeader", nil, `"Content-Type"`, a(0), true)
+		return clientHeaderOp(op, "SetHeader", nil, `"Content-Type"`, a(0), true)
 	case "ContentTypeBytes":
-		return headerOp(op, "SetHeader", nil, `"Content-Type"`, s(0), true)
+		return clientHeaderOp(op, "SetHeader", nil, `"Content-Type"`, s(0), true)
 	case "ConnectionClose":
-		return headerOp(op, "SetHeader", nil, `"Connection"`, `"close"`, true)
-	case "UserAgent":
-		return scalarOp(op, "UserAgent", a(0))
+		return clientHeaderOp(op, "SetHeader", nil, `"Connection"`, `"close"`, true)
+	case clientMemberUserAgent:
+		return clientScalarOp(op, clientMemberUserAgent, a(0))
 	case "UserAgentBytes":
-		return scalarOp(op, "UserAgent", s(0))
+		return clientScalarOp(op, clientMemberUserAgent, s(0))
 	case "Referer":
-		return scalarOp(op, "Referer", a(0))
+		return clientScalarOp(op, "Referer", a(0))
 	case "RefererBytes":
-		return scalarOp(op, "Referer", s(0))
+		return clientScalarOp(op, "Referer", s(0))
 	case "Timeout":
-		return scalarOp(op, "Timeout", a(0))
+		return clientScalarOp(op, "Timeout", a(0))
 	case "MaxRedirectsCount":
-		return scalarOp(op, "MaxRedirects", a(0))
+		return clientScalarOp(op, "MaxRedirects", a(0))
 	case "Cookie":
-		return cookieOp(op, a(0), a(1))
+		return clientCookieOp(op, a(0), a(1))
 	case "CookieBytesK":
-		return cookieOp(op, s(0), a(1))
+		return clientCookieOp(op, s(0), a(1))
 	case "CookieBytesKV":
-		return cookieOp(op, s(0), s(1))
-	case methodCookies, methodCookiesBytes:
+		return clientCookieOp(op, s(0), s(1))
+	case clientMethodCookies, clientMethodCookiesBytes:
 		return f.cookiesOp(op, call)
 	case "BasicAuth":
 		return f.basicAuthOp(op, args[0], args[1], false)
 	case "BasicAuthBytes":
 		return f.basicAuthOp(op, args[0], args[1], true)
 	case "QueryString", "QueryStringBytes":
-		return queryOp(op, args[0])
+		return clientQueryOp(op, args[0])
 	case "BodyString":
 		op.req = "SetRawBody(" + f.bytesOf(args[0]) + ")"
 		op.body = clientBodyRaw
-		op.cfg = []clientCfg{{field: fieldBody, val: a(0)}}
+		op.cfg = []clientCfg{{field: clientFieldBody, val: a(0)}}
 	case "Body":
 		op.req = "SetRawBody(" + a(0) + ")"
 		op.body = clientBodyRaw
-		op.cfg = []clientCfg{{field: fieldBody, val: f.rawBodyCfg(args[0])}}
+		op.cfg = []clientCfg{{field: clientFieldBody, val: f.rawBodyCfg(args[0])}}
 	case "BodyStream":
-		op.stmt = "%[1]s.RawRequest.SetBodyStream(" + a(0) + ", " + a(1) + ")"
+		op.stmt = clientBodyStreamStmt(a(0), a(1))
 		op.body = clientBodyRaw
 	case "JSON":
 		if len(args) != 1 {
@@ -267,13 +291,24 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr) (op clientOp, reason 
 		op.req = "SetJSON(" + a(0) + ")"
 		op.body = clientBodyJSON
 		if f.jsonConfigSafe(args[0]) {
-			op.cfg = []clientCfg{{field: fieldBody, val: a(0)}}
+			op.cfg = []clientCfg{{field: clientFieldBody, val: a(0)}}
 		}
 	case "XML":
 		op.req = "SetXML(" + a(0) + ")"
 		op.body = clientBodyXML
 	case "Boundary":
 		op.req = "SetBoundary(" + a(0) + ")"
+		op.form = clientFormBoundary
+	case "Form":
+		return f.formFieldsOp(op, args[0], false)
+	case "MultipartForm":
+		return f.formFieldsOp(op, args[0], true)
+	case "SendFile":
+		return f.sendFileOp(op, call, false)
+	case "SendFiles":
+		return f.sendFileOp(op, call, true)
+	case "FileData":
+		return f.fileDataOp(op, call, it)
 	case "Reuse":
 		op.dropped = true
 	case "Debug":
@@ -285,12 +320,12 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr) (op clientOp, reason 
 		op.cli = "SetTLSConfig(&" + tls + ".Config{InsecureSkipVerify: true})"
 	case "TLSConfig":
 		op.cli = "SetTLSConfig(" + a(0) + ")"
-	case "JSONEncoder":
+	case clientMemberJSONEncoder:
 		op.cli = "SetJSONMarshal(" + a(0) + ")"
-	case "JSONDecoder":
+	case clientMemberJSONDecoder:
 		op.cli = "SetJSONUnmarshal(" + a(0) + ")"
 	case "Host", "HostBytes":
-		return op, hostReason
+		return op, clientHostReason
 	case "SetResponse", "Dest", "RetryIf":
 		return op, clientUnsupported(m + "() has no v3 equivalent (use the client.Response that Send returns, or client.NewWithHostClient for fasthttp tuning)")
 	default:
@@ -299,9 +334,9 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr) (op clientOp, reason 
 	return op, ""
 }
 
-// scalarOp builds an op that sets one scalar field of client.Config through the
+// clientScalarOp builds an op that sets one scalar field of client.Config through the
 // request method of the same name.
-func scalarOp(op clientOp, field, val string) (clientOp, clientUnsupported) {
+func clientScalarOp(op clientOp, field, val string) (clientOp, clientUnsupported) {
 	switch field {
 	case "MaxRedirects":
 		op.req = "SetMaxRedirects(" + val + ")"
@@ -312,11 +347,11 @@ func scalarOp(op clientOp, field, val string) (clientOp, clientUnsupported) {
 	return op, ""
 }
 
-// headerOp builds the op of a header setter. keyExpr is the argument that
+// clientHeaderOp builds the op of a header setter. keyExpr is the argument that
 // names the header, nil when the name is fixed; key and val are the rendered
 // arguments of the v3 call. replace says the call sets instead of adding, which
 // is the only form a client.Config has.
-func headerOp(op clientOp, call string, keyExpr ast.Expr, key, val string, replace bool) (clientOp, clientUnsupported) {
+func clientHeaderOp(op clientOp, call string, keyExpr ast.Expr, key, val string, replace bool) (clientOp, clientUnsupported) {
 	if keyExpr != nil {
 		op.header = clientHeaderKey(keyExpr)
 	} else if k, err := strconv.Unquote(key); err == nil {
@@ -330,15 +365,15 @@ func headerOp(op clientOp, call string, keyExpr ast.Expr, key, val string, repla
 	}
 	op.req = fmt.Sprintf("%s(%s, %s)", call, key, val)
 	if replace {
-		op.cfg = []clientCfg{{field: fieldHeader, key: key, val: val}}
+		op.cfg = []clientCfg{{field: clientFieldHeader, key: key, val: val}}
 	}
 	return op, ""
 }
 
-// cookieOp builds the op of a cookie setter.
-func cookieOp(op clientOp, key, val string) (clientOp, clientUnsupported) {
+// clientCookieOp builds the op of a cookie setter.
+func clientCookieOp(op clientOp, key, val string) (clientOp, clientUnsupported) {
 	op.req = fmt.Sprintf("SetCookie(%s, %s)", key, val)
-	op.cfg = []clientCfg{{field: fieldCookie, key: key, val: val}}
+	op.cfg = []clientCfg{{field: clientFieldCookie, key: key, val: val}}
 	return op, ""
 }
 
@@ -348,7 +383,7 @@ func (f *clientFile) cookiesOp(op clientOp, call *ast.CallExpr) (clientOp, clien
 	if call.Ellipsis.IsValid() {
 		return op, clientUnsupported("Cookies() with a spread argument")
 	}
-	asBytes := op.method == methodCookiesBytes
+	asBytes := op.method == clientMethodCookiesBytes
 	var calls []string
 	for i := 1; i < len(call.Args); i += 2 {
 		key, val := f.text(call.Args[i-1]), f.text(call.Args[i])
@@ -356,7 +391,7 @@ func (f *clientFile) cookiesOp(op clientOp, call *ast.CallExpr) (clientOp, clien
 			key, val = f.strOf(call.Args[i-1]), f.strOf(call.Args[i])
 		}
 		calls = append(calls, fmt.Sprintf("SetCookie(%s, %s)", key, val))
-		op.cfg = append(op.cfg, clientCfg{field: fieldCookie, key: key, val: val})
+		op.cfg = append(op.cfg, clientCfg{field: clientFieldCookie, key: key, val: val})
 	}
 	if len(calls) == 0 {
 		op.dropped = true
@@ -390,13 +425,13 @@ func (f *clientFile) basicAuthOp(op clientOp, user, pass ast.Expr, asBytes bool)
 	}
 	op.header = "authorization"
 	op.req = fmt.Sprintf(`SetHeader("Authorization", %s)`, val)
-	op.cfg = []clientCfg{{field: fieldHeader, key: `"Authorization"`, val: val}}
+	op.cfg = []clientCfg{{field: clientFieldHeader, key: `"Authorization"`, val: val}}
 	return op, ""
 }
 
-// queryOp builds the op of a literal query string. v2 replaced the query of the
+// clientQueryOp builds the op of a literal query string. v2 replaced the query of the
 // URL with the string it was given, sent as is.
-func queryOp(op clientOp, arg ast.Expr) (clientOp, clientUnsupported) {
+func clientQueryOp(op clientOp, arg ast.Expr) (clientOp, clientUnsupported) {
 	if x, isConv := clientBytesConversion(arg); isConv {
 		arg = x
 	}
@@ -550,6 +585,7 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 		if arity(1) && u.allowsURI() {
 			op.req = "SetURL(" + nameOrBytes(0) + ")"
 			op.setsURL = true
+			op.urlArg = args[0]
 			return op, ""
 		}
 	case "Header.Set", "Header.Add", "Header.SetBytesKV", "Header.AddBytesKV":
@@ -558,15 +594,15 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 			if strings.HasPrefix(path, "Header.Add") {
 				call = "AddHeader"
 			}
-			return headerOp(op, call, args[0], nameOrBytes(0), nameOrBytes(1), true)
+			return clientHeaderOp(op, call, args[0], nameOrBytes(0), nameOrBytes(1), true)
 		}
 	case "Header.SetContentType", "Header.SetContentTypeBytes":
 		if arity(1) {
-			return headerOp(op, "SetHeader", nil, `"Content-Type"`, nameOrBytes(0), true)
+			return clientHeaderOp(op, "SetHeader", nil, `"Content-Type"`, nameOrBytes(0), true)
 		}
 	case "Header.SetConnectionClose":
 		if arity(0) {
-			return headerOp(op, "SetHeader", nil, `"Connection"`, `"close"`, true)
+			return clientHeaderOp(op, "SetHeader", nil, `"Connection"`, `"close"`, true)
 		}
 	case "Header.SetUserAgent", "Header.SetUserAgentBytes":
 		if arity(1) {
@@ -580,7 +616,7 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 		}
 	case "Header.SetCookie":
 		if arity(2) {
-			return cookieOp(op, a(0), a(1))
+			return clientCookieOp(op, a(0), a(1))
 		}
 	case "SetBody":
 		if arity(1) {
@@ -596,7 +632,7 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 		}
 	case "SetBodyStream":
 		if arity(2) {
-			op.stmt = "%[1]s.RawRequest.SetBodyStream(" + a(0) + ", " + a(1) + ")"
+			op.stmt = clientBodyStreamStmt(a(0), a(1))
 			op.body = clientBodyRaw
 			return op, ""
 		}
@@ -610,7 +646,15 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 			return op, ""
 		}
 	case "Header.SetHost", "Header.SetHostBytes", "URI().SetHost", "URI().SetHostBytes":
-		return op, hostReason
+		return op, clientHostReason
 	}
 	return op, clientUnsupported("req." + path + "()")
+}
+
+// clientBodyStreamStmt renders the statement that sets a body stream on the fasthttp
+// request below a client.Request.
+func clientBodyStreamStmt(stream, size string) func(recv string) string {
+	return func(recv string) string {
+		return recv + ".RawRequest.SetBodyStream(" + stream + ", " + size + ")"
+	}
 }

@@ -12,18 +12,18 @@ import (
 type clientErrsMode int
 
 const (
-	// errsNone: the errors are not used.
-	errsNone clientErrsMode = iota
-	// errsRewrite: every use was rewritten to the error of the v3 call.
-	errsRewrite
-	// errsOwn: the slice is kept, declared by the migrated code.
-	errsOwn
-	// errsExisting: the slice is kept, it was declared before.
-	errsExisting
+	// clientErrsNone: the errors are not used.
+	clientErrsNone clientErrsMode = iota
+	// clientErrsRewrite: every use was rewritten to the error of the v3 call.
+	clientErrsRewrite
+	// clientErrsOwn: the slice is kept, declared by the migrated code.
+	clientErrsOwn
+	// clientErrsExisting: the slice is kept, it was declared before.
+	clientErrsExisting
 )
 
-// termSide is one of the three values a v2 request returns.
-type termSide struct {
+// clientTermSide is one of the three values a v2 request returns.
+type clientTermSide struct {
 	text  string
 	blank bool
 	isNew bool
@@ -37,11 +37,11 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 	l := it.list
 	define := t.assign != nil && t.assign.Tok == token.DEFINE
 
-	var sides [3]termSide
+	var sides [3]clientTermSide
 	if t.assign != nil {
 		for i, lhs := range t.assign.Lhs {
 			id, isIdent := lhs.(*ast.Ident)
-			sides[i] = termSide{text: f.text(lhs), blank: isIdent && id.Name == "_"}
+			sides[i] = clientTermSide{text: f.text(lhs), blank: isIdent && id.Name == "_"}
 			sides[i].isNew = define && isIdent && !sides[i].blank &&
 				(t.ifStmt != nil || !clientDeclaredBefore(l, it.idx, id.Name))
 		}
@@ -51,7 +51,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		}
 	}
 	status, body, errs := sides[0], sides[1], sides[2]
-	respUsed := !status.blank || !body.blank || t.kind == termStruct
+	respUsed := !status.blank || !body.blank || t.kind == clientTermStruct
 
 	// The code that follows the statement sees the error through the name that
 	// is picked here.
@@ -80,7 +80,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		respName = l.fn.fresh("resp")
 	}
 
-	mode := errsNone
+	mode := clientErrsNone
 	var rewrites []clientEdit
 	if !errs.blank {
 		mode, rewrites = e.errsPlan(it, errs, define, errName)
@@ -94,7 +94,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		lines = append(lines, pre)
 	}
 	switch {
-	case !respUsed && mode == errsNone:
+	case !respUsed && mode == clientErrsNone:
 		lines = append(lines, "_, _ = "+call)
 	default:
 		op := ":="
@@ -109,21 +109,21 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 	}
 
 	bodyType, bodyZero, bodyExpr := "[]byte", "nil", respName+".Body()"
-	if t.kind == termString {
+	if t.kind == clientTermString {
 		bodyType, bodyZero, bodyExpr = "string", `""`, "string("+respName+".Body())"
 	}
 	if !status.blank {
-		lines = append(lines, declareOrReset(status, "int", "0"))
+		lines = append(lines, clientDeclareOrReset(status, "int", "0"))
 	}
 	if !body.blank {
-		lines = append(lines, declareOrReset(body, bodyType, bodyZero))
+		lines = append(lines, clientDeclareOrReset(body, bodyType, bodyZero))
 	}
 	switch mode {
-	case errsOwn:
+	case clientErrsOwn:
 		lines = append(lines, "var "+errs.text+" []error")
-	case errsExisting:
+	case clientErrsExisting:
 		lines = append(lines, errs.text+" = nil")
-	case errsNone, errsRewrite:
+	case clientErrsNone, clientErrsRewrite:
 	}
 
 	var guard []string
@@ -133,7 +133,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 	if !body.blank {
 		guard = append(guard, body.text+" = "+bodyExpr)
 	}
-	if t.kind == termStruct {
+	if t.kind == clientTermStruct {
 		guard = append(guard, errName+" = "+respName+".JSON("+t.structArg+")")
 	}
 	if len(guard) > 0 {
@@ -141,7 +141,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		lines = append(lines, guard...)
 		lines = append(lines, "}")
 	}
-	if mode == errsOwn || mode == errsExisting {
+	if mode == clientErrsOwn || mode == clientErrsExisting {
 		lines = append(lines, "if "+errName+" != nil {", errs.text+" = []error{"+errName+"}", "}")
 	}
 
@@ -152,7 +152,7 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		if !errExists {
 			names = append(names, errName)
 		}
-		wrap = define && mentioned(l, t.ifStmt, names)
+		wrap = define && clientMentioned(l, t.ifStmt, names)
 		e.hoist(t, block, wrap)
 	} else {
 		f.replaceStmt(e.id, it.stmt, block)
@@ -179,9 +179,9 @@ func (e *clientEmit) hoist(t *clientTerm, block string, wrap bool) {
 	f.edits.replace(e.id, f.g.offset(t.assign.Pos()), f.g.offset(t.ifStmt.Cond.Pos()), "")
 }
 
-// mentioned reports whether one of names appears in the list outside of the
+// clientMentioned reports whether one of names appears in the list outside of the
 // statement skip.
-func mentioned(l clientList, skip ast.Stmt, names []string) bool {
+func clientMentioned(l clientList, skip ast.Stmt, names []string) bool {
 	for _, n := range names {
 		if slices.Contains(l.bound, n) {
 			return true
@@ -205,9 +205,9 @@ func mentioned(l clientList, skip ast.Stmt, names []string) bool {
 	return false
 }
 
-// declareOrReset declares a variable the statement introduced, or resets one
+// clientDeclareOrReset declares a variable the statement introduced, or resets one
 // that already existed to the value a failed v2 request returned.
-func declareOrReset(s termSide, typ, zero string) string {
+func clientDeclareOrReset(s clientTermSide, typ, zero string) string {
 	if s.isNew {
 		return "var " + s.text + " " + typ
 	}
@@ -219,7 +219,7 @@ func declareOrReset(s termSide, typ, zero string) string {
 func (u *clientUnit) parseHandler(it *clientItem) *clientParseCheck {
 	var first *clientItem
 	for _, other := range u.items {
-		if other.kind == itemTerm {
+		if other.kind == clientItemTerm {
 			first = other
 			break
 		}
@@ -228,7 +228,7 @@ func (u *clientUnit) parseHandler(it *clientItem) *clientParseCheck {
 		return nil
 	}
 	for _, p := range u.items {
-		if p.kind == itemParse && p.parse.handler != nil {
+		if p.kind == clientItemParse && p.parse.handler != nil {
 			return p.parse
 		}
 	}
@@ -290,7 +290,7 @@ func (fn *clientFunc) reuseSafe(name string) bool {
 // uses of a variable that the migrated code does not need any more are
 // rewritten to the error of the v3 call; if one of them needs the slice, the
 // slice stays.
-func (e *clientEmit) errsPlan(it *clientItem, errs termSide, define bool, errName string) (clientErrsMode, []clientEdit) {
+func (e *clientEmit) errsPlan(it *clientItem, errs clientTermSide, define bool, errName string) (clientErrsMode, []clientEdit) {
 	f := e.f
 	l := it.list
 	t := it.term
@@ -300,7 +300,7 @@ func (e *clientEmit) errsPlan(it *clientItem, errs termSide, define bool, errNam
 		own = true
 	}
 	if !own {
-		return errsExisting, nil
+		return clientErrsExisting, nil
 	}
 
 	var refs []clientRef
@@ -322,7 +322,7 @@ func (e *clientEmit) errsPlan(it *clientItem, errs termSide, define bool, errNam
 		ed, ok := f.errsRewrite(r, errName)
 		if !ok {
 			delete(f.errsGone[l.owner], errs.text)
-			return errsOwn, nil
+			return clientErrsOwn, nil
 		}
 		edits = append(edits, ed)
 	}
@@ -330,7 +330,7 @@ func (e *clientEmit) errsPlan(it *clientItem, errs termSide, define bool, errNam
 		f.errsGone[l.owner] = map[string]bool{}
 	}
 	f.errsGone[l.owner][errs.text] = true
-	return errsRewrite, edits
+	return clientErrsRewrite, edits
 }
 
 // clientFormatSinks are the functions that only format the errors they get.

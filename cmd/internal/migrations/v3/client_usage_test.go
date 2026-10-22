@@ -17,7 +17,7 @@ import (
 func Test_MigrateClientUsage_DocsExample(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import (
 	"encoding/json"
@@ -48,7 +48,7 @@ func getSomething(c *fiber.Ctx) (err error) {
 
 	// The []error is part of the JSON the handler answers with: it stays a
 	// slice. err is the named result, so the request gets an error of its own.
-	assertClientSource(t, `package main
+	clientAssertSource(t, `package main
 
 import (
 	"encoding/json"
@@ -101,7 +101,7 @@ func handler(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusOK)
 }
 `
-	run := migrateClientSource(t, src)
+	run := clientMigrateSource(t, src)
 	assert.Equal(t, src, run.files["main.go"])
 	assert.Empty(t, run.output)
 	assert.Empty(t, run.notes)
@@ -110,7 +110,7 @@ func handler(c fiber.Ctx) error {
 func Test_MigrateClientUsage_FluentChains(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import (
 	"fmt"
@@ -165,7 +165,7 @@ func text(url string) (string, error) {
 }
 `)
 
-	assertClientSource(t, `package main
+	clientAssertSource(t, `package main
 
 import (
 	"fmt"
@@ -246,7 +246,7 @@ func text(url string) (string, error) {
 func Test_MigrateClientUsage_StringIsNotTrimmed(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import "github.com/gofiber/fiber/v2"
 
@@ -264,7 +264,7 @@ func get(url string) string {
 func Test_MigrateClientUsage_ErrsIdioms(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import (
 	"errors"
@@ -312,7 +312,7 @@ func text(url string) string {
 }
 `)
 
-	assertClientSource(t, `package main
+	clientAssertSource(t, `package main
 
 import (
 	"fmt"
@@ -371,7 +371,7 @@ func text(url string) string {
 func Test_MigrateClientUsage_ErrsSliceStaysWhenItIsNeeded(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import (
 	"errors"
@@ -410,7 +410,7 @@ func wrap(url string) Response {
 }
 `)
 
-	assertClientSource(t, `package main
+	clientAssertSource(t, `package main
 
 import (
 	"errors"
@@ -465,7 +465,7 @@ func wrap(url string) Response {
 func Test_MigrateClientUsage_ErrsOfOtherFunctionsAreLeftAlone(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import (
 	"errors"
@@ -475,7 +475,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func validate(names []string) error {
+func clientValidate(names []string) error {
 	var errs []error
 	for _, n := range names {
 		if n == "" {
@@ -511,7 +511,7 @@ func load(path string) ([]byte, error) {
 `)
 
 	got := run.files["main.go"]
-	assert.Contains(t, got, `return errors.Join(errs...)`, "validate keeps its own errs")
+	assert.Contains(t, got, `return errors.Join(errs...)`, "clientValidate keeps its own errs")
 	assert.Contains(t, got, `len(errs), errs)`, "report keeps its own errs")
 	assert.Contains(t, got, "resp, err := client.Get(url)", "ping uses err: no err is used around it")
 	assert.Contains(t, got, `data, err := os.ReadFile(path)`)
@@ -559,7 +559,7 @@ func Test_MigrateClientUsage_ManyRequestsInOneFile(t *testing.T) {
 func Test_MigrateClientUsage_KeepsUnrelatedFunctions(t *testing.T) {
 	t.Parallel()
 
-	run := migrateClientSource(t, `package main
+	run := clientMigrateSource(t, `package main
 
 import (
 	"fmt"
@@ -623,7 +623,7 @@ func main() {
 	require.NoError(t, err)
 }
 
-func gofmtSource(t *testing.T, src string) string {
+func clientGofmtSource(t *testing.T, src string) string {
 	t.Helper()
 
 	formatted, err := format.Source([]byte(src))

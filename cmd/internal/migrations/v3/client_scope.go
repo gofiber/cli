@@ -346,9 +346,9 @@ func clientDefineStaysValid(s ast.Stmt, name string, declared func(string) bool)
 	return false
 }
 
-// newClientFunc collects the facts about a top level declaration that the
+// clientNewFunc collects the facts about a top level declaration that the
 // naming decisions need.
-func newClientFunc(root ast.Node) *clientFunc {
+func clientNewFunc(root ast.Node) *clientFunc {
 	fn := &clientFunc{mentions: map[string]bool{}, closureNames: map[string]bool{}}
 
 	var visit func(n ast.Node, inClosure bool)

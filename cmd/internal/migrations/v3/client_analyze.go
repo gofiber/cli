@@ -51,6 +51,8 @@ func (u *clientUnit) rootNode() ast.Node {
 	switch {
 	case u.root.sel != nil:
 		return u.root.sel
+	case u.anchor != nil:
+		return u.anchor
 	case u.create != nil:
 		return u.create
 	case len(u.items) > 0:
@@ -63,7 +65,7 @@ func (u *clientUnit) rootNode() ast.Node {
 // understood.
 func (f *clientFile) analyze(u *clientUnit) clientUnsupported {
 	for _, c := range u.creationCalls {
-		op, reason := f.agentOp(c.name, c.call)
+		op, reason := f.agentOp(c.name, c.call, nil)
 		if reason != "" {
 			return reason
 		}
@@ -73,13 +75,9 @@ func (f *clientFile) analyze(u *clientUnit) clientUnsupported {
 		if reason := f.analyzeUses(u); reason != "" {
 			return reason
 		}
-	} else {
-		it := u.items[0]
-		it.ops = u.ops
-		u.ops = nil
 	}
 	slices.SortStableFunc(u.items, func(a, b *clientItem) int { return cmp.Compare(a.stmt.Pos(), b.stmt.Pos()) })
-	return validate(u)
+	return clientValidate(u)
 }
 
 // analyzeUses classifies the statements that use the agent variable and the
@@ -102,7 +100,7 @@ func (f *clientFile) analyzeUses(u *clientUnit) clientUnsupported {
 // classifyRefs classifies the statements that hold refs, the references to
 // the variable name declared in the list base.
 func (f *clientFile) classifyRefs(u *clientUnit, base clientList, refs []clientRef, name string, isAlias bool) clientUnsupported {
-	groups, ok := groupRefs(base, refs)
+	groups, ok := clientGroupRefs(base, refs)
 	if !ok {
 		return clientErrUse
 	}
@@ -115,7 +113,7 @@ func (f *clientFile) classifyRefs(u *clientUnit, base clientList, refs []clientR
 }
 
 // classify decides what a statement that uses the request does with it.
-func (f *clientFile) classify(u *clientUnit, g refGroup, name string, isAlias bool) clientUnsupported {
+func (f *clientFile) classify(u *clientUnit, g clientRefGroup, name string, isAlias bool) clientUnsupported {
 	for _, r := range g.refs {
 		if slices.ContainsFunc(r.stack, func(n ast.Node) bool { _, ok := n.(*ast.FuncLit); return ok }) {
 			return clientErrClosure
@@ -135,7 +133,7 @@ func (f *clientFile) classify(u *clientUnit, g refGroup, name string, isAlias bo
 	case *ast.DeferStmt:
 		consumed, reason = f.classifyDefer(it, s, name)
 	case *ast.ReturnStmt:
-		consumed, reason = classifyReturn(it, s, name)
+		consumed, reason = clientClassifyReturn(it, s, name)
 	default:
 		return clientErrUse
 	}
@@ -179,8 +177,8 @@ type clientReqPath struct {
 	viaRequest bool
 }
 
-// peelReq takes apart a call on the fasthttp request of an agent.
-func peelReq(call *ast.CallExpr) (clientReqPath, bool) {
+// clientPeelReq takes apart a call on the fasthttp request of an agent.
+func clientPeelReq(call *ast.CallExpr) (clientReqPath, bool) {
 	sel, isSel := call.Fun.(*ast.SelectorExpr)
 	if !isSel {
 		return clientReqPath{}, false
@@ -197,7 +195,7 @@ func peelReq(call *ast.CallExpr) (clientReqPath, bool) {
 			if !isSel || len(x.Args) != 0 {
 				return clientReqPath{}, false
 			}
-			if id, isIdent := s.X.(*ast.Ident); isIdent && s.Sel.Name == methodRequest {
+			if id, isIdent := s.X.(*ast.Ident); isIdent && s.Sel.Name == clientMethodRequest {
 				return clientReqPath{root: id, path: path, viaRequest: true}, true
 			}
 			path = s.Sel.Name + "()." + path
@@ -217,15 +215,15 @@ func (f *clientFile) classifyExprStmt(u *clientUnit, it *clientItem, s *ast.Expr
 		return 0, clientErrUse
 	}
 	if f.isRelease(call, name) {
-		it.kind = itemDrop
+		it.kind = clientItemDrop
 		return 1, ""
 	}
-	if rp, ok := peelReq(call); ok && rp.root.Name == name && rp.viaRequest == !isAlias {
+	if rp, ok := clientPeelReq(call); ok && rp.root.Name == name && rp.viaRequest == !isAlias {
 		op, reason := f.reqOp(rp.path, call, u)
 		if reason != "" {
 			return 0, reason
 		}
-		it.kind = itemSetter
+		it.kind = clientItemSetter
 		it.ops = []clientOp{op}
 		return 1, ""
 	}
@@ -236,8 +234,8 @@ func (f *clientFile) classifyExprStmt(u *clientUnit, it *clientItem, s *ast.Expr
 	if !ok || ch.root.kind != clientVar || ch.root.ident.Name != name || len(ch.calls) == 0 {
 		return 0, clientErrUse
 	}
-	if len(ch.calls) == 1 && ch.calls[0].name == methodParse {
-		it.kind = itemParse
+	if len(ch.calls) == 1 && ch.calls[0].name == clientMethodParse {
+		it.kind = clientItemParse
 		it.parse = &clientParseCheck{}
 		return 1, ""
 	}
@@ -252,7 +250,7 @@ func (f *clientFile) chainItem(it *clientItem, ch clientChain, term *clientTerm)
 	if last != nil {
 		calls = calls[:len(calls)-1]
 		term.kind = clientTerminalKind(last.name)
-		if term.kind == termStruct {
+		if term.kind == clientTermStruct {
 			if len(last.call.Args) != 1 || last.call.Ellipsis.IsValid() {
 				return 0, clientErrUse
 			}
@@ -260,17 +258,17 @@ func (f *clientFile) chainItem(it *clientItem, ch clientChain, term *clientTerm)
 		}
 	}
 	for _, c := range calls {
-		op, reason := f.agentOp(c.name, c.call)
+		op, reason := f.agentOp(c.name, c.call, it)
 		if reason != "" {
 			return 0, reason
 		}
 		it.ops = append(it.ops, op)
 	}
 	if last == nil {
-		it.kind = itemSetter
+		it.kind = clientItemSetter
 		return 1, ""
 	}
-	it.kind = itemTerm
+	it.kind = clientItemTerm
 	it.term = term
 	return 1, ""
 }
@@ -282,12 +280,12 @@ func (f *clientFile) classifyAssign(u *clientUnit, it *clientItem, s *ast.Assign
 	}
 
 	// The Name field of an agent that was just acquired is its User-Agent.
-	if sel, ok := s.Lhs[0].(*ast.SelectorExpr); ok && len(s.Lhs) == 1 && s.Tok == token.ASSIGN && isIdentNamed(sel.X, name) && sel.Sel.Name == "Name" {
+	if sel, ok := s.Lhs[0].(*ast.SelectorExpr); ok && len(s.Lhs) == 1 && s.Tok == token.ASSIGN && isIdentNamed(sel.X, name) && sel.Sel.Name == clientMemberName {
 		if !u.allowsURI() {
 			return 0, "setting Name of an agent that fiber.Get made, which has no effect in v2"
 		}
-		it.kind = itemSetter
-		it.ops = []clientOp{{method: "Name", req: "SetUserAgent(" + f.text(s.Rhs[0]) + ")", line: f.line(s)}}
+		it.kind = clientItemSetter
+		it.ops = []clientOp{{method: clientMemberName, req: "SetUserAgent(" + f.text(s.Rhs[0]) + ")", line: f.line(s)}}
 		return 1, ""
 	}
 
@@ -298,13 +296,13 @@ func (f *clientFile) classifyAssign(u *clientUnit, it *clientItem, s *ast.Assign
 
 	// The variable that holds the fasthttp request of the agent.
 	if s.Tok == token.DEFINE && len(s.Lhs) == 1 && len(call.Args) == 0 {
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == methodRequest && isIdentNamed(sel.X, name) {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == clientMethodRequest && isIdentNamed(sel.X, name) {
 			id, ok := s.Lhs[0].(*ast.Ident)
 			if !ok || id.Name == "_" {
 				return 0, clientErrUse
 			}
 			u.aliases = append(u.aliases, clientAlias{name: id.Name, list: it.list, idx: it.idx})
-			it.kind = itemDrop
+			it.kind = clientItemDrop
 			return 1, ""
 		}
 	}
@@ -313,11 +311,11 @@ func (f *clientFile) classifyAssign(u *clientUnit, it *clientItem, s *ast.Assign
 	if !ok || ch.root.kind != clientVar || ch.root.ident.Name != name || len(ch.calls) == 0 {
 		return 0, clientErrUse
 	}
-	isParse := len(ch.calls) == 1 && ch.calls[0].name == methodParse
+	isParse := len(ch.calls) == 1 && ch.calls[0].name == clientMethodParse
 
 	// The error of Parse is ignored.
 	if isParse && len(s.Lhs) == 1 && s.Tok == token.ASSIGN && isIdentNamed(s.Lhs[0], "_") {
-		it.kind = itemParse
+		it.kind = clientItemParse
 		it.parse = &clientParseCheck{}
 		return 1, ""
 	}
@@ -332,7 +330,7 @@ func (f *clientFile) classifyAssign(u *clientUnit, it *clientItem, s *ast.Assign
 		if !isIf || check.Init != nil || check.Else != nil || !clientIsNilCheck(check.Cond, id.Name) {
 			return 0, clientErrUse
 		}
-		it.kind = itemParse
+		it.kind = clientItemParse
 		it.parse = &clientParseCheck{handler: check.Body, check: check, errVar: id.Name, declared: true}
 		return 1, ""
 	}
@@ -363,10 +361,10 @@ func (f *clientFile) classifyIf(it *clientItem, s *ast.IfStmt, name string, isAl
 	}
 
 	// The error of Parse is declared and checked by the if statement.
-	if len(init.Lhs) == 1 && init.Tok == token.DEFINE && len(ch.calls) == 1 && ch.calls[0].name == methodParse && s.Else == nil {
+	if len(init.Lhs) == 1 && init.Tok == token.DEFINE && len(ch.calls) == 1 && ch.calls[0].name == clientMethodParse && s.Else == nil {
 		id, isIdent := init.Lhs[0].(*ast.Ident)
 		if isIdent && id.Name != "_" && clientIsNilCheck(s.Cond, id.Name) {
-			it.kind = itemParse
+			it.kind = clientItemParse
 			it.parse = &clientParseCheck{handler: s.Body, errVar: id.Name}
 			return 1, ""
 		}
@@ -388,12 +386,12 @@ func (f *clientFile) classifyDefer(it *clientItem, s *ast.DeferStmt, name string
 	if !f.isRelease(s.Call, name) {
 		return 0, clientErrUse
 	}
-	it.kind = itemDrop
+	it.kind = clientItemDrop
 	return 1, ""
 }
 
-// classifyReturn handles a return statement that hands the request on.
-func classifyReturn(it *clientItem, s *ast.ReturnStmt, name string) (int, clientUnsupported) {
+// clientClassifyReturn handles a return statement that hands the request on.
+func clientClassifyReturn(it *clientItem, s *ast.ReturnStmt, name string) (int, clientUnsupported) {
 	n := 0
 	for _, r := range s.Results {
 		if isIdentNamed(r, name) {
@@ -403,12 +401,12 @@ func classifyReturn(it *clientItem, s *ast.ReturnStmt, name string) (int, client
 	if n == 0 {
 		return 0, clientErrUse
 	}
-	it.kind = itemEscape
+	it.kind = clientItemEscape
 	return n, ""
 }
 
-// validate checks the request as a whole.
-func validate(u *clientUnit) clientUnsupported {
+// clientValidate checks the request as a whole.
+func clientValidate(u *clientUnit) clientUnsupported {
 	all := slices.Clone(u.ops)
 	for _, it := range u.items {
 		all = append(all, it.ops...)
@@ -418,6 +416,13 @@ func validate(u *clientUnit) clientUnsupported {
 			u.dedicated = true
 		}
 	}
+	if reason := clientValidateForms(u); reason != "" {
+		return reason
+	}
+	if u.retExpr != nil && slices.ContainsFunc(u.ops, func(op clientOp) bool { return op.stmt != nil }) {
+		return clientUnsupported(u.ops[slices.IndexFunc(u.ops, func(op clientOp) bool { return op.stmt != nil })].method +
+			"() needs a statement of its own, which cannot be part of a returned expression")
+	}
 	if u.dedicated && (u.kind == clientViaClient || u.kind == clientExternal) {
 		return "it changes the TLS or JSON settings of a client that other requests share"
 	}
@@ -426,8 +431,8 @@ func validate(u *clientUnit) clientUnsupported {
 	case clientFiberFunc, clientViaClient, clientFluent:
 		// The request is parsed when it is created, a later Parse never fails.
 		for _, it := range u.items {
-			if it.kind == itemParse {
-				it.kind = itemDrop
+			if it.kind == clientItemParse {
+				it.kind = clientItemDrop
 			}
 		}
 	default:
@@ -435,13 +440,13 @@ func validate(u *clientUnit) clientUnsupported {
 
 	var firstTerm *clientItem
 	for _, it := range u.items {
-		if it.kind == itemTerm {
+		if it.kind == clientItemTerm {
 			firstTerm = it
 			break
 		}
 	}
 	for _, it := range u.items {
-		if it.kind != itemParse || it.parse.handler == nil {
+		if it.kind != clientItemParse || it.parse.handler == nil {
 			continue
 		}
 		if firstTerm == nil || firstTerm.list.owner != it.list.owner || firstTerm.idx < it.idx {

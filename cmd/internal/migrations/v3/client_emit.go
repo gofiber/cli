@@ -43,8 +43,14 @@ func (e *clientEmit) markHandled() {
 		})
 	}
 	for _, it := range u.items {
-		if it.kind == itemDrop || it.kind == itemParse {
-			mark(it.stmt)
+		mark(it.stmt)
+	}
+	if u.create != nil {
+		mark(u.create)
+	}
+	for _, op := range u.allOps() {
+		for _, ff := range op.files {
+			e.formFile(ff)
 		}
 	}
 }
@@ -52,17 +58,22 @@ func (e *clientEmit) markHandled() {
 // notes reports the behavior differences of the rewritten request.
 func (e *clientEmit) notes() {
 	f, u := e.f, e.u
-	var all []clientOp
-	all = append(all, u.ops...)
-	for _, it := range u.items {
-		all = append(all, it.ops...)
-	}
+	all := u.allOps()
 	for _, op := range all {
 		if op.note != "" {
 			f.notef(op.line, "%s", op.note)
 		}
 	}
 	e.headerConflicts(all)
+
+	if u.kind == clientAcquire || u.kind == clientExternal {
+		hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
+		for _, op := range all {
+			if hasQuery && op.setsURL && clientHasQueryMark(op.urlArg) {
+				f.notef(op.line, "QueryString() replaced the query of this URL, but the v3 client adds the parameters to it")
+			}
+		}
+	}
 }
 
 // headerConflicts reports the headers set by hand that the v3 client replaces
@@ -107,35 +118,38 @@ func (f *clientFile) replaceStmt(id int, s ast.Node, text string) {
 }
 
 // deleteStmt removes a statement together with its line, keeping the comments
-// that were inside it.
+// that were inside it or behind it.
 func (f *clientFile) deleteStmt(id int, s ast.Node) {
 	src := f.g.src
 	start, end := f.g.offset(s.Pos()), f.g.offset(s.End())
-	inner := f.innerComments(start, end)
-	if _, cend := f.trailingComment(end); cend > end {
-		end = cend
-	}
 
 	ls := start
 	for ls > 0 && (src[ls-1] == ' ' || src[ls-1] == '\t') {
 		ls--
 	}
-	le := end
+	kept := f.innerComments(start, end)
+	cmt, cend := f.trailingComment(end)
+	le := max(end, cend)
 	for le < len(src) && (src[le] == ' ' || src[le] == '\t' || src[le] == '\r') {
 		le++
 	}
-	if (ls == 0 || src[ls-1] == '\n') && (le >= len(src) || src[le] == '\n') {
-		if le < len(src) {
-			le++
-		}
-		repl := ""
-		if len(inner) > 0 {
-			repl = strings.Join(inner, "\n") + "\n"
-		}
-		f.edits.replace(id, ls, le, repl)
+	if (ls > 0 && src[ls-1] != '\n') || (le < len(src) && src[le] != '\n') {
+		// The statement shares its line with other code.
+		f.edits.replace(id, start, end, "")
 		return
 	}
-	f.edits.replace(id, start, end, strings.Join(inner, "\n"))
+
+	if cmt != "" {
+		kept = append(kept, cmt)
+	}
+	if le < len(src) {
+		le++
+	}
+	repl := ""
+	if len(kept) > 0 {
+		repl = strings.Join(kept, "\n") + "\n"
+	}
+	f.edits.replace(id, ls, le, repl)
 }
 
 // trailingComment returns the line comment that follows offset end on the same
@@ -175,38 +189,63 @@ func (e *clientEmit) request() {
 	f, u := e.f, e.u
 	recv := u.varName
 	if u.create != nil {
-		f.replaceStmt(e.id, u.create, recv+" := "+e.requestChain())
+		text := recv + " := " + e.requestChain()
+		if extra := clientSetterLines(recv, clientStmtOps(u.ops)); extra != "" {
+			text += "\n" + extra
+		}
+		f.replaceStmt(e.id, u.create, text)
+	}
+	if u.retExpr != nil {
+		f.edits.replace(e.id, f.g.offset(u.retExpr.Pos()), f.g.offset(u.retExpr.End()), e.requestChain())
 	}
 	for _, it := range u.items {
 		switch it.kind {
-		case itemSetter:
-			if text := setterLines(recv, it.ops); text != "" {
+		case clientItemSetter:
+			if text := clientSetterLines(recv, it.ops); text != "" {
 				f.replaceStmt(e.id, it.stmt, text)
 			} else {
 				f.deleteStmt(e.id, it.stmt)
 			}
-		case itemDrop:
+		case clientItemDrop:
 			f.deleteStmt(e.id, it.stmt)
-		case itemParse:
+		case clientItemParse:
 			f.deleteStmt(e.id, it.stmt)
 			if it.parse.check != nil {
 				f.deleteStmt(e.id, it.parse.check)
 			}
-		case itemTerm:
+		case clientItemTerm:
 			e.requestTerm(it, recv)
-		case itemEscape:
+		case clientItemEscape:
 		}
 	}
 }
 
 // requestTerm writes the statement that sends the request.
 func (e *clientEmit) requestTerm(it *clientItem, recv string) {
-	pre := setterLines(recv, it.ops)
+	pre := clientSetterLines(recv, it.ops)
 	call := recv + ".Send()"
 	if e.u.varName == "" {
 		call = e.requestChain() + ".Send()"
+		if stmts := clientStmtOps(e.u.ops); len(stmts) > 0 {
+			// Some settings need statements of their own: the request gets a
+			// variable to take them.
+			req := it.list.fn.fresh("req")
+			pre = req + " := " + e.requestChain() + "\n" + clientSetterLines(req, stmts)
+			call = req + ".Send()"
+		}
 	}
 	e.term(it, call, pre)
+}
+
+// clientStmtOps returns the ops that are statements of their own.
+func clientStmtOps(ops []clientOp) []clientOp {
+	var out []clientOp
+	for _, op := range ops {
+		if op.stmt != nil && !op.dropped {
+			out = append(out, op)
+		}
+	}
+	return out
 }
 
 // requestChain renders the creation of the request: the client it belongs to,
@@ -230,7 +269,7 @@ func (e *clientEmit) requestChain() string {
 	}
 	parts = append(parts, "R()")
 	if u.kind != clientAcquire && u.kind != clientExternal {
-		parts = append(parts, fmt.Sprintf("SetMethod(%q)", strings.ToUpper(u.method)), "SetURL("+f.text(u.url)+")")
+		parts = append(parts, fmt.Sprintf("SetMethod(%q)", strings.ToUpper(u.method)), "SetURL("+e.urlText()+")")
 	}
 	for _, op := range u.ops {
 		if op.req != "" {
@@ -240,9 +279,60 @@ func (e *clientEmit) requestChain() string {
 	return strings.Join(parts, ".")
 }
 
-// setterLines renders the ops of one statement: the calls on the request are
+// urlText renders the URL of the request. QueryString replaced the query of the
+// URL in v2, where the v3 client adds its parameters to it, so the query is
+// taken out of the URL when it is a literal.
+func (e *clientEmit) urlText() string {
+	f, u := e.f, e.u
+	if !slices.ContainsFunc(u.allOps(), func(op clientOp) bool { return op.hasQuery }) {
+		return f.text(u.url)
+	}
+	text, exact := f.withoutQuery(u.url)
+	if !exact {
+		f.notef(f.line(u.url), "QueryString() replaced the query of this URL, but the v3 client adds the parameters to it")
+	}
+	return text
+}
+
+// withoutQuery renders a URL expression without the query of its last string
+// literal. exact is false when a query is somewhere else in the expression and
+// could not be taken out.
+func (f *clientFile) withoutQuery(e ast.Expr) (text string, exact bool) {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return f.withoutQuery(x.X)
+	case *ast.BasicLit:
+		if v, ok := clientStringLit(x); ok {
+			base, _, _ := strings.Cut(v, "?")
+			return strconv.Quote(base), true
+		}
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD && !clientHasQueryMark(x.X) {
+			right, exact := f.withoutQuery(x.Y)
+			if right == `""` {
+				return f.text(x.X), exact
+			}
+			return f.text(x.X) + " + " + right, exact
+		}
+	}
+	return f.text(e), !clientHasQueryMark(e)
+}
+
+// clientHasQueryMark reports whether a string literal in e contains a '?'.
+func clientHasQueryMark(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && strings.Contains(lit.Value, "?") {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// clientSetterLines renders the ops of one statement: the calls on the request are
 // chained, the others get a statement of their own.
-func setterLines(recv string, ops []clientOp) string {
+func clientSetterLines(recv string, ops []clientOp) string {
 	var lines, chain []string
 	flush := func() {
 		if len(chain) > 0 {
@@ -256,9 +346,9 @@ func setterLines(recv string, ops []clientOp) string {
 		case op.cli != "":
 			flush()
 			lines = append(lines, recv+".Client()."+op.cli)
-		case op.stmt != "":
+		case op.stmt != nil:
 			flush()
-			lines = append(lines, fmt.Sprintf(op.stmt, recv))
+			lines = append(lines, op.stmt(recv))
 		case op.req != "":
 			chain = append(chain, op.req)
 		}
@@ -276,11 +366,11 @@ func (e *clientEmit) config() {
 	}
 	for _, it := range u.items {
 		switch it.kind {
-		case itemSetter, itemDrop, itemParse:
+		case clientItemSetter, clientItemDrop, clientItemParse:
 			f.deleteStmt(e.id, it.stmt)
-		case itemTerm:
+		case clientItemTerm:
 			e.term(it, e.configCall(), "")
-		case itemEscape:
+		case clientItemEscape:
 		}
 	}
 }
@@ -329,7 +419,7 @@ func clientConfigLit(pkg string, entries []clientCfg) string {
 		if !inMap && !inScalar {
 			order = append(order, en.field)
 		}
-		if en.field == fieldHeader || en.field == fieldCookie {
+		if en.field == clientFieldHeader || en.field == clientFieldCookie {
 			maps[en.field] = append(maps[en.field], en.key+": "+en.val)
 		} else {
 			scalars[en.field] = en.val
@@ -377,18 +467,18 @@ func (u *clientUnit) configEligible() bool {
 	last := u.idx
 	for _, it := range u.items {
 		switch it.kind {
-		case itemTerm:
+		case clientItemTerm:
 			terms++
-		case itemEscape:
+		case clientItemEscape:
 			return false
-		case itemSetter, itemDrop, itemParse:
+		case clientItemSetter, clientItemDrop, clientItemParse:
 		}
 		if it.nested || it.list.owner != u.list.owner {
 			return false
 		}
 		last = max(last, it.idx)
 	}
-	if terms != 1 || u.items[len(u.items)-1].kind != itemTerm {
+	if terms != 1 || u.items[len(u.items)-1].kind != clientItemTerm {
 		return false
 	}
 	if !u.statementsBetweenAreInert(last) || !u.opsFitConfig() {
@@ -434,7 +524,7 @@ func (u *clientUnit) opsFitConfig() bool {
 		if op.dropped {
 			continue
 		}
-		if op.stmt != "" || op.cli != "" || op.setsMethod || op.setsURL {
+		if op.stmt != nil || op.cli != "" || op.setsMethod || op.setsURL {
 			return false
 		}
 		if op.hasQuery {
@@ -461,7 +551,7 @@ func (u *clientUnit) opsFitConfig() bool {
 					return false
 				}
 				headers[key] = true
-			case fieldCookie:
+			case clientFieldCookie:
 			default:
 				if scalars[en.field] {
 					return false
