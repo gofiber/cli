@@ -82,6 +82,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateSessionConfig,
 			v3migrations.MigrateSessionExtractor,
 			v3migrations.MigrateSessionStore,
+			v3migrations.MigrateSessionMethods,
 			v3migrations.MigrateStorageVersions,
 			v3migrations.MigrateTemplateVersions,
 			v3migrations.MigrateSessionRelease,

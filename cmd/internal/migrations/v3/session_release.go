@@ -3,7 +3,6 @@ package v3
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"regexp"
 	"slices"
@@ -17,9 +16,14 @@ import (
 
 const releaseComment = "// Important: Manual cleanup required"
 
+// reSessionV3Path matches the import path of the v3 session middleware: the
+// release only exists there, and this migration runs after MigrateGoPkgs.
+var reSessionV3Path = regexp.MustCompile(`^github\.com/gofiber/fiber/v3/middleware/session$`)
+
 // MigrateSessionRelease adds defer sess.Release() after store.Get() calls
 // when using the Store Pattern (legacy pattern).
-// This is required in v3 for manual session lifecycle management.
+// This is required in v3 for manual session lifecycle management: v2 released
+// a session when it was saved, v3 leaves that to the caller.
 //
 // Only the following Store methods return *Session from the pool and require Release():
 //   - store.Get(c fiber.Ctx) (*Session, error)
@@ -27,30 +31,17 @@ const releaseComment = "// Important: Manual cleanup required"
 //
 // Middleware handlers do NOT require Release() as the middleware manages the lifecycle.
 //
-// This migration parses the Go AST and uses source-level heuristics to identify
-// session.Store.Get/GetByID calls on variables initialized via session.NewStore(),
-// including support for custom import aliases. It does not currently track stores
-// that are passed via parameters, returned from functions, or stored in structs.
+// The store is found through the file's own import of the session package, and
+// may be a variable of the function, a package level variable (of any file of
+// the package), a parameter, or a field of a struct the package declares.
+//
+// A session that leaves the function it was gotten in (it is returned, stored,
+// sent, or handed to a goroutine) is not released there: whoever uses it next
+// would find it reset. Such a Get is reported instead.
 func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		// Quick check: does file import session package?
-		if !strings.Contains(content, "middleware/session") {
-			return content
-		}
-
-		// Skip v2 imports - this migration only works with v3
-		if strings.Contains(content, "fiber/v2/middleware/session") {
-			return content
-		}
-
-		// Use type-based approach to find Store.Get() calls
-		result, err := addReleaseCallsWithTypes(content, cwd)
-		if err != nil {
-			// Fallback: return original content if type checking fails
-			return content
-		}
-
-		return result
+	pkgs := newMw3Pkgs()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return mw3SessionReleaseContent(content, fi, pkgs)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to add session Release() calls: %w", err)
@@ -63,366 +54,215 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-// releasePoint represents a location where defer sess.Release() needs to be added
-type releasePoint struct {
-	indent  string // Indentation to use for defer statement
-	sessVar string // Session variable name
-	errVar  string // Error variable name
-	line    int    // Line number where Get/GetByID was called
-}
-
-// addReleaseCallsWithTypes adds defer Release() statements for Store.Get() calls
-func addReleaseCallsWithTypes(content, _ string) (string, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "temp.go", content, parser.ParseComments)
-	if err != nil {
-		return "", fmt.Errorf("parse file: %w", err)
+func mw3SessionReleaseContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
+	// Skip v2 imports - this migration only works with v3.
+	if !strings.Contains(src, "middleware/session") || len(importNames(src, reSessionV3Path, "session")) == 0 {
+		return src
+	}
+	f, ok := mw3OpenSessionFile(fi, src, pkgs)
+	if !ok {
+		return src
 	}
 
-	points := findReleasePoints(file, fset, content)
-	if len(points) == 0 {
-		return content, nil
-	}
-
-	return insertDeferStatements(content, points), nil
-}
-
-// findReleasePoints analyzes the AST to find Store.Get() calls
-func findReleasePoints(file *ast.File, fset *token.FileSet, src string) []releasePoint {
-	var points []releasePoint
-
-	ast.Inspect(file, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-
-		if len(assign.Lhs) != 2 || len(assign.Rhs) != 1 || assign.Tok != token.DEFINE {
-			return true
-		}
-
-		call, ok := assign.Rhs[0].(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-
-		methodName := sel.Sel.Name
-		if methodName != "Get" && methodName != "GetByID" {
-			return true
-		}
-
-		ident, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		if !isSessionStoreInFunction(src, ident.Name, fset, assign) {
-			return true
-		}
-
-		sessIdent, ok := assign.Lhs[0].(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		var errVarName string
-		if errIdent, ok := assign.Lhs[1].(*ast.Ident); ok {
-			errVarName = errIdent.Name
-		} else {
-			errVarName = "_"
-		}
-
-		pos := fset.Position(assign.Pos())
-
-		points = append(points, releasePoint{
-			line:    pos.Line - 1,
-			sessVar: sessIdent.Name,
-			errVar:  errVarName,
-			indent:  "",
-		})
-
-		return true
-	})
-
-	return points
-}
-
-// isSessionStoreInFunction checks if the given variable name appears to be a session store
-// within the same function as the provided assignment statement
-func isSessionStoreInFunction(src, varName string, fset *token.FileSet, assign *ast.AssignStmt) bool {
-	aliases := findSessionPackageAliases(src)
-
-	pos := fset.Position(assign.Pos())
-	assignLine := pos.Line
-
-	fnStart, fnEnd := findFunctionBoundaries(src, assignLine)
-	if fnStart == -1 || fnEnd == -1 {
-		return checkStoreAssignment(src, varName, aliases)
-	}
-
-	lines := strings.Split(src, "\n")
-	fnLines := lines[fnStart:fnEnd]
-	fnSrc := strings.Join(fnLines, "\n")
-
-	return checkStoreAssignment(fnSrc, varName, aliases)
-}
-
-// checkStoreAssignment verifies the variable is assigned from session.NewStore()
-func checkStoreAssignment(src, varName string, aliases []string) bool {
-	for _, alias := range aliases {
-		// Match: store := session.NewStore() or var store = session.NewStore()
-		pattern := regexp.MustCompile(fmt.Sprintf(`\b%s\b\s*(?::=|=)\s*%s\.NewStore\(`, regexp.QuoteMeta(varName), regexp.QuoteMeta(alias)))
-		if pattern.MatchString(src) {
-			return true
-		}
-	}
-	return false
-}
-
-// findFunctionBoundaries finds the start and end line numbers of the function containing the given line
-func findFunctionBoundaries(src string, lineNum int) (start, end int) {
-	lines := strings.Split(src, "\n")
-	if lineNum < 1 || lineNum > len(lines) {
-		return -1, -1
-	}
-
-	lineIdx := lineNum - 1
-
-	fnStart := -1
-	for i := lineIdx; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "func ") {
-			fnStart = i
-			break
-		}
-	}
-
-	if fnStart == -1 {
-		return -1, -1
-	}
-
-	fnEnd := len(lines)
-	for i := fnStart + 1; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "func ") {
-			fnEnd = i
-			break
-		}
-	}
-
-	return fnStart, fnEnd
-}
-
-// findSessionPackageAliases extracts all aliases used for the session middleware package
-func findSessionPackageAliases(src string) []string {
-	var aliases []string
-
-	lines := strings.SplitSeq(src, "\n")
-	for line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, `"github.com/gofiber/fiber/v3/middleware/session"`) {
-			if strings.HasPrefix(line, `"github.com/gofiber/fiber/v3/middleware/session"`) {
-				aliases = append(aliases, "session")
-			} else {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 && parts[1] == `"github.com/gofiber/fiber/v3/middleware/session"` {
-					aliases = append(aliases, parts[0])
-				}
-			}
-		}
-	}
-
-	return aliases
-}
-
-// insertDeferStatements adds defer sess.Release() at appropriate locations
-func insertDeferStatements(content string, points []releasePoint) string {
-	lines := strings.Split(content, "\n")
-
-	for i := range points {
-		if points[i].line < len(lines) {
-			line := lines[points[i].line]
-			points[i].indent = line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-		}
-	}
-
-	for _, p := range slices.Backward(points) {
-		if p.line >= len(lines) {
-			continue
-		}
-
-		if hasExistingRelease(lines, p.line, p.sessVar) {
-			continue
-		}
-
-		nextLineIdx := p.line + 1
-		if nextLineIdx >= len(lines) {
-			insertAt := p.line + 1
-			deferStmt := p.indent + "defer " + p.sessVar + ".Release() " + releaseComment
-			lines = append(lines[:insertAt], append([]string{deferStmt}, lines[insertAt:]...)...)
-			continue
-		}
-
-		nextLine := strings.TrimSpace(lines[nextLineIdx])
-
-		if strings.HasPrefix(nextLine, "if "+p.errVar+" != nil") {
-			blockEnd := findErrorBlockEnd(lines, nextLineIdx)
-			if blockEnd >= 0 && blockEnd < len(lines) {
-				insertAt := blockEnd + 1
-				deferStmt := p.indent + "defer " + p.sessVar + ".Release() " + releaseComment
-				lines = append(lines[:insertAt], append([]string{deferStmt}, lines[insertAt:]...)...)
-			}
-		} else {
-			insertAt := p.line + 1
-			deferStmt := p.indent + "defer " + p.sessVar + ".Release() " + releaseComment
-			lines = append(lines[:insertAt], append([]string{deferStmt}, lines[insertAt:]...)...)
-		}
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-// hasExistingRelease checks if defer sess.Release() already exists for this session variable
-func hasExistingRelease(lines []string, startLine int, sessVar string) bool {
-	releaseCall := sessVar + ".Release()"
-
-	searchStart := max(startLine-2, 0)
-	searchEnd := min(startLine+5, len(lines))
-
-	for i := searchStart; i < searchEnd; i++ {
-		if strings.Contains(lines[i], releaseCall) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// findErrorBlockEnd finds the end of an error handling block using proper Go AST parsing.
-// Returns the line index of the closing brace, or -1 if not found.
-func findErrorBlockEnd(lines []string, startIdx int) int {
-	if startIdx >= len(lines) {
-		return -1
-	}
-
-	line := strings.TrimSpace(lines[startIdx])
-
-	if strings.Contains(line, "{") && strings.Contains(line, "}") {
-		return startIdx
-	}
-
-	if !strings.Contains(line, "{") {
-		return -1
-	}
-
-	var sb strings.Builder
-	sb.WriteString("package main\nfunc f() {\n") //nolint:errcheck // strings.Builder.WriteString never fails
-	snippetStartLine := startIdx
-
-	for i := startIdx; i < len(lines) && i < startIdx+50; i++ {
-		sb.WriteString(lines[i]) //nolint:errcheck // strings.Builder.WriteString never fails
-		sb.WriteString("\n")     //nolint:errcheck // strings.Builder.WriteString never fails
-	}
-	sb.WriteString("\n}\n") //nolint:errcheck // strings.Builder.WriteString never fails
-	codeSnippet := sb.String()
-
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "", codeSnippet, parser.AllErrors)
-	if err != nil {
-		return findErrorBlockEndFallback(lines, startIdx)
-	}
-
-	ifStmtEnd := -1
-	ast.Inspect(node, func(n ast.Node) bool {
-		if ifStmt, ok := n.(*ast.IfStmt); ok {
-			pos := fset.Position(ifStmt.Body.End())
-			lineNum := pos.Line - 3
-			if lineNum >= 0 {
-				ifStmtEnd = snippetStartLine + lineNum
-				return false
-			}
+	var edits editSet
+	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok {
+			mw3ReleaseGet(f, &edits, as, stack)
 		}
 		return true
 	})
-
-	if ifStmtEnd >= 0 && ifStmtEnd < len(lines) {
-		return ifStmtEnd
-	}
-
-	return findErrorBlockEndFallback(lines, startIdx)
+	return edits.apply(src)
 }
 
-// findErrorBlockEndFallback is a simple fallback that counts braces.
-// Only used when AST parsing fails.
-func findErrorBlockEndFallback(lines []string, startIdx int) int {
-	braceCount := 1
-	inString := false
-	var stringChar byte
-	inComment := false
-	isLineComment := false
+// mw3ReleaseGet schedules the defer after a "sess, err := store.Get(c)".
+func mw3ReleaseGet(f *mw3SessionFile, edits *editSet, as *ast.AssignStmt, stack []ast.Node) {
+	if as.Tok != token.DEFINE || len(as.Lhs) != 2 || len(as.Rhs) != 1 {
+		return
+	}
+	call, ok := as.Rhs[0].(*ast.CallExpr)
+	if !ok {
+		return
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || (sel.Sel.Name != "Get" && sel.Sel.Name != "GetByID") || !f.isStore(sel.X, stack) {
+		return
+	}
+	sess, ok := as.Lhs[0].(*ast.Ident)
+	if !ok || sess.Name == "_" {
+		return
+	}
 
-	for i := startIdx + 1; i < len(lines); i++ {
-		line := lines[i]
-		for j := 0; j < len(line); j++ {
-			ch := line[j]
+	// The statements the Get sits among; a Get in the init of an if or a for
+	// has no place to put the defer.
+	if len(stack) == 0 {
+		return
+	}
+	var list []ast.Stmt
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.BlockStmt:
+		list = parent.List
+	case *ast.CaseClause:
+		list = parent.Body
+	case *ast.CommClause:
+		list = parent.Body
+	default:
+		return
+	}
 
-			// Handle string literals
-			if inString {
-				if ch == stringChar && (j == 0 || line[j-1] != '\\') {
-					inString = false
-				}
-				continue
-			}
+	body, inLoop := mw3EnclosingBody(stack)
+	if body == nil || inLoop {
+		return
+	}
+	if mw3CallsMethod(body, sess.Name, "Release") {
+		return
+	}
+	if mw3SessionEscapes(body, as, sess.Name) {
+		internal.Notef(f.fi, f.g.line(as.Pos()),
+			"the session %s leaves this function (it is returned, stored, sent or handed to a goroutine), so no defer %s.Release() was added. "+
+				"v3 does not release a session when it is saved: call Release() where its last user is done with it.", sess.Name, sess.Name)
+		return
+	}
 
-			// Handle comments
-			if inComment {
-				if isLineComment && ch == '\n' {
-					inComment = false
-					isLineComment = false
-				} else if !isLineComment && ch == '*' && j+1 < len(line) && line[j+1] == '/' {
-					inComment = false
-					j++ // skip the '/'
-				}
-				continue
-			}
+	target := ast.Stmt(as)
+	for i, stmt := range list {
+		if stmt == ast.Stmt(as) && i+1 < len(list) && mw3IsErrCheck(list[i+1], as.Lhs[1]) {
+			target = list[i+1]
+		}
+	}
 
-			// Check for start of string or comment
-			switch ch {
-			case '"', '\'', '`':
-				inString = true
-				stringChar = ch
-			case '/':
-				if j+1 >= len(line) {
-					continue
-				}
-				switch line[j+1] {
-				case '/':
-					inComment = true
-					isLineComment = true
-					j++ // skip the second '/'
-				case '*':
-					inComment = true
-					isLineComment = false
-					j++ // skip the '*'
-				default:
-					// Not a comment, continue
-				}
-			case '{':
-				braceCount++
-			case '}':
-				braceCount--
-				if braceCount == 0 {
-					return i
-				}
-			default:
-				// Ignore other characters
+	g := f.g
+	at := g.offset(target.End())
+	if rest := strings.TrimSpace(g.src[at:mw3LineEnd(g.src, at)]); rest == "" || strings.HasPrefix(rest, "//") {
+		at = mw3LineEnd(g.src, at)
+	}
+	indent := mw3Indent(g.src, g.offset(as.Pos()))
+	edits.replace(at, at, "\n"+indent+"defer "+sess.Name+".Release() "+releaseComment)
+}
+
+// mw3EnclosingBody returns the body of the innermost function the node whose
+// ancestors are stack sits in, and whether a loop sits between them.
+func mw3EnclosingBody(stack []ast.Node) (body *ast.BlockStmt, inLoop bool) {
+	for _, node := range slices.Backward(stack) {
+		switch n := node.(type) {
+		case *ast.ForStmt, *ast.RangeStmt:
+			inLoop = true
+		case *ast.FuncDecl:
+			return n.Body, inLoop
+		case *ast.FuncLit:
+			return n.Body, inLoop
+		}
+	}
+	return nil, inLoop
+}
+
+// mw3IsErrCheck reports whether stmt is "if err != nil { ... }" for the error
+// variable of a Get.
+func mw3IsErrCheck(stmt ast.Stmt, errVar ast.Expr) bool {
+	ifStmt, ok := stmt.(*ast.IfStmt)
+	if !ok || ifStmt.Init != nil {
+		return false
+	}
+	errID, ok := errVar.(*ast.Ident)
+	if !ok || errID.Name == "_" {
+		return false
+	}
+	cond, ok := ifStmt.Cond.(*ast.BinaryExpr)
+	return ok && cond.Op == token.NEQ && isIdentNamed(cond.X, errID.Name) && isIdentNamed(cond.Y, "nil")
+}
+
+// mw3CallsMethod reports whether the node calls name.method() anywhere,
+// including in a defer.
+func mw3CallsMethod(root ast.Node, name, method string) bool {
+	found := false
+	ast.Inspect(root, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == method && isIdentNamed(sel.X, name) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// mw3SessionEscapes reports whether the session variable name, which the
+// assignment declares, is used in the body in a way that keeps it alive past
+// the end of the function.
+func mw3SessionEscapes(body ast.Node, declaration *ast.AssignStmt, name string) bool {
+	escapes := false
+	var stack []ast.Node
+	ast.Inspect(body, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		if escapes || n == ast.Node(declaration) {
+			return false
+		}
+		if id, ok := n.(*ast.Ident); ok && id.Name == name && mw3UseEscapes(id, stack) {
+			escapes = true
+			return false
+		}
+		stack = append(stack, n)
+		return true
+	})
+	return escapes
+}
+
+// mw3UseEscapes reports whether this use of a session variable lets it live on:
+// anything but calling a method on it, comparing it, or passing it to a call
+// that runs before the function returns.
+func mw3UseEscapes(id *ast.Ident, stack []ast.Node) bool {
+	// Code that runs later: a goroutine, or a function value that is not
+	// called on the spot.
+	for i, node := range slices.Backward(stack) {
+		switch n := node.(type) {
+		case *ast.GoStmt:
+			return true
+		case *ast.FuncLit:
+			if !mw3RunsInPlace(n, stack[:i]) {
+				return true
 			}
 		}
 	}
-	return -1
+
+	if len(stack) == 0 {
+		return false
+	}
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.SelectorExpr:
+		return false // sess.Save(), or a field named like the variable
+	case *ast.BinaryExpr:
+		return parent.Op != token.EQL && parent.Op != token.NEQ
+	case *ast.KeyValueExpr:
+		return parent.Key != ast.Expr(id)
+	case *ast.CallExpr:
+		if fun, ok := parent.Fun.(*ast.Ident); ok && fun.Name == "append" {
+			return true
+		}
+		return false
+	case *ast.AssignStmt:
+		if slices.Contains(parent.Lhs, ast.Expr(id)) {
+			return false // reassigned or redeclared, not copied
+		}
+		return !mw3AllBlank(parent.Lhs)
+	}
+	return true
+}
+
+// mw3RunsInPlace reports whether the function literal runs where it is
+// written: called at once, or deferred.
+func mw3RunsInPlace(lit *ast.FuncLit, ancestors []ast.Node) bool {
+	if len(ancestors) == 0 {
+		return false
+	}
+	call, ok := ancestors[len(ancestors)-1].(*ast.CallExpr)
+	return ok && call.Fun == ast.Expr(lit)
+}
+
+func mw3AllBlank(exprs []ast.Expr) bool {
+	for _, e := range exprs {
+		if !isIdentNamed(e, "_") {
+			return false
+		}
+	}
+	return true
 }
