@@ -2,6 +2,7 @@ package listenshim
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -436,4 +437,19 @@ func Test_Listen_Helpers(t *testing.T) { //nolint:paralleltest // the startup me
 
 		assert.Empty(t, out)
 	})
+}
+
+// The config reads JSON the way the config of Fiber v2 did, for code that loads it from a
+// file.
+func Test_Config_JSON(t *testing.T) {
+	t.Parallel()
+
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"prefork": true, "disable_startup_message": true, "enable_print_routes": true, "network": "tcp6", "app_name": "demo"}`), &cfg))
+
+	assert.True(t, cfg.Prefork)
+	assert.True(t, cfg.DisableStartupMessage)
+	assert.True(t, cfg.EnablePrintRoutes)
+	assert.Equal(t, "tcp6", cfg.Network)
+	assert.Equal(t, "demo", cfg.AppName)
 }

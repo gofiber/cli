@@ -239,7 +239,7 @@ func (f *appFile) typeSpecKind(spec *ast.TypeSpec, depth int) appKind {
 		}
 	case *ast.InterfaceType:
 		for _, m := range t.Methods.List {
-			if len(m.Names) == 0 && f.typeKind(m.Type, depth) != appKindNone {
+			if k := f.typeKind(m.Type, depth); len(m.Names) == 0 && (k == appKindApp || k == appKindRouter) {
 				return appKindRouter
 			}
 		}

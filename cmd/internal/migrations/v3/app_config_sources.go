@@ -407,7 +407,27 @@ func (src *appListenSource) followCall(pf *appFile, call *ast.CallExpr) {
 			return
 		}
 	}
-	src.escape(pf, call, "the result of "+fn.Name.Name+" is used in a way the migration does not follow")
+	src.escape(pf, call, "the result of "+fn.Name.Name+" is "+pf.useOf(call))
+}
+
+// useOf says, in words that follow "is", what the code does with the value of the
+// expression e, from the node it is the child of.
+func (f *appFile) useOf(e ast.Expr) string {
+	switch p := f.parent[e].(type) {
+	case *ast.ReturnStmt:
+		return "returned by another function"
+	case *ast.CallExpr:
+		if p.Fun != e {
+			return "passed to another function"
+		}
+	case *ast.KeyValueExpr, *ast.CompositeLit:
+		return "stored in a struct, slice or map"
+	case *ast.AssignStmt, *ast.ValueSpec:
+		return "assigned to a variable or field the migration does not follow"
+	case *ast.SendStmt:
+		return "sent on a channel"
+	}
+	return "used in a way the migration does not follow"
 }
 
 // feedsNew reports whether the result of the call is handed to fiber.New, or held
@@ -504,6 +524,11 @@ func (f *appFile) referencesFunc(n ast.Node, fn *ast.FuncDecl) bool {
 		call := &ast.CallExpr{Fun: x}
 		if callee, found := f.calleeOf(call, 0); found {
 			return callee.decl == fn
+		}
+		if t, tf := f.valueType(x.X, 0); t != nil {
+			if st, _ := tf.structOf(t, 0); st != nil && appStructField(st, name) != nil {
+				return false // a field of the name, not the method
+			}
 		}
 		return fn.Recv != nil && !f.foreignReceiver(call)
 	}

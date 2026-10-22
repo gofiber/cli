@@ -27,6 +27,12 @@ import (
 //
 //	app.Listen(addr, fibermigrate.ListenConfig(app))
 //
+// A function that returns the config (see app_listen_returned.go) returns the
+// registry's Config instead, the config of v2 with the four settings, and the
+// fiber.New calls that make apps from its result become fibermigrate.New. The code
+// that reads the settings from app.Config() reads them from fibermigrate.ConfigOf(app)
+// (see app_listen_reads.go).
+//
 // The source of the registry is a package of its own, listenshim, which is built and
 // tested like any other.
 

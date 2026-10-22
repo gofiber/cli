@@ -94,13 +94,13 @@ func NewApp(cfg fiber.Config, lc fiber.ListenConfig) *fiber.App {
 type Config struct {
 	fiber.Config
 	// Network is "tcp", "tcp4" or "tcp6".
-	Network string
+	Network string `json:"network"`
 	// Prefork starts the app in one process per CPU.
-	Prefork bool
+	Prefork bool `json:"prefork"`
 	// DisableStartupMessage hides the banner Listen prints.
-	DisableStartupMessage bool
+	DisableStartupMessage bool `json:"disable_startup_message"`
 	// EnablePrintRoutes prints the routes after the banner.
-	EnablePrintRoutes bool
+	EnablePrintRoutes bool `json:"enable_print_routes"`
 }
 
 // Settings returns the four settings of the config as a fiber.ListenConfig.

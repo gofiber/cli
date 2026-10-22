@@ -305,7 +305,7 @@ func main() {
 	}
 	assert.Contains(t, byFile["config/a.go"], "A is used as a value, at line 7 of config/a.go")
 	assert.Contains(t, byFile["config/b.go"], "this fiber.Config is not one the migration follows")
-	assert.Contains(t, byFile["config/c.go"], "the result of C is used in a way the migration does not follow, at line 11 of main.go")
+	assert.Contains(t, byFile["config/c.go"], "the result of C is passed to another function, at line 11 of main.go")
 	assert.Contains(t, byFile["config/d.go"], "a call of Config whose receiver could not be traced may hand its config to fiber.New, at line 14 of main.go")
 	assert.Len(t, byFile, 4)
 }
@@ -349,6 +349,39 @@ func main() {
 	assert.Contains(t, appRead(t, dir, "internal/serve/serve.go"), "return app.Listen(addr, fibermigrate.ListenConfig(app))")
 	main := appRead(t, dir, "cmd/api/main.go")
 	assert.Contains(t, main, `serve.Run(fibermigrate.New(config.ForServer(false)), ":3000")`)
+	assert.Len(t, notes, 1)
+}
+
+// A field that has the name of the method that builds the config is not the method.
+func Test_MigrateConfigListenerFields_Returned_FieldWithTheNameOfTheMethod(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"main.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type builder struct{ quiet bool }
+
+func (b builder) Config() fiber.Config { return fiber.Config{DisableStartupMessage: b.quiet} }
+
+type holder struct{ Config fiber.Config }
+
+func main() {
+	h := holder{Config: fiber.Config{AppName: "held"}}
+	_ = h.Config
+	app := fiber.New(builder{quiet: true}.Config())
+	app.Listen(":3000")
+}
+`,
+	})
+
+	_, notes := shimMigrate(t, dir)
+
+	content := appRead(t, dir, "main.go")
+	assert.Contains(t, content, "func (b builder) Config() fibermigrate.Config {")
+	assert.Contains(t, content, "app := fibermigrate.New(builder{quiet: true}.Config())")
+	assert.Contains(t, content, "h := holder{Config: fiber.Config{AppName: \"held\"}}")
 	assert.Len(t, notes, 1)
 }
 

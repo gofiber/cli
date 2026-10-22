@@ -299,6 +299,15 @@ func handler(c *fiber.Ctx) error {
 	c.App().Config().Mount("ctxconfig", nil)
 	return nil
 }
+
+type custom interface {
+	fiber.Ctx
+	Extra() string
+}
+
+func withCustom(c custom) {
+	c.Mount("customctx", nil)
+}
 `,
 	})
 
@@ -338,6 +347,7 @@ func handler(c *fiber.Ctx) error {
 		`"several"`:    appKindNone,
 		`"ctx"`:        appKindApp,
 		`"ctxconfig"`:  appKindConfig,
+		`"customctx"`:  appKindNone,
 	}
 	for label, kind := range want {
 		require.Contains(t, got, label)
