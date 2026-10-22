@@ -33,7 +33,7 @@ func (f *appFile) startsIn() []appStart {
 		if !isSel || !slices.Contains(appStartMethods, sel.Sel.Name) {
 			return true
 		}
-		if f.kind(sel.X) == appKindApp {
+		if f.receiverKind(call, sel) == appKindApp {
 			starts = append(starts, appStart{file: f, call: call, sel: sel, method: sel.Sel.Name})
 		}
 		return true

@@ -98,8 +98,8 @@ func appMigrateProxyLiteral(f *appFile, edits *editSet, lit *ast.CompositeLit) {
 }
 
 const (
-	appProxyHeaderNote = "v2 read ProxyHeader from every client; v3 only reads it from a proxy listed in TrustProxyConfig, " +
-		"so c.IP() is the proxy's address until TrustProxy is true and TrustProxyConfig names your proxies (Proxies, Loopback, Private)"
+	appProxyHeaderNote = "v2 trusted the ProxyHeader and the X-Forwarded-* headers of every client; v3 only trusts them from a proxy listed in TrustProxyConfig, " +
+		"so c.IP() is the proxy's address, and c.Scheme(), c.Host() and c.BaseURL() ignore the headers, until TrustProxy is true and TrustProxyConfig names your proxies (Proxies, Loopback, Private)"
 	appProxyListNote = "v2 ignored TrustedProxies unless EnableTrustedProxyCheck was true (every client was trusted otherwise); " +
 		"v3 only uses TrustProxyConfig when TrustProxy is true, which this config does not set"
 )

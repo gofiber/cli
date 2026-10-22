@@ -59,7 +59,7 @@ func appMigrateAddMethodContent(ix *appIndex, content string, fi internal.FileIn
 			return true
 		}
 		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel || !slices.Contains(appSpreadMethods, sel.Sel.Name) || !f.kind(sel.X).isRouter() {
+		if !isSel || !slices.Contains(appSpreadMethods, sel.Sel.Name) || !f.receiverKind(call, sel).isRouter() {
 			return true
 		}
 

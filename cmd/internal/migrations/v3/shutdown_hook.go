@@ -51,7 +51,7 @@ func appMigrateShutdownHookContent(ix *appIndex, content string, fi internal.Fil
 			return true
 		}
 		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel || sel.Sel.Name != "OnShutdown" || f.kind(sel.X) != appKindHooks {
+		if !isSel || sel.Sel.Name != "OnShutdown" || f.receiverKind(call, sel) != appKindHooks {
 			return true
 		}
 

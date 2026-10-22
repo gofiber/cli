@@ -61,7 +61,7 @@ func appMigrateStaticContent(ix *appIndex, content string, fi internal.FileInfo)
 	ast.Inspect(f.g.file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
-			if sel, isSel := x.Fun.(*ast.SelectorExpr); isSel && sel.Sel.Name == appNameStatic && f.kind(sel.X).isRouter() {
+			if sel, isSel := x.Fun.(*ast.SelectorExpr); isSel && sel.Sel.Name == appNameStatic && f.receiverKind(x, sel).isRouter() {
 				r.call(x, sel)
 			}
 		case *ast.SelectorExpr:

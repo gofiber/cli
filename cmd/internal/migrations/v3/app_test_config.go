@@ -50,7 +50,7 @@ func appMigrateTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 			return true
 		}
 		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel || sel.Sel.Name != "Test" || f.kind(sel.X) != appKindApp {
+		if !isSel || sel.Sel.Name != "Test" || f.receiverKind(call, sel) != appKindApp {
 			return true
 		}
 

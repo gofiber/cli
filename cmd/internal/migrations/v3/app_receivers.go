@@ -146,6 +146,17 @@ func (f *appFile) kindOf(e ast.Expr, depth int) appKind {
 	return appKindNone
 }
 
+// receiverKind returns what the receiver of the method call is, appKindNone
+// when the method is one the project declares itself: a type that embeds an app
+// can have a method of its own with the name of one of the app's, and that call
+// is not fiber's.
+func (f *appFile) receiverKind(call *ast.CallExpr, sel *ast.SelectorExpr) appKind {
+	if callee, ok := f.calleeOf(call, 0); ok && callee.decl != nil && callee.decl.Recv != nil {
+		return appKindNone
+	}
+	return f.kind(sel.X)
+}
+
 // bindingKind returns what the declaration b declares.
 func (f *appFile) bindingKind(b appBinding, depth int) appKind {
 	switch {
