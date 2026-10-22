@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -462,12 +463,12 @@ func serve(c Ctx, dir string) error {
 }
 
 // Any http.FileSystem that is not http.Dir or http.FS(fs.FS) has no fs.FS
-// counterpart in the standard library: the value stays where it is, which the
-// build refuses, and the user is told.
+// counterpart in the standard library: the package gets an adapter for it.
 func Test_MigrateFilesystemMiddleware_RootsWithoutACounterpart(t *testing.T) {
 	t.Parallel()
 
-	got, res := mw3RunOne(t, `package main
+	res := mw3Run(t, map[string]string{
+		"main.go": `package main
 
 import (
 	"net/http"
@@ -488,7 +489,23 @@ func main() {
 		return filesystem.SendFile(c, fsys, "x.txt")
 	})
 }
-`, v3.MigrateFilesystemMiddleware)
+`,
+		// A second file of the package shares the adapter.
+		"second.go": `package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+type box struct{}
+
+func (box) Open(string) (http.File, error) { return nil, nil }
+
+var _ = filesystem.New(filesystem.Config{Root: box{}})
+`,
+	}, v3.MigrateFilesystemMiddleware)
 
 	assert.Equal(t, `package main
 
@@ -505,19 +522,122 @@ var fsys http.FileSystem = http.Dir("/tmp")
 
 func main() {
 	app := fiber.New()
-	app.Use("/pkger", static.New("", static.Config{FS: pkger.Dir("/assets")}))
-	app.Use("/packr", static.New("", static.Config{FS: packr.New("Assets Box", "/assets"), Browse: true}))
+	app.Use("/pkger", static.New("", static.Config{FS: fiberHTTPFS{pkger.Dir("/assets")}}))
+	app.Use("/packr", static.New("", static.Config{FS: fiberHTTPFS{packr.New("Assets Box", "/assets")}, Browse: true}))
 	app.Get("/f", func(c *fiber.Ctx) error {
-		return c.SendFile("x.txt", fiber.SendFile{FS: fsys})
+		return c.SendFile("x.txt", fiber.SendFile{FS: fiberHTTPFS{fsys}})
 	})
 }
-`, got)
+`, res.files["main.go"])
+	assert.Contains(t, res.files["second.go"], "static.Config{FS: fiberHTTPFS{box{}}}")
 
-	require.Len(t, res.notes, 3)
-	assert.Equal(t, []int{16, 17, 19}, []int{res.notes[0].Line, res.notes[1].Line, res.notes[2].Line})
-	assert.Contains(t, res.notes[0].Message, `Root pkger.Dir("/assets") is an http.FileSystem`)
-	assert.Contains(t, res.notes[1].Message, `Root packr.New("Assets Box", "/assets") is an http.FileSystem`)
+	adapter := res.files["fiber_migrate_httpfs.go"]
+	assert.Contains(t, adapter, "package main\n")
+	assert.Contains(t, adapter, "type fiberHTTPFS struct{ http.FileSystem }")
+	assert.Contains(t, adapter, "func (a fiberHTTPFS) Open(name string) (fs.File, error)")
+	assert.Contains(t, adapter, "func (f fiberHTTPFile) ReadDir(n int) ([]fs.DirEntry, error)")
+	assert.Equal(t, 1, strings.Count(adapter, "type fiberHTTPFS "), "the adapter is declared once for the package")
+
+	require.Len(t, res.notes, 4)
+	assert.Contains(t, res.notes[0].Message, `Root pkger.Dir("/assets") is an http.FileSystem, and v3 takes an fs.FS: it is wrapped in fiberHTTPFS, which fiber_migrate_httpfs.go adds`)
 	assert.Contains(t, res.notes[2].Message, "the file system fsys is an http.FileSystem")
+}
+
+func Test_MigrateFilesystemMiddleware_TheAdapterIsAddedOnce(t *testing.T) {
+	t.Parallel()
+
+	const src = `package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+type box struct{}
+
+func (box) Open(string) (http.File, error) { return nil, nil }
+
+var _ = filesystem.New(filesystem.Config{Root: box{}})
+`
+	first := mw3Run(t, map[string]string{"main.go": src}, v3.MigrateFilesystemMiddleware)
+	require.Contains(t, first.files, "fiber_migrate_httpfs.go")
+
+	// Run again on what the first run made, adapter included.
+	again := mw3Run(t, first.files, v3.MigrateFilesystemMiddleware)
+	assert.Equal(t, first.files, again.files)
+	assert.Empty(t, again.out)
+
+	// A project that has the adapter's file already, from a run of its own,
+	// keeps it as it is.
+	kept := map[string]string{"main.go": src, "fiber_migrate_httpfs.go": first.files["fiber_migrate_httpfs.go"] + "\n// edited by the user\n"}
+	third := mw3Run(t, kept, v3.MigrateFilesystemMiddleware)
+	assert.Equal(t, kept["fiber_migrate_httpfs.go"], third.files["fiber_migrate_httpfs.go"])
+	assert.Contains(t, third.files["main.go"], "fiberHTTPFS{box{}}")
+}
+
+// Where the package cannot have the adapter the value stays, which the build
+// refuses, and the user is told.
+func Test_MigrateFilesystemMiddleware_NoAdapterWhereItCannotGo(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		files map[string]string
+		name  string
+	}{
+		{
+			name: "an external test package",
+			files: map[string]string{"main_test.go": `package main_test
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+var box http.FileSystem
+
+var _ = filesystem.New(filesystem.Config{Root: box})
+`},
+		},
+		{
+			name: "a type of the project with the name of the adapter",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+var box http.FileSystem
+
+var _ = filesystem.New(filesystem.Config{Root: box})
+`,
+				"mine.go": `package main
+
+type fiberHTTPFS struct{}
+`,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			res := mw3Run(t, tc.files, v3.MigrateFilesystemMiddleware)
+			assert.NotContains(t, res.files, "fiber_migrate_httpfs.go")
+			for name, content := range res.files {
+				if strings.HasPrefix(content, "package") && strings.Contains(content, "filesystem") {
+					assert.Contains(t, content, "static.Config{FS: box}", name)
+				}
+			}
+			require.Len(t, res.notes, 1)
+			assert.Contains(t, res.notes[0].Message, "It was kept as the file system, which does not build")
+		})
+	}
 }
 
 func Test_MigrateFilesystemMiddleware_ContentTypeCharset(t *testing.T) {

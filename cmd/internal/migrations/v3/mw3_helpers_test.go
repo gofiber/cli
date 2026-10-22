@@ -2,6 +2,8 @@ package v3_test
 
 import (
 	"bytes"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +20,8 @@ type mw3Migration = func(cmd *cobra.Command, cwd string, curr, target *semver.Ve
 
 // mw3Result is what a migration did to a project.
 type mw3Result struct {
-	// files holds the content of every file of the project after the run.
+	// files holds the content of every file of the project after the run, the
+	// ones the migration added included.
 	files map[string]string
 	// out is what the migration printed.
 	out string
@@ -45,9 +48,17 @@ func mw3Run(t *testing.T, files map[string]string, migrations ...mw3Migration) m
 	}
 
 	res := mw3Result{files: map[string]string{}, out: buf.String(), notes: internal.DrainNotes(dir)}
-	for name := range files {
-		res.files[name] = readFile(t, filepath.Join(dir, name))
-	}
+	require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return fmt.Errorf("relative path of %s: %w", path, err)
+		}
+		res.files[filepath.ToSlash(rel)] = readFile(t, path)
+		return nil
+	}))
 	return res
 }
 

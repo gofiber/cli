@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -140,25 +141,56 @@ func mw3Imports(file *ast.File, path string) bool {
 
 // mw3DeleteUnusedImport removes the import of path from file when the file does
 // not use it. Blank and dot imports are kept: they are there for their effect.
+// So is an import whose name cannot be told from its path, which only the
+// package itself declares: the standard library and the fiber modules are
+// known, anything else must carry an alias to be removed.
 func mw3DeleteUnusedImport(fset *token.FileSet, file *ast.File, path string) bool {
 	changed := false
 	for _, spec := range slices.Clone(file.Imports) {
 		if p, err := strconv.Unquote(spec.Path.Value); err != nil || p != path {
 			continue
 		}
-		alias := ""
+		alias, name := "", mw3KnownPackageName(path)
 		if spec.Name != nil {
 			if spec.Name.Name == "_" || spec.Name.Name == "." {
 				continue
 			}
-			alias = spec.Name.Name
+			alias, name = spec.Name.Name, spec.Name.Name
 		}
-		if astutil.UsesImport(file, path) {
+		if name == "" || mw3UsesName(file, name) {
 			continue
 		}
 		changed = astutil.DeleteNamedImport(fset, file, alias, path) || changed
 	}
 	return changed
+}
+
+// mw3KnownPackageName returns the name of the package at path when the path
+// says it: the standard library and the modules of Fiber name their packages
+// after the last element of the path. It is empty for any other package, whose
+// name is its own business.
+func mw3KnownPackageName(path string) string {
+	first, _, _ := strings.Cut(path, "/")
+	if !strings.Contains(first, ".") || strings.HasPrefix(path, "github.com/gofiber/") {
+		return defaultImportName(path)
+	}
+	return ""
+}
+
+// mw3UsesName reports whether the file refers to a package by name: a selector
+// on an identifier that no declaration in the file binds. The file must have
+// been parsed with its objects resolved.
+func mw3UsesName(file *ast.File, name string) bool {
+	used := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == name && id.Obj == nil {
+				used = true
+			}
+		}
+		return !used
+	})
+	return used
 }
 
 // mw3DeclaredNames returns every name src declares: the imports, package level

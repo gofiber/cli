@@ -442,9 +442,9 @@ func (p *mw3FSPass) stringsQualifier() string {
 
 // rootFS returns the fs.FS expression for a v2 Root: os.DirFS for http.Dir, the
 // file system itself for http.FS. Any other http.FileSystem has no fs.FS in
-// the standard library, so its expression is kept and the build says where
-// it is not accepted; at is where the note about it goes and what says what
-// the expression was.
+// the standard library: it is wrapped in an adapter the package gets, and when
+// the package cannot have one the expression is kept for the build to refuse.
+// at is where the note about it goes and what says what the expression was.
 func (p *mw3FSPass) rootFS(e ast.Expr, stack []ast.Node, at ast.Node, what string) string {
 	g := p.g
 	if call, ok := e.(*ast.CallExpr); ok && len(call.Args) == 1 && !call.Ellipsis.IsValid() {
@@ -454,6 +454,14 @@ func (p *mw3FSPass) rootFS(e ast.Expr, stack []ast.Node, at ast.Node, what strin
 		case p.isHTTP(call.Fun, "FS", stack):
 			return g.text(call.Args[0])
 		}
+	}
+
+	if p.pkgs.ensureHTTPFSAdapter(p.fi, p.g.file.Name.Name) {
+		internal.Notef(p.fi, g.line(at.Pos()),
+			"%s %s is an http.FileSystem, and v3 takes an fs.FS: it is wrapped in %s, which %s adds to this package. "+
+				"Serving an embed.FS or os.DirFS(dir) instead would make the adapter unnecessary.",
+			what, g.text(e), mw3HTTPFSType, mw3HTTPFSFile)
+		return mw3HTTPFSType + "{" + g.text(e) + "}"
 	}
 
 	internal.Notef(p.fi, g.line(at.Pos()),

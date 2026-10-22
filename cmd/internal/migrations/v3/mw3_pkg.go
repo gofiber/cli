@@ -36,6 +36,8 @@ type mw3Pkg struct {
 	names map[string]struct{}
 	// session is what the package says about the fiber session middleware.
 	session mw3SessionFacts
+	// httpFS is whether the package has the adapter of an http.FileSystem.
+	httpFS bool
 }
 
 // of returns the facts about the package the file fi belongs to. The facts
