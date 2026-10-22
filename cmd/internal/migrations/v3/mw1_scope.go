@@ -171,9 +171,9 @@ func mw1StartsLine(src string, offset int) bool {
 }
 
 // mw1SkipSpaces returns the offset of the first byte at or after i that is not
-// a space or a tab.
+// a space, a tab or the carriage return of a CRLF line break.
 func mw1SkipSpaces(src string, i int) int {
-	for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+	for i < len(src) && (src[i] == ' ' || src[i] == '\t' || src[i] == '\r') {
 		i++
 	}
 	return i

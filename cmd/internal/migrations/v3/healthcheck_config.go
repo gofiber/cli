@@ -792,7 +792,7 @@ func (h *hcMigration) reportLeftovers() {
 		}
 		h.rep.notef(lit,
 			"%s.Config has no LivenessProbe, ReadinessProbe, LivenessEndpoint or ReadinessEndpoint in v3, where each probe is a handler of its own with a single Probe: "+
-				"register app.Get(\"/live\", %s.New(%s.Config{Probe: ...})) for every probe (the literal was left as it is)",
+				"register one route per probe, app.Get(<its endpoint, /livez or /readyz by default>, %s.New(%s.Config{Probe: ...})) (the literal was left as it is)",
 			pkg, pkg, pkg)
 	}
 }
