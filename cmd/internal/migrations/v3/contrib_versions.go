@@ -1,25 +1,33 @@
 package v3
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
+	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
-const contribV3ProxyPrefix = "https://proxy.golang.org/github.com/gofiber/contrib/v3/"
+// contribLookupTimeout bounds the lookup of one module version.
+const contribLookupTimeout = time.Minute
 
 var (
 	contribV3VersionMu      sync.Mutex
 	contribV3VersionCache   = make(map[string]string)
 	contribV3VersionFetcher = fetchContribV3Version
 	contribV3VersionGroup   singleflight.Group
-	contribHTTPClient       = &http.Client{}
 )
+
+// errContribNoVersion is returned when the module lookup answers without a version.
+var errContribNoVersion = errors.New("no version in the answer")
 
 func contribV3Version(module string) (string, error) {
 	contribV3VersionMu.Lock()
@@ -53,38 +61,58 @@ func contribV3Version(module string) (string, error) {
 	return v, nil
 }
 
+// fetchContribV3Version asks the go command for the latest version of
+// github.com/gofiber/contrib/v3/<module>. The go command knows about GOPROXY,
+// GOFLAGS, GOPRIVATE, credentials and the module cache, which a request to
+// proxy.golang.org does not, so a network that only reaches a private proxy
+// works too.
 func fetchContribV3Version(module string) (version string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	path := contribV3Prefix + module
 
-	url := contribV3ProxyPrefix + module + "/@latest"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// Outside of any module, so that the go.mod of the project (a go directive
+	// that asks for another toolchain, a vendor directory) cannot get in the way.
+	dir, err := os.MkdirTemp("", "fiber-migrate-contrib-")
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-
-	res, err := contribHTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch latest version: %w", err)
+		return "", fmt.Errorf("create lookup directory: %w", err)
 	}
 	defer func() {
-		if cerr := res.Body.Close(); cerr != nil && err == nil {
-			err = cerr
+		if rerr := os.RemoveAll(dir); rerr != nil && err == nil {
+			err = fmt.Errorf("remove lookup directory: %w", rerr)
 		}
 	}()
 
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch latest version: unexpected status %d", res.StatusCode)
+	// -mod=mod beats a GOFLAGS=-mod=vendor of the environment, which cannot
+	// query a module.
+	cmd := internal.ExecCommand("go", "list", "-mod=mod", "-m", "-json", path+"@latest") // #nosec G204 -- fixed command, module name from the CLI's own table
+	cmd.Dir = dir
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GOWORK=") }), "GOWORK=off")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("run go list: %w", err)
+	}
+	timer := time.AfterFunc(contribLookupTimeout, func() {
+		_ = cmd.Process.Kill() //nolint:errcheck // the process may have exited already
+	})
+	runErr := cmd.Wait()
+	timer.Stop()
+	if runErr != nil {
+		// The go command names the module and says what is wrong.
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("%s: %w", msg, runErr)
+		}
+		return "", fmt.Errorf("go list %s@latest: %w", path, runErr)
 	}
 
 	var data struct {
-		Version string `json:"Version"` //nolint:tagliatelle // field name defined by proxy
+		Version string `json:"Version"` //nolint:tagliatelle // field name defined by the go command
 	}
-	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
-		return "", fmt.Errorf("parse latest version: %w", err)
+	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil {
+		return "", fmt.Errorf("parse go list output for %s: %w", path, err)
 	}
 	if data.Version == "" {
-		return "", fmt.Errorf("latest version not found for %s", module)
+		return "", fmt.Errorf("latest version of %s: %w", path, errContribNoVersion)
 	}
 
 	return data.Version, nil

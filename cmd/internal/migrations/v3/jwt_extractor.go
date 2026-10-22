@@ -2,7 +2,10 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
+	"go/token"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -12,79 +15,66 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// contribJWTMentionRe finds the files that import the jwt middleware.
+var contribJWTMentionRe = regexp.MustCompile(`github\.com/gofiber/(?:contrib/(?:v3/)?jwt|jwt)\b`)
+
+// contribAuthorizationHeader is the header the Authorization extractors read.
+const contribAuthorizationHeader = "Authorization"
+
+// contribExtractor is a call of the extractors package: FromCookie("jwt").
+type contribExtractor struct {
+	fn  string
+	arg string
+}
+
+// contribString is a string a config sets: the text of its expression and, when
+// the expression is a constant the migration can evaluate, its value.
+type contribString struct {
+	text  string
+	value string
+	known bool
+}
+
+// contribHeaderExtractor returns the extractor of a header whose value carries
+// the scheme in front of the token, and ok is false when no extractor of the
+// extractors package reads such a header. Only the Authorization header has one
+// that strips a scheme, and it takes whatever the scheme is; any other header can
+// be read when there is no scheme.
+func contribHeaderExtractor(name string, scheme contribString) (e contribExtractor, ok bool) {
+	switch {
+	case strings.EqualFold(name, contribAuthorizationHeader):
+		return contribExtractor{fn: "FromAuthHeader", arg: scheme.text}, true
+	case scheme.known && scheme.value == "":
+		return contribExtractor{fn: "FromHeader", arg: strconv.Quote(name)}, true
+	}
+	return contribExtractor{}, false
+}
+
+// renderExtractors writes the extractors as one expression, importing the
+// extractors package.
+func (f *contribFile) renderExtractors(parts []contribExtractor) string {
+	pkg := f.extractorsName()
+	exprs := make([]string, len(parts))
+	for i, p := range parts {
+		exprs[i] = pkg + "." + p.fn + "(" + p.arg + ")"
+	}
+	if len(exprs) == 1 {
+		return exprs[0]
+	}
+	return pkg + ".Chain(" + strings.Join(exprs, ", ") + ")"
+}
+
+// MigrateJWTExtractor moves the token lookup of the jwt middleware to the
+// Extractor of v3, drops the fields that are gone (ContextKey), renames Filter to
+// Next and moves the references to the error the middleware used to report for a
+// missing token.
+//
+// v2 applied the AuthScheme to every header lookup, and defaulted it to Bearer
+// only when TokenLookup was empty; the extractor repeats exactly that, so the
+// credentials a client has to send do not change. A config that has no faithful
+// extractor is left alone (it does not compile, which is the point) and reported.
 func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	// The import matcher also needs to work after contrib packages were already migrated
-	// to their v3 module paths (e.g. github.com/gofiber/contrib/v3/jwt).
-	reImport := regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w\.]+)\s+)?"github\.com/gofiber/(?:contrib(?:/v\d+)?/)?jwt(?:/v\d+)?"(?:\s*//[^\n]*)?`)
-	reAuthScheme := regexp.MustCompile(`(?m)^\s*AuthScheme:\s*([^,\n]+)`)
-	reAuthLine := regexp.MustCompile(`(?m)^\s*AuthScheme:\s*[^\n]+\n?`)
-	reFilter := regexp.MustCompile(`(?m)^(\s*)Filter:\s*`)
-
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		aliases := collectAliases(content, reImport, []string{"jwtware", "jwt"})
-		if len(aliases) == 0 {
-			return content
-		}
-
-		updated := content
-		for _, alias := range aliases {
-			reConfig := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config{(?:[^{}]|{[^{}]*})*}`)
-			updated = reConfig.ReplaceAllStringFunc(updated, func(cfg string) string {
-				schemeArg := "\"Bearer\""
-				if am := reAuthScheme.FindStringSubmatch(cfg); len(am) > 1 {
-					raw := strings.TrimSpace(am[1])
-					if uq, err := strconv.Unquote(raw); err == nil {
-						schemeArg = fmt.Sprintf("%q", uq)
-					} else {
-						schemeArg = raw
-					}
-				}
-
-				cfg = replaceStringField(cfg, "TokenLookup", func(indent, val, comma, comment, newline string) string {
-					parts := strings.Split(val, ",")
-					var extractors []string
-					for _, p := range parts {
-						p = strings.TrimSpace(p)
-						switch {
-						case strings.HasPrefix(p, "header:"):
-							header := strings.TrimPrefix(p, "header:")
-							if strings.EqualFold(header, "Authorization") {
-								extractors = append(extractors, fmt.Sprintf("extractors.FromAuthHeader(%s)", schemeArg))
-							} else {
-								extractors = append(extractors, fmt.Sprintf("extractors.FromHeader(%q)", header))
-							}
-						case strings.HasPrefix(p, "query:"):
-							extractors = append(extractors, fmt.Sprintf("extractors.FromQuery(%q)", strings.TrimPrefix(p, "query:")))
-						case strings.HasPrefix(p, "param:"):
-							extractors = append(extractors, fmt.Sprintf("extractors.FromParam(%q)", strings.TrimPrefix(p, "param:")))
-						case strings.HasPrefix(p, "cookie:"):
-							extractors = append(extractors, fmt.Sprintf("extractors.FromCookie(%q)", strings.TrimPrefix(p, "cookie:")))
-						case strings.HasPrefix(p, "form:"):
-							extractors = append(extractors, fmt.Sprintf("extractors.FromForm(%q)", strings.TrimPrefix(p, "form:")))
-						default:
-							return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
-						}
-					}
-
-					extractor := BuildExtractorChain(extractors)
-					if extractor == "" {
-						return FormatFieldWithComment(indent, "// TODO: migrate TokenLookup", val, "", comment, newline)
-					}
-
-					return FormatFieldWithComment(indent, "Extractor", extractor, comma, comment, newline)
-				})
-
-				cfg = reAuthLine.ReplaceAllString(cfg, "")
-				cfg = reFilter.ReplaceAllString(cfg, "${1}Next: ")
-				return cfg
-			})
-		}
-
-		if updated != content && strings.Contains(updated, "extractors.") {
-			updated = addImport(updated, "github.com/gofiber/fiber/v3/extractors")
-		}
-		return updated
-	})
+	changed, err := internal.ChangeFileContentInfo(cwd, migrateJWTContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate jwt extractor config: %w", err)
 	}
@@ -94,4 +84,325 @@ func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 
 	cmd.Println("Migrating jwt middleware configs")
 	return nil
+}
+
+func migrateJWTContent(content string, fi internal.FileInfo) string {
+	if !contribJWTMentionRe.MatchString(content) {
+		return content
+	}
+	g, ok := parseFile(fi, content)
+	if !ok {
+		return content
+	}
+	names := contribNames(g, "jwt")
+	if len(names) == 0 {
+		return content
+	}
+
+	f := newContribFile(g, fi)
+	for _, c := range f.findConfigs(names) {
+		f.jwtConfig(c)
+	}
+	f.jwtErrors(contribImportsOf(g, "jwt"))
+	return f.apply()
+}
+
+// jwtConfig migrates one jwtware.Config.
+func (f *contribFile) jwtConfig(c *contribConfig) {
+	defer c.finish()
+
+	// A config that has its Extractor is a v3 config already.
+	if c.get("Extractor") != nil {
+		return
+	}
+
+	parts, reason := f.jwtLookup(c)
+	t, a := c.get("TokenLookup"), c.get("AuthScheme")
+	switch {
+	case reason != "":
+		at := t
+		if at == nil {
+			at = a
+		}
+		f.notef(at.pos(), "jwt Config: %s; v3 reads the token with Config.Extractor instead of TokenLookup and AuthScheme "+
+			"(extractors.FromAuthHeader, FromCookie, FromQuery, Chain, ...), set it by hand", reason)
+	case len(parts) > 0 && t != nil:
+		c.replace("TokenLookup", "Extractor", f.renderExtractors(parts))
+		c.remove("AuthScheme")
+	case len(parts) > 0:
+		c.replace("AuthScheme", "Extractor", f.renderExtractors(parts))
+	default:
+		// The scheme is the one v3 defaults to.
+		c.remove("AuthScheme")
+	}
+
+	c.remove("ContextKey")
+	c.rename("Filter", "Next")
+}
+
+// jwtLookup works out the extractors a v2 config stands for. parts is empty when
+// the default extractor of v3 does the same, reason says why there is no
+// faithful translation.
+func (f *contribFile) jwtLookup(c *contribConfig) (parts []contribExtractor, reason string) {
+	t, a := c.get("TokenLookup"), c.get("AuthScheme")
+	if !c.settled("TokenLookup", "AuthScheme") {
+		return nil, "TokenLookup or AuthScheme is set conditionally"
+	}
+
+	scheme := contribString{text: `""`, known: true}
+	if a != nil {
+		scheme = f.stringOf(a.value, nil)
+	}
+
+	// Without a TokenLookup v2 reads the Authorization header, and falls back to
+	// the Bearer scheme when there is no AuthScheme either.
+	if t == nil {
+		switch {
+		case a == nil:
+			return nil, ""
+		case !scheme.known:
+			return nil, "AuthScheme is not a string constant"
+		case scheme.value == "" || strings.EqualFold(scheme.value, "Bearer"):
+			return nil, ""
+		}
+		return []contribExtractor{{fn: "FromAuthHeader", arg: scheme.text}}, ""
+	}
+
+	lookup := f.stringOf(t.value, nil)
+	if !lookup.known {
+		return nil, "TokenLookup is not a string constant"
+	}
+	for root := range strings.SplitSeq(lookup.value, ",") {
+		// v2 read the source and the name of "<source>:<name>" this way.
+		src := strings.Split(strings.TrimSpace(root), ":")
+		if len(src) < 2 {
+			return nil, fmt.Sprintf("TokenLookup %q is not made of <source>:<name> parts", lookup.value)
+		}
+		name := strconv.Quote(src[1])
+
+		switch src[0] {
+		case contribSourceHeader:
+			e, ok := contribHeaderExtractor(src[1], scheme)
+			if !ok {
+				return nil, fmt.Sprintf("v2 expected the AuthScheme (%s) in front of the token in the %s header, which no built-in extractor reads", scheme.text, src[1])
+			}
+			parts = append(parts, e)
+		case contribSourceQuery:
+			parts = append(parts, contribExtractor{fn: "FromQuery", arg: name})
+		case contribSourceParam:
+			parts = append(parts, contribExtractor{fn: "FromParam", arg: name})
+		case contribSourceCookie:
+			parts = append(parts, contribExtractor{fn: "FromCookie", arg: name})
+		case contribSourceForm:
+			parts = append(parts, contribExtractor{fn: "FromForm", arg: name})
+		default:
+			// v2 skipped the sources it did not know.
+		}
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Sprintf("TokenLookup %q names no source that v2 reads", lookup.value)
+	}
+	return parts, ""
+}
+
+// jwtErrors moves the references to jwtware.ErrJWTMissingOrMalformed. v2 gave
+// that error to the ErrorHandler when the request carried no token; v3 gives it
+// extractors.ErrNotFound, whatever the text of the error says. A comparison with
+// the error follows it, any other use of the error wants its text, which
+// ErrMissingToken has.
+func (f *contribFile) jwtErrors(imports []contribImport) {
+	names := make([]string, len(imports))
+	messages := map[string]bool{}
+	for i, imp := range imports {
+		names[i] = imp.name
+		// The two modules did not spell the message alike.
+		if imp.legacy {
+			messages["Missing or malformed JWT"] = true
+		} else {
+			messages["missing or malformed JWT"] = true
+		}
+	}
+
+	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			id, ok := x.X.(*ast.Ident)
+			if !ok || x.Sel.Name != "ErrJWTMissingOrMalformed" || !slices.Contains(names, id.Name) {
+				return true
+			}
+			if contribComparesError(stack) {
+				f.edits.replaceNode(f.g, x, f.extractorsName()+".ErrNotFound")
+			} else {
+				f.edits.replaceNode(f.g, x.Sel, "ErrMissingToken")
+			}
+		case *ast.BinaryExpr:
+			f.jwtMessageComparison(x, messages)
+		}
+		return true
+	})
+}
+
+// jwtMessageComparison rewrites err.Error() == "missing or malformed JWT", which
+// v3 never makes true because the error it hands over says "value not found".
+func (f *contribFile) jwtMessageComparison(x *ast.BinaryExpr, messages map[string]bool) {
+	if x.Op != token.EQL && x.Op != token.NEQ {
+		return
+	}
+
+	call, lit := x.X, x.Y
+	if _, ok := contribStringLit(call); ok {
+		call, lit = lit, call
+	}
+	msg, ok := contribStringLit(lit)
+	if !ok || !messages[msg] {
+		return
+	}
+	errCall, ok := call.(*ast.CallExpr)
+	if !ok || len(errCall.Args) != 0 {
+		return
+	}
+	sel, ok := errCall.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Error" {
+		return
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	errorsPkg, ok := f.stdName("errors")
+	if !ok {
+		f.notef(x.Pos(), "the jwt ErrorHandler no longer receives an error that says %q (it is extractors.ErrNotFound); "+
+			"compare with errors.Is(err, extractors.ErrNotFound)", msg)
+		return
+	}
+	text := errorsPkg + ".Is(" + id.Name + ", " + f.extractorsName() + ".ErrNotFound)"
+	if x.Op == token.NEQ {
+		text = "!" + text
+	}
+	f.edits.replaceNode(f.g, x, text)
+}
+
+// contribComparesError reports whether the node on top of the stack is compared
+// to an error: errors.Is(err, X), err == X, a case of a switch on the error, or
+// the text of X compared to the text of another error.
+func contribComparesError(stack []ast.Node) bool {
+	if len(stack) == 0 {
+		return false
+	}
+
+	switch p := stack[len(stack)-1].(type) {
+	case *ast.CallExpr:
+		sel, ok := p.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		id, ok := sel.X.(*ast.Ident)
+		return ok && id.Name == "errors" && sel.Sel.Name == "Is"
+	case *ast.BinaryExpr:
+		return p.Op == token.EQL || p.Op == token.NEQ
+	case *ast.CaseClause:
+		return true
+	case *ast.SelectorExpr:
+		// X.Error() as an operand of a comparison, or as a case of a switch.
+		if p.Sel.Name != "Error" || len(stack) < 3 {
+			return false
+		}
+		if _, ok := stack[len(stack)-2].(*ast.CallExpr); !ok {
+			return false
+		}
+		switch gp := stack[len(stack)-3].(type) {
+		case *ast.BinaryExpr:
+			return gp.Op == token.EQL || gp.Op == token.NEQ
+		case *ast.CaseClause:
+			return true
+		}
+	}
+	return false
+}
+
+// jwtLegacyOnly are the settings of the standalone gofiber/jwt module that
+// contrib/v3/jwt has no field for (key sets are JWKSetURLs there, and the
+// refresh of the keys is not configurable).
+var jwtLegacyOnly = []string{
+	"SigningKeys", "KeySetURL", "KeySetURLs", "KeyRefreshSuccessHandler", "KeyRefreshErrorHandler",
+	"KeyRefreshInterval", "KeyRefreshRateLimit", "KeyRefreshTimeout", "KeyRefreshUnknownKID",
+}
+
+// jwtLegacyAlgs are the algorithm constants of the standalone module.
+var jwtLegacyAlgs = []string{
+	"HS256", "HS384", "HS512", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+}
+
+// jwtLegacy migrates what a file written for the standalone gofiber/jwt module
+// needs besides the path of its import: the key of the config, the golang-jwt
+// version and the message of the error for a missing token. It runs while the
+// import is moved, since afterwards nothing tells which module the file used.
+func (f *contribFile) jwtLegacy() {
+	var legacy []contribImport
+	var names []string
+	for _, imp := range contribImportsOf(f.g, "jwt") {
+		if imp.legacy {
+			legacy = append(legacy, imp)
+			names = append(names, imp.name)
+		}
+	}
+	if len(legacy) == 0 {
+		return
+	}
+
+	for _, c := range f.findConfigs(names) {
+		f.jwtLegacyConfig(c)
+	}
+	f.jwtErrors(legacy)
+	f.jwtLegacyImports()
+}
+
+// jwtLegacyConfig moves the key of a config of the standalone gofiber/jwt module.
+// It took the key itself and the algorithm next to it (HS256 when none was
+// given); contrib/v3/jwt takes a SigningKey that holds both.
+func (f *contribFile) jwtLegacyConfig(c *contribConfig) {
+	defer c.finish()
+
+	for _, field := range jwtLegacyOnly {
+		if s := c.get(field); s != nil {
+			f.notef(s.pos(), "jwt Config: %s of the standalone gofiber/jwt module has no counterpart in contrib/v3/jwt "+
+				"(SigningKey takes a jwtware.SigningKey{Key: ..., JWTAlg: ...}, key sets are JWKSetURLs); move it by hand", field)
+			return
+		}
+	}
+
+	key, method := c.get("SigningKey"), c.get("SigningMethod")
+	if key != nil {
+		if lit, ok := key.value.(*ast.CompositeLit); !ok || lit.Type == nil || !contribIsPkgType(lit.Type, []string{c.pkg}, "SigningKey") {
+			alg := strconv.Quote("HS256")
+			if method != nil {
+				alg = f.jwtLegacyAlg(method.value, c.pkg)
+			}
+			f.edits.replaceNode(f.g, key.value, c.pkg+".SigningKey{Key: "+f.g.text(key.value)+", JWTAlg: "+alg+"}")
+		}
+	}
+	c.remove("SigningMethod")
+}
+
+// jwtLegacyAlg writes the algorithm that SigningMethod names: the constants of the
+// standalone module are strings now.
+func (f *contribFile) jwtLegacyAlg(e ast.Expr, pkg string) string {
+	if sel, ok := e.(*ast.SelectorExpr); ok && isIdentNamed(sel.X, pkg) && slices.Contains(jwtLegacyAlgs, sel.Sel.Name) {
+		return strconv.Quote(sel.Sel.Name)
+	}
+	return f.g.text(e)
+}
+
+// jwtLegacyImports moves the golang-jwt import of a file that used the standalone
+// module from v4 to v5: contrib/v3/jwt hands tokens and claims of v5 over.
+func (f *contribFile) jwtLegacyImports() {
+	for _, spec := range f.g.file.Imports {
+		if contribUnquote(spec.Path.Value) != "github.com/golang-jwt/jwt/v4" {
+			continue
+		}
+		f.edits.replaceNode(f.g, spec.Path, strconv.Quote("github.com/golang-jwt/jwt/v5"))
+		f.notef(spec.Pos(), "the standalone gofiber/jwt module used golang-jwt/jwt v4 and contrib/v3/jwt uses v5, "+
+			"so this import moved to v5 (jwt.StandardClaims is jwt.RegisteredClaims there)")
+	}
 }
