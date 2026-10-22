@@ -213,7 +213,7 @@ func (h *hcMigration) packageDeclaration(name string) (dh *hcMigration, lit *ast
 
 	pkg := h.pkg()
 	if !pkg.complete {
-		return nil, nil, notHere + ", and the other files of its package cannot all be read"
+		return nil, nil, notHere + " and a file of its package cannot be read, so it cannot be followed"
 	}
 
 	var found *hcFile
@@ -221,7 +221,7 @@ func (h *hcMigration) packageDeclaration(name string) (dh *hcMigration, lit *ast
 	for _, f := range pkg.files {
 		if s := hcPackageVar(f.g.file, name); s != nil {
 			if found != nil {
-				return nil, nil, notHere + ", and the package declares it twice" // as build constraints can have it
+				return nil, nil, "is declared more than once in its package, as build constraints can have it"
 			}
 			found, spec = f, s
 		}
@@ -232,7 +232,7 @@ func (h *hcMigration) packageDeclaration(name string) (dh *hcMigration, lit *ast
 
 	value, isLit := spec.Values[0].(*ast.CompositeLit)
 	if !isLit {
-		return nil, nil, notHere + ", and is not a literal where " + h.relPath(found.path) + " declares it"
+		return nil, nil, "is declared in " + h.relPath(found.path) + ", but not with a literal"
 	}
 	return found.h, value, ""
 }

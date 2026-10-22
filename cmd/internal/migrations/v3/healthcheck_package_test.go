@@ -303,6 +303,18 @@ func init() { healthConfig.LivenessEndpoint = "/alive" }
 func Test_MigrateHealthcheckConfig_ConfigInAnotherFileThatCannotBeFollowed(t *testing.T) {
 	t.Parallel()
 
+	// what each case says about why the call stays as it is
+	reasons := map[string]string{
+		"exported variable of a library":                "its config HealthConfig (declared in config.go) is exported and may be used by other packages",
+		"function that returns the config":              "its config is not a literal",
+		"variable of another package":                   "its config is not a literal",
+		"endpoint of another package":                   "its config healthConfig (declared in config.go) has an endpoint that cannot be written in this file",
+		"endpoint that a local name hides":              "its config healthConfig (declared in config.go) has an endpoint that cannot be written in this file",
+		"variable that build constraints declare twice": "its config healthConfig is declared more than once in its package",
+		"variable that a call initializes":              "its config healthConfig is declared in config.go, but not with a literal",
+		"file that does not parse":                      "its config healthConfig is not declared next to it and a file of its package cannot be read",
+	}
+
 	for name, files := range map[string]map[string]string{
 		"exported variable of a library": {
 			"main.go": `package server
@@ -383,6 +395,43 @@ const livePath = "/up"
 var healthConfig = healthcheck.Config{LivenessEndpoint: livePath}
 `,
 		},
+		"variable that build constraints declare twice": {
+			"main.go": `package main
+
+` + hcImports + `
+func routes(app *fiber.App) { app.Use(healthcheck.New(healthConfig)) }
+`,
+			"config_linux.go": `//go:build linux
+
+package main
+
+` + hcImports + `
+var healthConfig = healthcheck.Config{LivenessProbe: func(c *fiber.Ctx) bool { return true }}
+`,
+			"config_other.go": `//go:build !linux
+
+package main
+
+` + hcImports + `
+var healthConfig = healthcheck.Config{LivenessProbe: func(c *fiber.Ctx) bool { return false }}
+`,
+		},
+		"variable that a call initializes": {
+			"main.go": `package main
+
+` + hcImports + `
+func routes(app *fiber.App) { app.Use(healthcheck.New(healthConfig)) }
+`,
+			"config.go": `package main
+
+` + hcImports + `
+var healthConfig = buildConfig()
+
+func buildConfig() healthcheck.Config {
+	return healthcheck.Config{LivenessProbe: func(c *fiber.Ctx) bool { return true }}
+}
+`,
+		},
 		"file that does not parse": {
 			"main.go": `package main
 
@@ -408,7 +457,8 @@ func broken( {
 			for file, src := range files {
 				assert.Equal(t, src, res.files[file], file)
 			}
-			assert.Contains(t, strings.Join(res.notes, "\n"), "healthcheck.New() was left as it is")
+			notes := strings.Join(res.notes, "\n")
+			assert.Contains(t, notes, "healthcheck.New() was left as it is: "+reasons[name])
 			assert.Empty(t, res.stdout)
 		})
 	}
