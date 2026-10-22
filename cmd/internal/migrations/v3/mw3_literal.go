@@ -40,6 +40,10 @@ func mw3Indent(src string, off int) string {
 // literal that spans lines gets the element on a line of its own.
 func mw3AddElement(g *goSource, edits *editSet, lit *ast.CompositeLit, text string) {
 	if len(lit.Elts) == 0 {
+		// The literal may hold nothing but a comment on a line of its own.
+		if g.line(lit.Rbrace) > g.line(lit.Lbrace) {
+			text += ","
+		}
 		open := g.offset(lit.Lbrace) + 1
 		edits.replace(open, open, text)
 		return

@@ -394,3 +394,85 @@ func purge() error { return store.Reset() }
 		})
 	}
 }
+
+// However the code is laid out, what a migration writes parses and has the
+// imports it needs.
+func Test_MigrationsWriteValidGoForAnyLayout(t *testing.T) {
+	t.Parallel()
+
+	const sessionHeader = `package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var _ = fmt.Sprint
+var _ = time.Now
+var _ = fiber.New
+
+`
+	const fsHeader = `package main
+
+import (
+	"net/http"
+	"path/filepath"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+var _ = http.StatusOK
+var _ = filepath.Join
+var _ = fiber.New
+
+`
+	sessionBodies := []string{
+		"var s = session.New(\n\tsession.Config{\n\t\tCookieSecure: true,\n\t},\n)",
+		"var s = session.New(session.Config{\n\t// only a comment\n})",
+		"var s = session.New(session.Config{CookieSecure: true /* inline */, KeyLookup: \"cookie:a\"})",
+		"var s = session.New(session.Config{\n\tKeyLookup: \"cookie:a\", // the cookie\n\tCookieSecure: true, // only over https\n})",
+		"var s = session.New(session.Config{KeyLookup: `header:X-Token`,\n\tExpiration: time.Hour})",
+		"func f(cfgs ...session.Config) *session.Store { return session.New(cfgs...) }",
+		"var f = session.New\nvar s = f()",
+		"func f[T any](v T) *session.Store {\n\treturn session.New(session.Config{CookieName: fmt.Sprint(v)})\n}",
+		"func f() {\n\tgo func() {\n\t\ts := session.New()\n\t\t_ = s\n\t}()\n}",
+		"var s = []*session.Store{\n\tsession.New(),\n\tsession.New(session.Config{KeyLookup: \"query:q\"}),\n}",
+		"var s = map[string]*session.Store{\"a\": session.New()}",
+		"func f(c *fiber.Ctx) error {\n\tstore := session.New()\n\tsess, err := store.Get(c)\n\tif err != nil {\n\t\treturn err\n\t}\n\tsess.SetExpiry(time.Minute)\n\tstore.Delete(sess.ID())\n\treturn store.Reset()\n}",
+	}
+	fsBodies := []string{
+		"var _ = filesystem.New(\n\tfilesystem.Config{\n\t\tRoot: http.Dir(\n\t\t\t\"./x\",\n\t\t),\n\t},\n)",
+		"var _ = filesystem.New(filesystem.Config{\n\tRoot: http.Dir(\".\"), // the root\n\tIndex: \"i.html\", // the index\n\tBrowse: true,\n})",
+		"var _ = filesystem.New(filesystem.Config{Root: /* c */ http.Dir(\".\"), Index: \"i.html\" /* d */})",
+		"func f(cfgs ...filesystem.Config) fiber.Handler { return filesystem.New(cfgs...) }",
+		"var cfg = filesystem.Config{\n\tRoot:         http.Dir(filepath.Join(\".\", \"x\")),\n\tNotFoundFile: \"index.html\",\n\tMaxAge:       1,\n}",
+		"var h = filesystem.New",
+		"func f(c *fiber.Ctx) error {\n\treturn filesystem.SendFile(\n\t\tc,\n\t\thttp.Dir(\".\"),\n\t\t\"x\",\n\t)\n}",
+		"func f() filesystem.Config {\n\tvar cfg filesystem.Config\n\tcfg.Root = http.Dir(\".\")\n\tcfg.Index = \"/x.html\"\n\treturn cfg\n}",
+		"var _ = filesystem.New(filesystem.Config{Root: http.Dir(\".\"), ContentTypeCharset: \"utf-8\"})",
+		"var _ = filesystem.New(filesystem.Config{\n\tContentTypeCharset: \"utf-8\",\n\tRoot:               http.Dir(\".\"),\n})",
+	}
+
+	run := func(name, header string, bodies []string, rewrite func(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string) {
+		for i, body := range bodies {
+			t.Run(name+"/"+strconv.Itoa(i), func(t *testing.T) {
+				t.Parallel()
+
+				src := header + body + "\n"
+				got := mw3Direct(t, src, rewrite)
+				_, err := parser.ParseFile(token.NewFileSet(), "", got, parser.ParseComments)
+				require.NoError(t, err, "input:\n%s\noutput:\n%s", src, got)
+				mw3CheckImports(t, got)
+			})
+		}
+	}
+	run("session config", sessionHeader, sessionBodies, mw3SessionConfigContent)
+	run("session extractor", sessionHeader, sessionBodies, mw3SessionExtractorContent)
+	run("session store", sessionHeader, sessionBodies, mw3SessionStoreContent)
+	run("session methods", sessionHeader, sessionBodies, mw3SessionMethodsContent)
+	run("filesystem", fsHeader, fsBodies, mw3FilesystemContent)
+}

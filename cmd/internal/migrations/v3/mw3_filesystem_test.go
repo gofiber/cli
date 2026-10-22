@@ -356,6 +356,8 @@ func main() {
 	assert.Empty(t, res.notes)
 }
 
+// A config that no New call takes in sight cannot hand its PathPrefix to the
+// call, so the file system it serves is narrowed to the directory instead.
 func Test_MigrateFilesystemMiddleware_PathPrefixOfAConfigItCannotFollow(t *testing.T) {
 	t.Parallel()
 
@@ -372,15 +374,54 @@ import (
 var distFS embed.FS
 
 func config() filesystem.Config {
-	return filesystem.Config{Root: http.FS(distFS), PathPrefix: "dist"}
+	return filesystem.Config{Root: http.FS(distFS), PathPrefix: "/dist", NotFoundFile: "dist/index.html"}
 }
 `, v3.MigrateFilesystemMiddleware)
 
-	// The field has no place in static.Config: it stays, so that the build says
-	// where it still is, and is reported.
+	assert.Equal(t, `package main
+
+import (
+	"embed"
+	"io/fs"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/static"
+)
+
+//go:embed dist
+var distFS embed.FS
+
+func config() static.Config {
+	return static.Config{FS: func() fs.FS {
+		sub, err := fs.Sub(distFS, "dist")
+		if err != nil {
+			panic(err)
+		}
+		return sub
+	}(), NotFoundHandler: func(c fiber.Ctx) error {
+		c.Status(fiber.StatusOK)
+		return c.SendFile("dist/index.html", fiber.SendFile{FS: distFS})
+	}}
+}
+`, got)
+	assert.Empty(t, res.notes)
+}
+
+func Test_MigrateFilesystemMiddleware_PathPrefixWithoutARoot(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v2/middleware/filesystem"
+
+func config() filesystem.Config {
+	return filesystem.Config{PathPrefix: "dist"}
+}
+`, v3.MigrateFilesystemMiddleware)
+
 	assert.Contains(t, got, `PathPrefix: "dist"`)
 	require.Len(t, res.notes, 1)
-	assert.Equal(t, 14, res.notes[0].Line)
+	assert.Equal(t, 6, res.notes[0].Line)
 	assert.Contains(t, res.notes[0].Message, "PathPrefix is the first argument of static.New")
 }
 
@@ -798,6 +839,7 @@ func main() {
 		Root:         http.Dir("./files"),
 		NotFoundFile: "404.html",
 		Index:        "index.html",
+		MaxAge:       3600,
 	}))
 }
 `, v3.MigrateFilesystemMiddleware)
@@ -833,9 +875,10 @@ func main() {
 		FS: os.DirFS("./files"),
 		NotFoundHandler: func(c fiber.Ctx) error {
 			c.Status(fiber.StatusOK)
-			return c.SendFile("404.html", fiber.SendFile{FS: os.DirFS("./files")})
+			return c.SendFile("404.html", fiber.SendFile{FS: os.DirFS("./files"), MaxAge: 3600})
 		},
 		IndexNames: []string{"index.html"},
+		MaxAge:     3600,
 	}))
 }
 `, got)

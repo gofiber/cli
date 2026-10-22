@@ -132,15 +132,41 @@ var store = session.New(session.Config{IdleTimeout: time.Hour})
 			name: "a config written for v3 keeps its lifetime",
 			in: `package main
 
-import "github.com/gofiber/fiber/v3/middleware/session"
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
 
-var store = session.NewStore(session.Config{CookieSecure: true, AbsoluteTimeout: 0})
+var withTimeout = session.NewStore(session.Config{CookieSecure: true, AbsoluteTimeout: 0})
+
+var store = session.NewStore(session.Config{CookieSecure: true})
+
+var other = session.NewStore()
+
+func main() {
+	app := fiber.New()
+	app.Use(session.New(session.Config{CookieSecure: true}))
+	app.Use("/api", session.New())
+}
 `,
 			want: `package main
 
-import "github.com/gofiber/fiber/v3/middleware/session"
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
 
-var store = session.NewStore(session.Config{CookieSecure: true, AbsoluteTimeout: 0})
+var withTimeout = session.NewStore(session.Config{CookieSecure: true, AbsoluteTimeout: 0})
+
+var store = session.NewStore(session.Config{CookieSecure: true})
+
+var other = session.NewStore()
+
+func main() {
+	app := fiber.New()
+	app.Use(session.New(session.Config{CookieSecure: true}))
+	app.Use("/api", session.New())
+}
 `,
 		},
 		{

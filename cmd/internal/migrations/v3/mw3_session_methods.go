@@ -93,7 +93,7 @@ func (p *mw3SessionMethodsPass) call(call *ast.CallExpr, stack []ast.Node) {
 		p.edits.replace(start, start, p.context(stack)+", ")
 	case sel.Sel.Name == "Keys" && len(call.Args) == 0 && p.f.isSession(sel.X, stack):
 		internal.Notef(p.fi, g.line(call.Pos()),
-			"Session.Keys() returns []any in v3 (v2: []string): convert the keys where you need strings, for instance with fmt.Sprint(key) or key.(string).")
+			"%s returns []any in v3 (v2: []string): convert the keys where you need strings, for instance with fmt.Sprint(key) or key.(string).", g.text(call))
 	}
 }
 

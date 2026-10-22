@@ -80,6 +80,7 @@ type mw3FSPass struct {
 	// osName, stringsName and fiberName those of the packages the output needs.
 	static      string
 	osName      string
+	fsName      string
 	stringsName string
 	fiberName   string
 	refs        []mw3FSRef
@@ -478,35 +479,43 @@ func (p *mw3FSPass) configLit(lit *ast.CompositeLit, stack []ast.Node) {
 		return
 	}
 
+	// fsys is the file system of the config, which NotFoundFile opens its file
+	// from, and served the one static serves, which PathPrefix may narrow.
 	root := mw3Field(lit, "Root")
 	fsys := ""
 	if root != nil {
 		fsys = p.rootFS(root.Value, stack, root, "Root")
-		p.edits.replaceNode(g, root, "FS: "+fsys)
+	}
+	served := fsys
+	if kv := mw3Field(lit, "PathPrefix"); kv != nil {
+		served = p.pathPrefix(lit, kv, stack, fsys)
+	}
+	if root != nil {
+		p.edits.replaceNode(g, root, "FS: "+served)
 		p.imports.releaseIn(g, root.Value)
 	}
 
-	if kv := mw3Field(lit, "PathPrefix"); kv != nil {
-		p.pathPrefix(lit, kv, stack)
-	}
 	if kv := mw3Field(lit, "Index"); kv != nil {
 		p.index(kv, stack)
 	}
 	if kv := mw3Field(lit, "NotFoundFile"); kv != nil {
-		p.notFoundFile(kv, fsys, stack)
+		p.notFoundFile(kv, mw3Field(lit, "MaxAge"), fsys, stack)
 	}
 	if kv := mw3Field(lit, "ContentTypeCharset"); kv != nil {
 		p.contentTypeCharset(kv, stack)
 	}
 }
 
-// pathPrefix moves the PathPrefix of a config to the New call that takes it:
-// the directory of the file system that static.New serves is its first argument.
-func (p *mw3FSPass) pathPrefix(lit *ast.CompositeLit, kv *ast.KeyValueExpr, stack []ast.Node) {
+// pathPrefix handles the PathPrefix of a config and returns the file system
+// the config serves. The directory of the file system that static.New serves is
+// its first argument, so the prefix goes to the New call that takes the config.
+// A config that no New call takes in sight narrows its file system with
+// fs.Sub instead, and one with no file system keeps the field.
+func (p *mw3FSPass) pathPrefix(lit *ast.CompositeLit, kv *ast.KeyValueExpr, stack []ast.Node, fsys string) string {
 	g := p.g
 	if value, ok := mw3StringLiteral(kv.Value); ok && value == "" {
 		mw3RemoveElement(g, &p.edits, kv)
-		return
+		return fsys
 	}
 
 	calls := p.litCalls[lit]
@@ -515,17 +524,62 @@ func (p *mw3FSPass) pathPrefix(lit *ast.CompositeLit, kv *ast.KeyValueExpr, stac
 			calls = []*ast.CallExpr{call}
 		}
 	}
-	if len(calls) == 0 {
-		internal.Notef(p.fi, g.line(kv.Pos()),
-			"PathPrefix is the first argument of static.New in v3 (static.New(%s, static.Config{FS: ...})), but this config does not reach a filesystem.New call here, so the field was left as it is.",
-			g.text(kv.Value))
-		return
-	}
 
-	for _, call := range calls {
-		p.prefix[call] = g.text(kv.Value)
+	switch {
+	case len(calls) > 0:
+		for _, call := range calls {
+			p.prefix[call] = g.text(kv.Value)
+		}
+	case fsys != "":
+		mw3RemoveElement(g, &p.edits, kv)
+		return p.subFS(kv, fsys, stack)
+	default:
+		internal.Notef(p.fi, g.line(kv.Pos()),
+			"PathPrefix is the first argument of static.New in v3 (static.New(%s, static.Config{FS: ...})), but this config has no Root and does not reach a filesystem.New call here, so the field was left as it is.",
+			g.text(kv.Value))
+		return fsys
 	}
 	mw3RemoveElement(g, &p.edits, kv)
+	return fsys
+}
+
+// subFS narrows the file system to the directory that PathPrefix names, with
+// fs.Sub, for a config whose New call is out of sight.
+func (p *mw3FSPass) subFS(kv *ast.KeyValueExpr, fsys string, stack []ast.Node) string {
+	g := p.g
+	dir := g.text(kv.Value)
+	if value, ok := newMw3Strings(g, p.packageFacts()).value(kv.Value, stack); ok {
+		dir = strconv.Quote(strings.Trim(value, "/"))
+	} else {
+		dir = p.stringsQualifier() + ".Trim(" + dir + ", \"/\")"
+	}
+
+	sub, err := "sub", "err"
+	if regexp.MustCompile(`\bsub\b`).MatchString(fsys) {
+		sub = "subFS"
+	}
+	if regexp.MustCompile(`\berr\b`).MatchString(fsys) {
+		err = "subErr"
+	}
+	return "func() " + p.fsQualifier() + ".FS {\n" +
+		sub + ", " + err + " := " + p.fsQualifier() + ".Sub(" + fsys + ", " + dir + ")\n" +
+		"if " + err + " != nil {\npanic(" + err + ")\n}\n" +
+		"return " + sub + "\n}()"
+}
+
+// fsQualifier returns the identifier of the io/fs package, importing it if needed.
+func (p *mw3FSPass) fsQualifier() string {
+	if p.fsName == "" {
+		p.fsName = mw3ImportName(p.g.src, "io/fs")
+		if p.fsName == "" {
+			p.fsName = mw3FreeName(func(name string) bool {
+				_, taken := p.declared[name]
+				return taken
+			}, "fs", "iofs")
+			p.imports.require("io/fs", p.fsName)
+		}
+	}
+	return p.fsName
 }
 
 // index turns the single index file of v2 into the list of v3. v2 put a "/" in
@@ -551,8 +605,10 @@ func (p *mw3FSPass) index(kv *ast.KeyValueExpr, stack []ast.Node) {
 
 // notFoundFile replaces NotFoundFile, the file served for a path that is not
 // found, with the handler that does the same: the file is sent with a 200, as
-// v2 did, because the file server has set the 404 by then.
-func (p *mw3FSPass) notFoundFile(kv *ast.KeyValueExpr, fsys string, stack []ast.Node) {
+// v2 did, because the file server has set the 404 by then. v2 gave that file the
+// MaxAge of the config as well, which the file server of v3 does not for a file
+// its handler sends.
+func (p *mw3FSPass) notFoundFile(kv, maxAge *ast.KeyValueExpr, fsys string, stack []ast.Node) {
 	g := p.g
 	if fsys == "" {
 		internal.Notef(p.fi, g.line(kv.Pos()),
@@ -569,10 +625,14 @@ func (p *mw3FSPass) notFoundFile(kv *ast.KeyValueExpr, fsys string, stack []ast.
 	if regexp.MustCompile(`\bc\b`).MatchString(fsys + " " + file) {
 		ctx = "ctx"
 	}
+	sendFile := "FS: " + fsys
+	if maxAge != nil {
+		sendFile += ", MaxAge: " + g.text(maxAge.Value)
+	}
 	fiber := p.fiberQualifier()
 	handler := "NotFoundHandler: func(" + ctx + " " + fiber + "Ctx) error {\n" +
 		ctx + ".Status(" + fiber + "StatusOK)\n" +
-		"return " + ctx + ".SendFile(" + file + ", " + fiber + "SendFile{FS: " + fsys + "})\n" +
+		"return " + ctx + ".SendFile(" + file + ", " + fiber + "SendFile{" + sendFile + "})\n" +
 		"}"
 	p.edits.replaceNode(g, kv, handler)
 }

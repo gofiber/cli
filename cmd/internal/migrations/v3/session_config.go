@@ -58,11 +58,11 @@ func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) st
 	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CompositeLit:
-			if lit, ok := f.isConfigLit(n, stack); ok {
+			if lit, ok := f.isConfigLit(n, stack); ok && !p.isV3Config(stack) {
 				p.configLit(lit)
 			}
 		case *ast.CallExpr:
-			if call, name, ok := f.isStoreCall(n, stack); ok && name == mw3SessionNew {
+			if call, name, ok := f.isStoreCall(n, stack); ok && name == mw3SessionNew && !mw3IsUseArgument(call, stack) {
 				p.newCall(call, stack)
 			}
 		case *ast.SelectorExpr:
@@ -78,6 +78,24 @@ func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) st
 		return src
 	}
 	return p.imports.apply(out)
+}
+
+// isV3Config reports whether the literal whose ancestors are stack is the
+// config of a v3 constructor: NewStore, or a New that is handed to Use. A file
+// that was moved to v3 by hand keeps the lifetime it chose there.
+func (p *mw3SessionConfigPass) isV3Config(stack []ast.Node) bool {
+	if len(stack) == 0 {
+		return false
+	}
+	call, ok := stack[len(stack)-1].(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	outer := stack[:len(stack)-1]
+	if p.f.isMember(call.Fun, mw3SessionNewStore, outer) {
+		return true
+	}
+	return p.f.isMember(call.Fun, mw3SessionNew, outer) && mw3IsUseArgument(call, outer)
 }
 
 // idleTimeout is the field that keeps the v2 lifetime.

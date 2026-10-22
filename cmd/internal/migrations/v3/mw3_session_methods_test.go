@@ -279,7 +279,7 @@ func keys(c fiber.Ctx) []string {
 	assert.Contains(t, got, "for _, k := range sess.Keys()")
 	require.Len(t, res.notes, 1)
 	assert.Equal(t, 15, res.notes[0].Line)
-	assert.Contains(t, res.notes[0].Message, "Session.Keys() returns []any in v3")
+	assert.Contains(t, res.notes[0].Message, "sess.Keys() returns []any in v3")
 	assert.Empty(t, res.out, "a note is no change")
 }
 
