@@ -105,6 +105,42 @@ func main() {
 ` + reads},
 		},
 		{
+			name: "an app without the trust next to one that has it",
+			files: map[string]string{"main.go": `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func main() {
+	plain := fiber.New()
+	strict := fiber.New(fiber.Config{CaseSensitive: true})
+	proxied := fiber.New(fiber.Config{
+		TrustProxy:       true,
+		TrustProxyConfig: fiber.TrustProxyConfig{Proxies: []string{"10.0.0.0/8"}},
+	})
+	_, _, _ = plain, strict, proxied
+}
+` + reads},
+			at:       "main.go:6: ",
+			contains: []string{"Other apps of this project trust their proxies, the one created at main.go:6 does not."},
+			absent:   []string{"No fiber.Config of this project sets TrustProxy."},
+		},
+		{
+			name: "every app has a word about the trust",
+			files: map[string]string{"main.go": `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func main() {
+	cfg := fiber.Config{AppName: "x"}
+	cfg.TrustProxy = true
+	cfg.TrustProxyConfig.Loopback = true
+	a := fiber.New(cfg)
+	b := fiber.New(fiber.Config{TrustProxy: true, TrustProxyConfig: fiber.TrustProxyConfig{Private: true}})
+	_, _ = a, b
+}
+` + reads},
+		},
+		{
 			name: "TrustProxy is true and no proxy is listed",
 			files: map[string]string{"main.go": `package main
 

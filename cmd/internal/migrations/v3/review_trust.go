@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"slices"
@@ -19,9 +20,11 @@ import (
 
 // reviewTrustReads are the methods of the context that read X-Forwarded-Proto or
 // X-Forwarded-Host in v3 when the peer is trusted.
-var reviewTrustReads = []string{"Scheme", "Secure", "Host", "Hostname", "BaseURL", "Subdomains"}
+var reviewTrustReads = []string{"Scheme", reviewReadSecure, reviewReadHost, "Hostname", "BaseURL", "Subdomains"}
 
 const (
+	reviewReadHost         = "Host"
+	reviewReadSecure       = "Secure"
 	reviewTrustProxy       = "TrustProxy"
 	reviewTrustProxyConfig = "TrustProxyConfig"
 	reviewConfigType       = "Config"
@@ -51,8 +54,10 @@ func (p *reviewPlace) first(rf *reviewFile, pos token.Pos) {
 // reviewTrust is what the review knows about the trusted proxy settings of the
 // project, from all of its files.
 type reviewTrust struct {
-	// config is the first fiber.Config literal, call the first fiber.New call.
-	config, call reviewPlace
+	// config is the first fiber.Config literal, call the first fiber.New call, bare the
+	// first app that is created without a word about the trust: fiber.New() or a literal
+	// of the config that sets none of its fields.
+	config, call, bare reviewPlace
 	// read is the first read of the scheme or host of a request, early the first
 	// import of the earlydata middleware.
 	read, early reviewPlace
@@ -70,7 +75,7 @@ type reviewTrust struct {
 // nothing (the default), anything else may be either.
 func (t *reviewTrust) setTrust(value ast.Expr) {
 	switch {
-	case isIdentNamed(value, "true"):
+	case isIdentNamed(value, appLitTrue):
 		t.on = true
 	case isIdentNamed(value, appLitFalse):
 	default:
@@ -159,11 +164,40 @@ func (rf *reviewFile) collectTrustCall(t *reviewTrust, call *ast.CallExpr, stack
 	}
 	if id, isIdent := sel.X.(*ast.Ident); isIdent && slices.Contains(rf.core, id.Name) && (sel.Sel.Name == mw2New || sel.Sel.Name == reviewNewFiberApp) {
 		t.call.first(rf, call.Pos())
+		if rf.isBareApp(call) {
+			t.bare.first(rf, call.Pos())
+		}
 		return
 	}
 	if !t.read.known() && slices.Contains(reviewTrustReads, sel.Sel.Name) && rf.isCtxMethod(sel, stack) {
 		t.read.first(rf, sel.Sel.Pos())
 	}
+}
+
+// reviewTrustFields are the fields of the config that tell something about the trust.
+var reviewTrustFields = []string{reviewTrustProxy, reviewTrustProxyConfig, appFieldEnableProxyCheck, appFieldTrustedProxies}
+
+// isBareApp reports whether the app is created without a word about the trust: no config, or a literal of
+// the config that sets none of the fields of the trust.
+func (rf *reviewFile) isBareApp(call *ast.CallExpr) bool {
+	switch len(call.Args) {
+	case 0:
+		return true
+	case 1:
+		lit, ok := call.Args[0].(*ast.CompositeLit)
+		if !ok || !isFiberType(lit.Type, rf.core, reviewConfigType) {
+			return false
+		}
+		for _, elt := range lit.Elts {
+			if kv, isKV := elt.(*ast.KeyValueExpr); isKV {
+				if key, isIdent := kv.Key.(*ast.Ident); isIdent && slices.Contains(reviewTrustFields, key.Name) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // isConfigValue reports whether e is a fiber.Config: a literal of it, a variable
@@ -205,6 +239,7 @@ const (
 	reviewTrustNever = "No fiber.Config of this project sets TrustProxy."
 	reviewTrustMaybe = "TrustProxy is set from an expression here: whenever it is false, v2 trusted every client and v3 trusts none."
 	reviewTrustEmpty = "TrustProxy is true, but no TrustProxyConfig is set, so v3 trusts no peer."
+	reviewTrustMixed = "Other apps of this project trust their proxies, the one created at %s does not."
 )
 
 // report leaves the note, once for the project, when the code depends on the
@@ -217,8 +252,10 @@ func (t *reviewTrust) report(root string) {
 
 	var cause string
 	switch {
-	case t.on && t.list:
+	case t.on && t.list && !t.bare.known():
 		return
+	case t.on && t.list:
+		cause = fmt.Sprintf(reviewTrustMixed, t.bare)
 	case t.on:
 		cause = reviewTrustEmpty
 	case t.header:
@@ -240,6 +277,8 @@ func (t *reviewTrust) report(root string) {
 
 	at := t.config
 	switch {
+	case t.on && t.list:
+		at = t.bare
 	case t.config.known():
 	case t.call.known():
 		at = t.call
