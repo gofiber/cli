@@ -213,8 +213,20 @@ type mw3SessionFacts struct {
 	structs     map[string]mw3Struct
 	// named are the types that are not structs and stand for something of interest.
 	named map[string]mw3Kind
+	// funcDecls are the functions of the package that return a config.
+	funcDecls map[string]mw3FuncDecl
+	// mutated tells, by the name of a variable of the package level, whether the
+	// package assigns to it or to its lookup, read when first asked for.
+	mutated map[string]bool
 	// path is the import path of the package, empty outside of a module.
 	path string
+}
+
+// mw3FuncDecl is the declaration of a function, with what the file that declares
+// it says about its names.
+type mw3FuncDecl struct {
+	decl *ast.FuncDecl
+	env  *mw3Env
 }
 
 func newMw3SessionFacts(owner *mw3Pkg) mw3SessionFacts {
@@ -227,6 +239,8 @@ func newMw3SessionFacts(owner *mw3Pkg) mw3SessionFacts {
 		methodNames: map[string]map[string]struct{}{},
 		structs:     map[string]mw3Struct{},
 		named:       map[string]mw3Kind{},
+		funcDecls:   map[string]mw3FuncDecl{},
+		mutated:     map[string]bool{},
 	}
 }
 
@@ -284,6 +298,9 @@ func (f *mw3SessionFacts) scanFunc(d *ast.FuncDecl, env *mw3Env) {
 
 	if d.Recv == nil {
 		f.funcs[d.Name.Name] = kind
+		if kind.base == mw3KindConfig {
+			f.funcDecls[d.Name.Name] = mw3FuncDecl{decl: d, env: env}
+		}
 		return
 	}
 	if recv == "" {

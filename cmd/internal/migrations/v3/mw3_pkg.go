@@ -109,18 +109,15 @@ type mw3PkgFile struct {
 }
 
 // goFiles calls read with the content and the syntax of every file of the
-// package whose text contains need. A file that does not parse, or declares
-// another package, is not read. The files are read once, the first time any of
-// the facts is asked for.
-func (p *mw3Pkg) goFiles(need string, read func(file *ast.File, src string)) {
+// package. A file that does not parse, or declares another package, is not read.
+// The files are read once, the first time any of the facts is asked for.
+func (p *mw3Pkg) goFiles(read func(file *ast.File, src string)) {
 	if !p.filesRead {
 		p.filesRead = true
 		p.files = p.readFiles()
 	}
 	for _, f := range p.files {
-		if strings.Contains(f.src, need) {
-			read(f.file, f.src)
-		}
+		read(f.file, f.src)
 	}
 }
 
@@ -159,7 +156,7 @@ func (p *mw3Pkg) loadDecls() {
 	decls := map[string]mw3StrDecl{}
 	duplicated := map[string]struct{}{}
 	assigned := map[string]struct{}{}
-	p.goFiles("", func(file *ast.File, _ string) {
+	p.goFiles(func(file *ast.File, _ string) {
 		p.scanDecls(file, decls, duplicated)
 		mw3CollectAssigned(file, assigned)
 	})
@@ -199,7 +196,7 @@ func (p *mw3Pkg) sessions() *mw3SessionFacts {
 	if !p.sessionRead {
 		p.sessionRead = true
 		if p.relevant() {
-			p.goFiles("", func(file *ast.File, src string) {
+			p.goFiles(func(file *ast.File, src string) {
 				p.session.scan(file, p.owner.envOf(p.fi, file, src))
 			})
 		}
@@ -218,7 +215,7 @@ func (p *mw3Pkg) relevant() bool {
 
 	var imported []string
 	mentioned := false
-	p.goFiles("", func(file *ast.File, src string) {
+	p.goFiles(func(file *ast.File, src string) {
 		if strings.Contains(src, "middleware/session") {
 			mentioned = true
 		}

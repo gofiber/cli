@@ -486,19 +486,26 @@ func mw3Declares(lists []*ast.FieldList, name string) bool {
 // mw3OnlyMention reports whether the variable that a statement of the body uses
 // is declared in the body, and the statement is the only place that uses it.
 func mw3OnlyMention(body *ast.BlockStmt, stmt ast.Stmt, name string) bool {
-	declared := map[*ast.Ident]struct{}{}
+	declared, mentions := mw3CountMentions(body, name, stmt)
+	return declared && mentions == 0
+}
+
+// mw3CountMentions reports whether the node declares the variable, and how many
+// times it uses it, the statement skip left out. A field called like the variable
+// counts as a use, which only makes a variable look more used than it is.
+func mw3CountMentions(root ast.Node, name string, skip ast.Stmt) (declared bool, mentions int) {
+	defined := map[*ast.Ident]struct{}{}
 	define := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok && id.Name == name {
-			declared[id] = struct{}{}
+			defined[id] = struct{}{}
 		}
 	}
-	mentions := 0
-	ast.Inspect(body, func(n ast.Node) bool {
+	ast.Inspect(root, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case nil:
 			return false
 		case *ast.AssignStmt:
-			if x == stmt {
+			if skip != nil && x == skip {
 				return false
 			}
 			if x.Tok == token.DEFINE {
@@ -516,13 +523,13 @@ func mw3OnlyMention(body *ast.BlockStmt, stmt ast.Stmt, name string) bool {
 				define(x.Value)
 			}
 		case *ast.Ident:
-			if _, isDecl := declared[x]; !isDecl && x.Name == name {
+			if _, isDecl := defined[x]; !isDecl && x.Name == name {
 				mentions++
 			}
 		}
 		return true
 	})
-	return len(declared) > 0 && mentions == 0
+	return len(defined) > 0, mentions
 }
 
 // mw3IsLiteralOnly reports whether the expression is made of literals alone, so
