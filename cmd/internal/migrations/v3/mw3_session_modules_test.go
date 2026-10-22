@@ -308,3 +308,33 @@ func main() {
 	msgs := mw3Messages(res.notes)
 	require.NotEmpty(t, msgs)
 }
+
+// The lifetime of a store of another package is renamed in a file that does not
+// import the middleware either.
+func Test_SessionMigrations_ExpirationOfAStoreOfAnotherPackage(t *testing.T) {
+	t.Parallel()
+
+	files := mw3AuthModule()
+	files["main.go"] = `package main
+
+import (
+	"fmt"
+	"time"
+
+	"example.com/app/internal/auth"
+	"example.com/app/internal/handlers"
+)
+
+func main() {
+	auth.Store.Expiration = time.Hour
+	h := handlers.New(auth.NewStore())
+	fmt.Println(h.Sessions.Expiration, auth.Default().Expiration)
+}
+`
+	res := mw3RunModule(t, files, mw3SessionChain...)
+
+	got := res.files["main.go"]
+	assert.Contains(t, got, "auth.Store.IdleTimeout = time.Hour")
+	assert.Contains(t, got, "fmt.Println(h.Sessions.IdleTimeout, auth.Default().IdleTimeout)")
+	assert.NotContains(t, got, "Expiration")
+}
