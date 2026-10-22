@@ -2,6 +2,7 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
 	"slices"
 	"strings"
 
@@ -47,7 +48,9 @@ func migrateListenMethodsContent(ix *appIndex, content string, fi internal.FileI
 
 	var edits editSet
 	var imps appImports
+	known := map[*ast.CallExpr]bool{}
 	for _, s := range f.startsIn() {
+		known[s.call] = true
 		if s.method == appNameListen || s.method == appNameListener {
 			continue
 		}
@@ -64,5 +67,27 @@ func migrateListenMethodsContent(ix *appIndex, content string, fi internal.FileI
 			internal.Notef(fi, line, "%s", note)
 		}
 	}
+	noteUnknownReceivers(f, known)
 	return imps.apply(edits.apply(content))
+}
+
+// noteUnknownReceivers points at the calls of the removed methods whose
+// receiver is not known to be a fiber app, in a file that imports fiber: only
+// fiber has these methods, so the call will not compile.
+func noteUnknownReceivers(f *appFile, known map[*ast.CallExpr]bool) {
+	if len(f.names) == 0 {
+		return
+	}
+	ast.Inspect(f.g.file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || known[call] {
+			return true
+		}
+		if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && slices.Contains(appTLSMethods, sel.Sel.Name) {
+			internal.Notef(f.fi, f.g.line(call.Pos()),
+				"%s was removed in v3 and the type of its receiver could not be determined: call Listen with a fiber.ListenConfig (CertFile, CertKeyFile, CertClientFile, TLSConfig)",
+				sel.Sel.Name)
+		}
+		return true
+	})
 }

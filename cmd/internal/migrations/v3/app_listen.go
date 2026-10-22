@@ -7,12 +7,11 @@ import (
 	"strings"
 )
 
-// appStartMethods are the methods that start an app. The TLS variants only
-// exist in v2.
-var appStartMethods = []string{
-	appNameListen, appNameListener,
-	"ListenTLS", "ListenTLSWithCertificate", "ListenMutualTLS", "ListenMutualTLSWithCertificate",
-}
+// appTLSMethods are the variants of Listen that only exist in v2.
+var appTLSMethods = []string{"ListenTLS", "ListenTLSWithCertificate", "ListenMutualTLS", "ListenMutualTLSWithCertificate"}
+
+// appStartMethods are the methods that start an app.
+var appStartMethods = slices.Concat([]string{appNameListen, appNameListener}, appTLSMethods)
 
 // appStart is a call that starts an app.
 type appStart struct {

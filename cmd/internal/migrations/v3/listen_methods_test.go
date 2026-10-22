@@ -191,6 +191,50 @@ func main() {
 	assert.Contains(t, content, `app.Listen(args[0], fiber.ListenConfig{CertFile: args[1], CertKeyFile: args[2]})`)
 }
 
+func Test_MigrateListenMethods_NotesReceiversItCannotIdentify(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"main.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func main() {
+	apps := []*fiber.App{fiber.New(), fiber.New()}
+	for _, a := range apps {
+		a.ListenTLS(":443", "cert.pem", "key.pem")
+	}
+	apps[0].ListenTLS(":8443", "cert.pem", "key.pem")
+}
+`,
+		// not a file of the fiber API: ListenTLS is the name of some other method
+		"other.go": `package main
+
+type server struct{}
+
+func (server) ListenTLS(addr, cert, key string) {}
+
+func other(s server) { s.ListenTLS(":1", "c", "k") }
+`,
+	})
+
+	appRun(t, dir, v3.MigrateListenMethods)
+
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, `a.ListenTLS(":443", "cert.pem", "key.pem")`, "the receiver is a range variable: left alone")
+	assert.Contains(t, main, `apps[0].ListenTLS(":8443", "cert.pem", "key.pem")`, "an element of a slice is not followed either")
+	assert.Contains(t, appRead(t, dir, "other.go"), `s.ListenTLS(":1", "c", "k")`)
+
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 2)
+	assert.Equal(t, 8, notes[0].Line)
+	assert.Equal(t, 10, notes[1].Line)
+	for _, n := range notes {
+		assert.Contains(t, n.Message, "ListenTLS was removed in v3")
+		assert.Contains(t, n.Message, "receiver could not be determined")
+	}
+}
+
 func Test_MigrateListenMethods_BrokenFile(t *testing.T) {
 	t.Parallel()
 

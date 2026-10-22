@@ -358,6 +358,128 @@ func main() {
 	assert.Contains(t, content, `app.Listen(":3000", fiber.ListenConfig{ShutdownTimeout: 5, EnablePrefork: true, DisableStartupMessage: true})`)
 }
 
+// A start call a user already converted by hand takes the settings only when
+// its fiber.ListenConfig is a literal that does not set them.
+func Test_MigrateConfigListenerFields_ListenCallsThatCannotTakeTheSettings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		listen  string
+		want    string
+		problem string
+	}{
+		{
+			name:   "an empty literal",
+			listen: `app.Listen(":3000", fiber.ListenConfig{})`,
+			want:   `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: true})`,
+		},
+		{
+			name:    "a config held by a variable",
+			listen:  `app.Listen(":3000", listenCfg)`,
+			problem: "its fiber.ListenConfig is not a literal the settings can be added to",
+		},
+		{
+			name:    "a literal that sets the field already",
+			listen:  `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: false})`,
+			problem: "its fiber.ListenConfig already sets EnablePrefork",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+var listenCfg = fiber.ListenConfig{}
+
+func main() {
+	app := fiber.New(fiber.Config{Prefork: true})
+	`+tt.listen+`
+}
+`)
+
+			appRun(t, dir, v3.MigrateConfigListenerFields)
+
+			content := appRead(t, dir, "main.go")
+			notes := internal.DrainNotes(dir)
+			if tt.problem == "" {
+				assert.Contains(t, content, tt.want)
+				assert.Contains(t, content, "fiber.New(fiber.Config{})")
+				assert.Empty(t, notes)
+				return
+			}
+
+			assert.Contains(t, content, "fiber.New(fiber.Config{Prefork: true})", "the setting stays")
+			assert.Contains(t, content, tt.listen, "the call stays")
+			require.Len(t, notes, 1)
+			assert.Equal(t, 8, notes[0].Line)
+			assert.Contains(t, notes[0].Message, "EnablePrefork")
+			assert.Contains(t, notes[0].Message, "cannot take them: "+tt.problem)
+		})
+	}
+}
+
+func Test_MigrateConfigListenerFields_PackageLevelConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"config.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+var cfg = fiber.Config{Prefork: true, AppName: "a"}
+
+var other fiber.Config
+
+func init() {
+	other.DisableStartupMessage = true
+}
+`,
+		"main.go": `package main
+
+import "log"
+
+import "github.com/gofiber/fiber/v2"
+
+func main() {
+	app := fiber.New(cfg)
+	log.Fatal(app.Listen(":3000"))
+}
+
+func admin() {
+	app := fiber.New(cfg)
+	log.Fatal(app.Listen(":3001"))
+}
+
+func second() {
+	app := fiber.New(other)
+	log.Fatal(app.Listen(":3002"))
+}
+`,
+	})
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	// a literal that every app of the package shares moves to all of their Listen calls
+	assert.Contains(t, appRead(t, dir, "config.go"), `var cfg = fiber.Config{AppName: "a"}`)
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: true})`)
+	assert.Contains(t, main, `app.Listen(":3001", fiber.ListenConfig{EnablePrefork: true})`)
+
+	// a package-level variable assigned in init may be assigned anywhere: it stays
+	assert.Contains(t, appRead(t, dir, "config.go"), "other.DisableStartupMessage = true")
+	assert.Contains(t, main, `app.Listen(":3002")`)
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Equal(t, "config.go", notes[0].File[len(notes[0].File)-len("config.go"):])
+	assert.Equal(t, 10, notes[0].Line)
+	assert.Contains(t, notes[0].Message, "DisableStartupMessage")
+}
+
 func Test_MigrateConfigListenerFields_LocalValuesStayInTheirFunction(t *testing.T) {
 	t.Parallel()
 

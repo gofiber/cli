@@ -234,6 +234,10 @@ func (src *appListenSource) variableUses() (creations []appNew, escapes bool) {
 				if p.X == id {
 					return true
 				}
+			case *ast.ValueSpec:
+				if slices.Contains(p.Names, id) {
+					return true // the declaration of a package-level variable
+				}
 			}
 			escapes = true
 			return true
