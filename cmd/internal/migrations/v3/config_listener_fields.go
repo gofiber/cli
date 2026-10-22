@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"cmp"
 	"fmt"
 	"go/ast"
 	"slices"
@@ -39,6 +40,9 @@ func MigrateConfigListenerFields(cmd *cobra.Command, cwd string, _, _ *semver.Ve
 	return nil
 }
 
+// appLiteralLayoutProblem is why the literal of a fiber.Config is left alone.
+const appLiteralLayoutProblem = "the fiber.Config literal is laid out in a way that cannot be edited safely"
+
 // appListenPlan holds the edits of the whole project, worked out before any
 // file is written so that a config and the call that starts its app are always
 // changed together.
@@ -68,7 +72,29 @@ func (p *appListenPlan) rewrite(content string, fi internal.FileInfo) string {
 	if fp == nil || fp.src != content {
 		return content
 	}
+	if appEditsOverlap(fp.edits.edits) {
+		// an edit that lies inside another is lost: that must not go unnoticed
+		internal.Notef(fi, 0, "some changes to the listener settings of this file overlap and one of them was not made (please report this)")
+	}
 	return fp.imps.apply(fp.edits.apply(content))
+}
+
+// appEditsOverlap reports whether an edit lies inside another, which editSet.apply
+// leaves out.
+func appEditsOverlap(edits []textEdit) bool {
+	sorted := slices.Clone(edits)
+	slices.SortStableFunc(sorted, func(a, b textEdit) int {
+		return cmp.Or(cmp.Compare(a.start, b.start), cmp.Compare(b.end, a.end))
+	})
+
+	pos := 0
+	for _, e := range sorted {
+		if e.start < pos {
+			return true
+		}
+		pos = e.end
+	}
+	return false
 }
 
 // appStartInfo is a call that starts an app and where the app comes from.
@@ -80,6 +106,7 @@ type appStartInfo struct {
 // appPlanner works out the plan.
 type appPlanner struct {
 	plan    *appListenPlan
+	shims   map[*appPackage]*appShimPkg
 	starts  []*appStartInfo
 	sources []*appListenSource
 }
@@ -90,8 +117,9 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 
 	var files []*appFile
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		// only a file that mentions fiber or starts an app can matter
-		if !strings.Contains(content, "fiber") && !strings.Contains(content, ".Listen") {
+		// only a file that mentions fiber or starts an app can matter, and the
+		// file of an earlier run is not the project's code
+		if !strings.Contains(content, "fiber") && !strings.Contains(content, ".Listen") || isShimFile(fi.Path, content) {
 			return content
 		}
 		if f, ok := ix.openFile(fi, content); ok {
@@ -103,7 +131,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		return nil, fmt.Errorf("read the project: %w", err)
 	}
 
-	pl := &appPlanner{plan: &appListenPlan{files: map[string]*appFilePlan{}}}
+	pl := &appPlanner{plan: &appListenPlan{files: map[string]*appFilePlan{}}, shims: map[*appPackage]*appShimPkg{}}
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
@@ -118,6 +146,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 			reason := pl.move(src)
 			appNoteLeftovers(src, reason)
 		}
+		pl.finishShims()
 	}
 	pl.noteUntracked(files)
 	return pl.plan, nil
@@ -174,32 +203,110 @@ func (src *appListenSource) movableFields() []*appSourceField {
 	return movable
 }
 
+// appInPlace is the plan for moving the settings of one source to the calls that
+// start its apps. It is worked out before anything is added to the plan of the
+// project, because that plan is another one when the settings cannot all move
+// that way.
+type appInPlace struct {
+	// commit adds the plan to the plan of the project, nil when there is nothing
+	// to add.
+	commit func()
+	// reason says why the settings that stay could not move, when it is the same
+	// for all of them.
+	reason string
+	// dropped are the settings the plan removes because they have no effect.
+	dropped []*appSourceField
+	// never is set when no call starts one of the apps at all.
+	never bool
+}
+
+func (ip appInPlace) apply() {
+	if ip.commit != nil {
+		ip.commit()
+	}
+}
+
+// hasLeftovers reports whether some setting of the source stays where it is
+// after the plan.
+func (src *appListenSource) hasLeftovers(ip appInPlace) bool {
+	return slices.ContainsFunc(src.fields, func(fld *appSourceField) bool {
+		return len(fld.occs) > 0 && !slices.Contains(ip.dropped, fld) && (fld.problem != "" || ip.reason != "")
+	})
+}
+
 // move plans the move of every setting of the source that can move, and
 // returns why none could when it cannot.
+//
+// A setting moves to the call that starts the app. When that is not possible for
+// all of them, the settings stay with the app they belong to (see carry), or are
+// removed from an app that is never started (see dropDead). Only when neither can
+// be done do the settings that can move move, and the others stay with a note.
 func (pl *appPlanner) move(src *appListenSource) string {
-	if len(src.movableFields()) == 0 && !src.wantsVariable() {
+	ip := pl.moveInPlace(src)
+	if !src.hasLeftovers(ip) {
+		ip.apply()
+		return ip.reason
+	}
+
+	if ip.never {
+		if commit, _ := pl.dropDead(src); commit != nil {
+			commit()
+			return ip.reason
+		}
+	}
+
+	commit, refusal := pl.carry(src)
+	if commit != nil {
+		commit()
+		for _, fld := range src.fields {
+			fld.problem = ""
+		}
 		return ""
 	}
+
+	ip.apply()
+	if refusal.tell {
+		suffix := "; " + appShimFile + ", which would keep it with the app, is not an option: " + refusal.why
+		for _, fld := range src.fields {
+			if fld.problem != "" {
+				fld.problem += suffix
+			}
+		}
+		if ip.reason != "" {
+			ip.reason += suffix
+		}
+	}
+	return ip.reason
+}
+
+// moveInPlace plans the move of the settings of the source to the calls that
+// start its apps.
+func (pl *appPlanner) moveInPlace(src *appListenSource) appInPlace {
+	if len(src.movableFields()) == 0 && !src.wantsVariable() {
+		return appInPlace{}
+	}
 	if len(src.creations) == 0 {
-		return "this fiber.Config is not handed straight to fiber.New"
+		return appInPlace{reason: "this fiber.Config is not handed straight to fiber.New"}
 	}
 	if src.escapes {
-		return "this fiber.Config is also passed on to code that could create another app with it"
+		return appInPlace{reason: "this fiber.Config is also passed on to code that could create another app with it"}
 	}
 
 	linked, never, reason := pl.linkedStarts(src)
 	if reason != "" {
 		if never && src.onlyInTests() {
-			return pl.dropCosmetic(src, src.movableFields(), reason)
+			ip := pl.dropCosmetic(src, src.movableFields(), reason)
+			ip.never = true
+			return ip
 		}
-		return reason
+		return appInPlace{reason: reason, never: never}
 	}
 
 	// assignments that run conditionally keep working on a variable of their own
 	if src.wantsVariable() {
-		why := pl.moveToVariable(src, linked)
+		commit, why := pl.moveToVariable(src, linked)
 		if why == "" {
-			return ""
+			return appInPlace{commit: commit}
 		}
 		for _, fld := range src.fields {
 			if fld.problem == appProblemConditional {
@@ -211,7 +318,7 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	// a setting moves only if its value means the same at every call
 	for _, s := range linked {
 		if !s.file.walked {
-			return fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)
+			return appInPlace{reason: fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)}
 		}
 		for _, fld := range src.movableFields() {
 			imps := appImports{reqs: slices.Clone(pl.plan.fileOf(s.file).imps.reqs)}
@@ -222,12 +329,12 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 	movable := src.movableFields()
 	if len(movable) == 0 {
-		return ""
+		return appInPlace{}
 	}
 
 	var work appMovePlan
 	if reason = src.planRemoval(movable, &work.removal); reason != "" {
-		return reason
+		return appInPlace{reason: reason}
 	}
 
 	extras := make([]appListenField, 0, len(movable))
@@ -246,33 +353,32 @@ func (pl *appPlanner) move(src *appListenSource) string {
 		}
 		rw := s.rewrite(extras, imps)
 		if rw.problem != "" {
-			return fmt.Sprintf("the call that starts the app, at line %d, cannot take them: %s", s.file.g.line(s.call.Pos()), rw.problem)
+			return appInPlace{reason: fmt.Sprintf("the call that starts the app, at line %d, cannot take them: %s", s.file.g.line(s.call.Pos()), rw.problem)}
 		}
 		imports[s.file] = rw.imports
 		work.starts = append(work.starts, appMoveStart{start: s, rewrite: rw})
 	}
 
-	pl.commit(src, &work, imports)
-	return ""
+	return appInPlace{commit: func() { pl.commit(src, &work, imports) }}
 }
 
-// moveToVariable keeps the settings of the source in a fiber.ListenConfig
+// moveToVariable plans to keep the settings of the source in a fiber.ListenConfig
 // variable declared right after the config: the settings of the literal move
 // into it, the assignments to them are made to it, and the calls that start the
-// apps take it. It returns why that cannot be done, and plans nothing then.
-func (pl *appPlanner) moveToVariable(src *appListenSource, linked []*appStartInfo) string {
+// apps take it. It returns why that cannot be done, and nothing to commit then.
+func (pl *appPlanner) moveToVariable(src *appListenSource, linked []*appStartInfo) (commit func(), why string) {
 	f := src.file
 	g := f.g
 	decl := src.declStatement()
 	if decl == nil {
-		return "the config is declared in a statement that cannot be followed by another"
+		return nil, "the config is declared in a statement that cannot be followed by another"
 	}
 	if why := src.variableProblem(decl, linked); why != "" {
-		return why
+		return nil, why
 	}
 	for _, s := range linked {
 		if !s.file.walked {
-			return fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)
+			return nil, fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)
 		}
 	}
 
@@ -304,7 +410,7 @@ func (pl *appPlanner) moveToVariable(src *appListenSource, linked []*appStartInf
 		}
 	}
 	if len(drop) > 0 && !appRemoveElements(g, &work.removal, src.lit, drop, nil) {
-		return "the fiber.Config literal is laid out in a way that cannot be edited safely"
+		return nil, appLiteralLayoutProblem
 	}
 
 	imports := map[*appFile]appImports{}
@@ -323,17 +429,16 @@ func (pl *appPlanner) moveToVariable(src *appListenSource, linked []*appStartInf
 	for _, s := range linked {
 		rw := s.rewriteVar(name, names, importsOf(s.file))
 		if rw.problem != "" {
-			return fmt.Sprintf("the call that starts the app, at line %d, cannot take them: %s", s.file.g.line(s.call.Pos()), rw.problem)
+			return nil, fmt.Sprintf("the call that starts the app, at line %d, cannot take them: %s", s.file.g.line(s.call.Pos()), rw.problem)
 		}
 		imports[s.file] = rw.imports
 		work.starts = append(work.starts, appMoveStart{start: s, rewrite: rw})
 	}
 
-	pl.commit(src, &work, imports)
 	for _, fld := range src.fields {
 		fld.problem = ""
 	}
-	return ""
+	return func() { pl.commit(src, &work, imports) }, ""
 }
 
 // commit adds the planned work to the plan.
@@ -367,7 +472,7 @@ func (src *appListenSource) planRemoval(movable []*appSourceField, edits *editSe
 		}
 	}
 	if len(drop) > 0 && !appRemoveElements(src.file.g, edits, src.lit, drop, nil) {
-		return "the fiber.Config literal is laid out in a way that cannot be edited safely"
+		return appLiteralLayoutProblem
 	}
 	return ""
 }
@@ -418,10 +523,10 @@ func (src *appListenSource) onlyInTests() bool {
 // appCosmeticFields are the settings that only change what Listen prints.
 var appCosmeticFields = []string{appFieldQuiet, appFieldPrintRoutes}
 
-// dropCosmetic removes the settings that only change what Listen prints from a
-// source whose apps are never started: they have no effect there. The others
-// stay, with the reason.
-func (pl *appPlanner) dropCosmetic(src *appListenSource, movable []*appSourceField, reason string) string {
+// dropCosmetic plans the removal of the settings that only change what Listen
+// prints from a source whose apps are never started: they have no effect there.
+// The others stay, with the reason.
+func (pl *appPlanner) dropCosmetic(src *appListenSource, movable []*appSourceField, reason string) appInPlace {
 	var cosmetic []*appSourceField
 	for _, fld := range movable {
 		if slices.Contains(appCosmeticFields, fld.v2) {
@@ -429,19 +534,20 @@ func (pl *appPlanner) dropCosmetic(src *appListenSource, movable []*appSourceFie
 		}
 	}
 	if len(cosmetic) == 0 {
-		return reason
+		return appInPlace{reason: reason}
 	}
 
 	var removal editSet
 	if src.planRemoval(cosmetic, &removal) != "" {
-		return reason
+		return appInPlace{reason: reason}
 	}
-	fp := pl.plan.fileOf(src.file)
-	fp.edits.edits = append(fp.edits.edits, removal.edits...)
-	for _, fld := range cosmetic {
-		fld.dropped = true
-	}
-	return reason
+	return appInPlace{reason: reason, dropped: cosmetic, commit: func() {
+		fp := pl.plan.fileOf(src.file)
+		fp.edits.edits = append(fp.edits.edits, removal.edits...)
+		for _, fld := range cosmetic {
+			fld.dropped = true
+		}
+	}}
 }
 
 // appNoteLeftovers tells the user about the settings that stay where they are:
@@ -457,7 +563,10 @@ func appNoteLeftovers(src *appListenSource, reason string) {
 			continue
 		}
 		for _, occ := range fld.occs {
-			internal.Notef(src.file.fi, src.file.g.line(occ.node.Pos()),
+			if !occ.file.walked {
+				continue
+			}
+			internal.Notef(occ.file.fi, occ.file.g.line(occ.node.Pos()),
 				"fiber.Config has no %s field in v3: set %s in the fiber.ListenConfig of the call that starts this app (%s)",
 				fld.v2, fld.v3, why)
 		}

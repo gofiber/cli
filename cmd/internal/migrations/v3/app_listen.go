@@ -73,47 +73,12 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 	}
 
 	args := s.call.Args
-	var base []appListenField
-	switch s.method {
-	case appNameListen, appNameListener:
+	if s.method == appNameListen || s.method == appNameListener {
 		return s.rewritePlain(extras, out)
-	case "ListenTLS":
-		if len(args) != 3 {
-			out.problem = "ListenTLS takes an address, a certificate file and a key file"
-			return out
-		}
-		base = []appListenField{
-			{"CertFile", g.text(args[1])},
-			{"CertKeyFile", g.text(args[2])},
-		}
-		out.noteEmptyPaths(args[1:], "ListenTLS", "plain HTTP when CertFile and CertKeyFile are both empty")
-	case "ListenMutualTLS":
-		if len(args) != 4 {
-			out.problem = "ListenMutualTLS takes an address, a certificate file, a key file and a client CA file"
-			return out
-		}
-		base = []appListenField{
-			{"CertFile", g.text(args[1])},
-			{"CertKeyFile", g.text(args[2])},
-			{"CertClientFile", g.text(args[3])},
-		}
-		out.noteEmptyPaths(args[1:], "ListenMutualTLS", "plain HTTP when CertFile and CertKeyFile are both empty and asks for no client certificate when CertClientFile is empty")
-	case "ListenTLSWithCertificate":
-		if len(args) != 2 {
-			out.problem = "ListenTLSWithCertificate takes an address and a certificate"
-			return out
-		}
-		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
-		base = []appListenField{{nameTLSConfig, "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
-	case "ListenMutualTLSWithCertificate":
-		if len(args) != 3 {
-			out.problem = "ListenMutualTLSWithCertificate takes an address, a certificate and a client CA pool"
-			return out
-		}
-		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
-		base = []appListenField{{"TLSConfig", "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, ClientAuth: " + tls + "RequireAndVerifyClientCert, ClientCAs: " + g.text(args[2]) + ", Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
-	default:
-		out.problem = "unknown start method " + s.method
+	}
+
+	base, ok := s.tlsBase(&out)
+	if !ok {
 		return out
 	}
 
@@ -126,6 +91,56 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 		text:  "Listen(" + g.text(args[0]) + ", " + cfg,
 	})
 	return out
+}
+
+// tlsBase returns the fields of fiber.ListenConfig that stand for the arguments
+// of a TLS variant of Listen. ok is false, and out says why, when the call is not
+// one it can convert.
+func (s appStart) tlsBase(out *appStartRewrite) (base []appListenField, ok bool) {
+	g := s.file.g
+	args := s.call.Args
+
+	switch s.method {
+	case "ListenTLS":
+		if len(args) != 3 {
+			out.problem = "ListenTLS takes an address, a certificate file and a key file"
+			return nil, false
+		}
+		base = []appListenField{
+			{"CertFile", g.text(args[1])},
+			{"CertKeyFile", g.text(args[2])},
+		}
+		out.noteEmptyPaths(args[1:], "ListenTLS", "plain HTTP when CertFile and CertKeyFile are both empty")
+	case "ListenMutualTLS":
+		if len(args) != 4 {
+			out.problem = "ListenMutualTLS takes an address, a certificate file, a key file and a client CA file"
+			return nil, false
+		}
+		base = []appListenField{
+			{"CertFile", g.text(args[1])},
+			{"CertKeyFile", g.text(args[2])},
+			{"CertClientFile", g.text(args[3])},
+		}
+		out.noteEmptyPaths(args[1:], "ListenMutualTLS", "plain HTTP when CertFile and CertKeyFile are both empty and asks for no client certificate when CertClientFile is empty")
+	case "ListenTLSWithCertificate":
+		if len(args) != 2 {
+			out.problem = "ListenTLSWithCertificate takes an address and a certificate"
+			return nil, false
+		}
+		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
+		base = []appListenField{{nameTLSConfig, "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
+	case "ListenMutualTLSWithCertificate":
+		if len(args) != 3 {
+			out.problem = "ListenMutualTLSWithCertificate takes an address, a certificate and a client CA pool"
+			return nil, false
+		}
+		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
+		base = []appListenField{{"TLSConfig", "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, ClientAuth: " + tls + "RequireAndVerifyClientCert, ClientCAs: " + g.text(args[2]) + ", Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
+	default:
+		out.problem = "unknown start method " + s.method
+		return nil, false
+	}
+	return base, true
 }
 
 // rewriteVar turns the call into its v3 form for a source whose settings live in

@@ -49,6 +49,9 @@ type appSourceField struct {
 type appOccurrence struct {
 	assign *ast.AssignStmt
 	node   ast.Node
+	// file is the file the node is in: a package-level config is also set and
+	// read from the other files of its package.
+	file *appFile
 	// elt is the index of the element in the literal, -1 for an assignment or a
 	// read.
 	elt int
@@ -154,7 +157,7 @@ func (src *appListenSource) collect() {
 			}
 			if id, isIdent := kv.Key.(*ast.Ident); isIdent && appListenerFieldV3(id.Name) != "" {
 				fld := field(id.Name)
-				fld.occs = append(fld.occs, appOccurrence{node: kv, elt: i})
+				fld.occs = append(fld.occs, appOccurrence{node: kv, file: src.file, elt: i})
 			}
 		}
 	}
@@ -329,7 +332,7 @@ func (src *appListenSource) collectVariableUses(field func(string) *appSourceFie
 				return true
 			}
 
-			occ := appOccurrence{node: sel, elt: -1}
+			occ := appOccurrence{node: sel, file: r.file, elt: -1}
 			if as, isAssign := r.file.parent[sel].(*ast.AssignStmt); isAssign && as.Tok == token.ASSIGN &&
 				len(as.Lhs) == 1 && len(as.Rhs) == 1 && as.Lhs[0] == sel {
 				occ.assign = as
