@@ -25,6 +25,13 @@ import (
 // returns []any now, where the keys of a v2 session were strings: the call is
 // wrapped in a function literal that converts them, so that the result is the
 // []string the program was written for.
+//
+// A store that the program keeps behind an interface of its own gets the same:
+// the interface that asks for the methods of the v2 store, the types that have
+// them, and the calls through both take the context (see mw3StoreTypes). A
+// receiver may also be a type that embeds a store, or a store of another package
+// of the module, and a call that a type the source does not show may have
+// declared is reported instead of rewritten.
 func MigrateSessionMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	pkgs := newMw3Pkgs()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
