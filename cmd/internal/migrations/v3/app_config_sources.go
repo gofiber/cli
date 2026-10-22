@@ -175,6 +175,9 @@ func (f *appFile) sourceOfLiteral(lit *ast.CompositeLit) *appListenSource {
 			src.retFn = fn
 		}
 	}
+	if len(src.creations) == 0 && src.node == nil && src.retFn == nil {
+		src.escape(f, lit, "the config is "+f.useOf(lit))
+	}
 	return src
 }
 
@@ -242,7 +245,9 @@ func (src *appListenSource) collect() {
 	case src.node != nil:
 		uses := src.variableUses()
 		src.creations = append(src.creations, uses.creations...)
-		src.escapes = src.escapes || uses.escapes
+		if uses.escapes {
+			src.escape(uses.file, uses.at, "the config is "+uses.file.useOf(uses.at))
+		}
 		src.returnedVariable(uses)
 		src.collectVariableUses(field)
 		if src.retFn != nil {
@@ -301,7 +306,7 @@ func (src *appListenSource) isTheVariable(rf *appFile, id *ast.Ident) bool {
 // appVarUses is what the code does with the variable that holds a config.
 type appVarUses struct {
 	// at is the first use that cannot be followed, and file the file it is in.
-	at   ast.Node
+	at   *ast.Ident
 	file *appFile
 	// creations are the fiber.New calls that take the variable.
 	creations []appNew
@@ -471,11 +476,20 @@ func (f *appFile) useOf(e ast.Expr) string {
 		return "returned by another function"
 	case *ast.CallExpr:
 		if p.Fun != e {
-			return "passed to another function"
+			return "passed to " + f.g.text(p.Fun)
 		}
-	case *ast.KeyValueExpr, *ast.CompositeLit:
+	case *ast.KeyValueExpr:
+		if p.Value == e {
+			return "stored in the field " + f.g.text(p.Key) + " of a struct, slice or map"
+		}
+	case *ast.CompositeLit:
 		return "stored in a struct, slice or map"
-	case *ast.AssignStmt, *ast.ValueSpec:
+	case *ast.AssignStmt:
+		if len(p.Lhs) == 1 && len(p.Rhs) == 1 && p.Rhs[0] == e {
+			return "assigned to " + f.g.text(p.Lhs[0])
+		}
+		return "assigned to a variable or field the migration does not follow"
+	case *ast.ValueSpec:
 		return "assigned to a variable or field the migration does not follow"
 	case *ast.SendStmt:
 		return "sent on a channel"

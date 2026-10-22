@@ -969,5 +969,60 @@ func main() {
 	assert.Equal(t, before, appRead(t, dir, "main.go"))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Contains(t, notes[0].Message, "passed on")
+	assert.Contains(t, notes[0].Message, "the config is passed to other, at line 11 of main.go")
+}
+
+// A config that is stored in a struct, assigned to a field or handed to a function is
+// not followed: its settings stay, and the note says where the config goes.
+func Test_MigrateConfigListenerFields_NotesWhereTheConfigGoes(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"os"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+type Settings struct {
+	Fiber fiber.Config
+}
+
+type Server struct {
+	cfg fiber.Config
+	app *fiber.App
+}
+
+func load() Settings {
+	return Settings{Fiber: fiber.Config{Prefork: os.Getenv("PREFORK") == "1"}}
+}
+
+func newApp(cfg fiber.Config) *fiber.App { return fiber.New(cfg) }
+
+func newServer(prefork bool) *Server {
+	s := &Server{}
+	s.cfg = fiber.Config{Prefork: prefork}
+	s.app = fiber.New(s.cfg)
+	return s
+}
+
+func main() {
+	st := load()
+	fiber.New(st.Fiber).Listen(":3000")
+	newApp(fiber.Config{DisableStartupMessage: true}).Listen(":3001")
+	newServer(true).app.Listen(":3002")
+}
+`)
+	before := appRead(t, dir, "main.go")
+
+	out := appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	assert.Empty(t, out)
+	assert.Equal(t, before, appRead(t, dir, "main.go"))
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 3)
+	assert.Contains(t, notes[0].Message, "(the config is stored in the field Fiber of a struct, slice or map, at line 19 of main.go)")
+	assert.Contains(t, notes[1].Message, "(the config is assigned to s.cfg, at line 26 of main.go)")
+	assert.Contains(t, notes[2].Message, "(the config is passed to newApp, at line 34 of main.go)")
 }

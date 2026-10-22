@@ -298,7 +298,7 @@ func main() {
 		byFile[n.File] = n.Message
 	}
 	assert.Contains(t, byFile["config/a.go"], "A is used as a value, at line 7 of config/a.go")
-	assert.Contains(t, byFile["config/c.go"], "the result of C is passed to another function, at line 11 of main.go")
+	assert.Contains(t, byFile["config/c.go"], "the result of C is passed to fmt.Println, at line 11 of main.go")
 	assert.Contains(t, byFile["config/d.go"], "a call of Config whose receiver could not be traced may hand its config to fiber.New, at line 15 of main.go")
 	assert.Contains(t, byFile["config/e.go"], "the result of Layer1 is returned by another function, at line 7 of config/e.go")
 	assert.Len(t, byFile, 4)
