@@ -490,3 +490,34 @@ func sendQuery(url string) {
 	assert.Equal(t, 1, count(clientErrsNote), "%v", run.notes)
 	assert.Len(t, run.notes, 3)
 }
+
+func Test_MigrateClientUsage_ExportedAgentsWithoutAModule(t *testing.T) {
+	t.Parallel()
+
+	// Where the copy cannot be added, the agents of a package other packages import
+	// are not half migrated: nothing of the kind moves, and every use is reported.
+	run := clientRunProject(t, map[string]string{
+		"httpx/httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// New builds the request.
+func New(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Project", "sample")
+}
+
+func use(url string) {
+	a := New(url)
+	_, _, _ = a.Bytes()
+}
+`,
+	}, false)
+
+	got := run.files["httpx/httpx.go"]
+	assert.Contains(t, got, "func New(url string) *fiber.Agent")
+	assert.Contains(t, got, "return fiber.Get(url).Set(")
+	assert.NotContains(t, got, "client.")
+	assert.NotContains(t, got, "fibermigrate")
+	assert.NotEmpty(t, run.notes)
+	assert.Contains(t, strings.Join(run.notes, "\n"), "not in a Go module")
+}

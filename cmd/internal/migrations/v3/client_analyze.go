@@ -11,8 +11,9 @@ import (
 
 // Reasons a request is left alone.
 const (
-	clientErrUse     clientUnsupported = "it is used in a way the migration does not handle"
-	clientErrClosure clientUnsupported = "it is used inside a function literal"
+	clientErrUse      clientUnsupported = "it is used in a way the migration does not handle"
+	clientErrClosure  clientUnsupported = "it is used inside a function literal"
+	clientErrReturned clientUnsupported = "its agent is returned as a value of another type"
 )
 
 // migrate rewrites the request of u, or leaves it on the copy of the v2 agent and
@@ -268,6 +269,9 @@ func (f *clientFile) classify(u *clientUnit, g clientRefGroup, name string, isAl
 		consumed, reason = f.classifyDefer(it, s, name)
 	case *ast.ReturnStmt:
 		consumed, reason = clientClassifyReturn(it, s, name)
+		if reason == "" && !f.returnsAgentVar(s, name) {
+			reason = clientErrReturned
+		}
 	default:
 		return f.useReason(g.stmt)
 	}
@@ -557,6 +561,17 @@ func (f *clientFile) classifyDefer(it *clientItem, s *ast.DeferStmt, name string
 	}
 	it.kind = clientItemDrop
 	return 1, ""
+}
+
+// returnsAgentVar reports whether every result of a return statement that is the
+// variable name is declared as a *fiber.Agent.
+func (f *clientFile) returnsAgentVar(s *ast.ReturnStmt, name string) bool {
+	for i, r := range s.Results {
+		if isIdentNamed(r, name) && !f.returnsAgent(s, i) {
+			return false
+		}
+	}
+	return true
 }
 
 // clientClassifyReturn handles a return statement that hands the request on.

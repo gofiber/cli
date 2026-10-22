@@ -80,14 +80,14 @@ func (e *clientEmit) notes() {
 
 	for _, op := range u.allOps() {
 		if op.body == clientBodyJSON {
-			f.noteOncef(clientNoteAccept, op.line, "the v3 client sends an Accept: application/json header with a JSON body, which Fiber v2 did not; "+
-				"every request of the project that sends JSON is affected, this is reported once")
+			f.noteOncef(clientNoteAccept, op.line, "the v3 client adds an Accept: application/json header to a JSON body, which Fiber v2 did not send; "+
+				"reported once for the project")
 			break
 		}
 	}
 	if u.sendsQuery() {
-		f.noteOncef(clientNoteQuery, f.line(u.rootNode()), "the v3 client encodes the query of a request again: a space that was written as %%20 is sent as +, "+
-			"where Fiber v2 sent the query as it was written; every request of the project with a query is affected, this is reported once")
+		f.noteOncef(clientNoteQuery, f.line(u.rootNode()), "the v3 client encodes a query string again, so a space written as %%20 is sent as +, "+
+			"where Fiber v2 sent it as written; reported once for the project")
 	}
 }
 

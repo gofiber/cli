@@ -1554,6 +1554,99 @@ func main() {
 			},
 		},
 		{
+			// A function that does not say it returns an agent can still hand one to
+			// code in another package, which turns it back into the agent of Fiber v2.
+			name: "an_agent_that_travels_as_any_or_an_interface",
+			files: map[string]string{
+				"build/build.go": `package build
+
+import "github.com/gofiber/fiber/v2"
+
+// Request returns the agent as any.
+func Request(url string) any {
+	return fiber.Get(url).Set("X-Id", "1")
+}
+
+// Variable returns an agent that was configured.
+func Variable(url string) any {
+	a := fiber.Get(url)
+	a.Set("X-Id", "2")
+	return a
+}
+
+// Sender is the part of the agent that the caller needs.
+type Sender interface {
+	String() (int, string, []error)
+}
+
+// Boxed returns the agent as an interface.
+func Boxed(url string) Sender {
+	return fiber.Get(url)
+}
+`,
+				"use/use.go": `package use
+
+import (
+	"example.com/app/build"
+	"github.com/gofiber/fiber/v2"
+)
+
+func Send(url string) int {
+	a := build.Request(url).(*fiber.Agent)
+	code, _, _ := a.Bytes()
+	return code
+}
+`,
+			},
+			want: map[string]string{
+				"build/build.go": `package build
+
+import "example.com/app/internal/fibermigrate"
+
+// Request returns the agent as any.
+func Request(url string) any {
+	return fibermigrate.Get(url).Set("X-Id", "1")
+}
+
+// Variable returns an agent that was configured.
+func Variable(url string) any {
+	a := fibermigrate.Get(url)
+	a.Set("X-Id", "2")
+	return a
+}
+
+// Sender is the part of the agent that the caller needs.
+type Sender interface {
+	String() (int, string, []error)
+}
+
+// Boxed returns the agent as an interface.
+func Boxed(url string) Sender {
+	return fibermigrate.Get(url)
+}
+`,
+				"use/use.go": `package use
+
+import (
+	"example.com/app/build"
+	"example.com/app/internal/fibermigrate"
+)
+
+func Send(url string) int {
+	a := build.Request(url).(*fibermigrate.Agent)
+	code, _, _ := a.Bytes()
+	return code
+}
+`,
+			},
+			notes: []string{
+				"build/build.go:7: its agent is returned as a value of another type" + clientShimNote,
+				"build/build.go:12: its agent is returned as a value of another type" + clientShimNote,
+				"build/build.go:24: its agent is returned as a value of another type" + clientShimNote,
+				"use/use.go:9: `fiber.Agent` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
+			},
+		},
+		{
 			name: "an_exporter_with_an_aliased_import",
 			files: map[string]string{
 				"httpx/httpx.go": `package httpx

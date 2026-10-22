@@ -153,9 +153,9 @@ const clientShareClientNote = "its client is shared with requests that stay on t
 const (
 	// clientAcceptNote is the note of a JSON body, which the v3 client sends with an
 	// Accept header.
-	clientAcceptNote = "the v3 client sends an Accept: application/json header with a JSON body, which Fiber v2 did not"
+	clientAcceptNote = "the v3 client adds an Accept: application/json header to a JSON body, which Fiber v2 did not send"
 	// clientQueryNote is the note of a query, which the v3 client encodes again.
-	clientQueryNote = "the v3 client encodes the query of a request again: a space that was written as %20 is sent as +"
+	clientQueryNote = "the v3 client encodes a query string again, so a space written as %20 is sent as +"
 	// clientErrsNote is the note of an []error that is printed.
-	clientErrsNote = "an error that was printed with the []error of Fiber v2 is now printed as it is"
+	clientErrsNote = "a printed []error of a request is now the error itself, so fmt and log show it without the brackets"
 )

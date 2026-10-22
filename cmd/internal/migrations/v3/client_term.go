@@ -518,8 +518,8 @@ func (e *clientEmit) errsPlan(it *clientItem, errs clientTermSide, define bool, 
 		edits = append(edits, ed)
 	}
 	if printedAt > 0 {
-		f.noteOncef(clientNoteErrs, printedAt, "an error that was printed with the []error of Fiber v2 is now printed as it is: fmt and log show the error "+
-			"or <nil> where they showed a slice such as [the error] or []; every request of the project that prints its errors is affected, this is reported once")
+		f.noteOncef(clientNoteErrs, printedAt, "a printed []error of a request is now the error itself, so fmt and log show it without the brackets "+
+			"of the slice; reported once for the project")
 	}
 	if f.errsGone[l.owner] == nil {
 		f.errsGone[l.owner] = map[string]bool{}
