@@ -393,16 +393,27 @@ func (f *clientFile) chainItem(it *clientItem, ch clientChain, term *clientTerm)
 	return 1, ""
 }
 
+// parsedBefore reports whether the statements classified so far call Parse before s.
+func (u *clientUnit) parsedBefore(s ast.Stmt) bool {
+	return slices.ContainsFunc(u.items, func(it *clientItem) bool {
+		return it.kind == clientItemParse && it.stmt.Pos() < s.Pos()
+	})
+}
+
 // classifyAssign handles an assignment that uses the request.
 func (f *clientFile) classifyAssign(u *clientUnit, it *clientItem, s *ast.AssignStmt, name string, isAlias bool) (int, clientUnsupported) {
 	if len(s.Rhs) != 1 || isAlias {
 		return 0, clientErrUse
 	}
 
-	// The Name field of an agent that was just acquired is its User-Agent.
+	// The Name field of an agent that was just acquired is its User-Agent, as long
+	// as Parse has not read it yet.
 	if sel, ok := s.Lhs[0].(*ast.SelectorExpr); ok && len(s.Lhs) == 1 && s.Tok == token.ASSIGN && isIdentNamed(sel.X, name) && sel.Sel.Name == clientMemberName {
 		if !u.allowsURI() {
 			return 0, "setting Name of an agent that fiber.Get made, which has no effect in v2"
+		}
+		if u.parsedBefore(s) {
+			return 0, "setting Name after Parse(), which has no effect in v2"
 		}
 		it.kind = clientItemSetter
 		it.ops = []clientOp{{method: clientMemberName, req: "SetUserAgent(" + f.text(s.Rhs[0]) + ")", line: f.line(s)}}

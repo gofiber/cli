@@ -539,6 +539,93 @@ func inArgument(u1, u2 string) {
 			},
 		},
 		{
+			name: "a_name_set_after_parse_has_no_effect_and_stays",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+)
+
+func before(url string) ([]byte, error) {
+	a := fiber.AcquireAgent()
+	defer fiber.ReleaseAgent(a)
+	a.Name = "svc/1.0"
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
+func after(url string) ([]byte, error) {
+	a := fiber.AcquireAgent()
+	defer fiber.ReleaseAgent(a)
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	a.Name = "svc/1.0"
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func before(url string) ([]byte, error) {
+	a := client.C().R()
+	a.SetUserAgent("svc/1.0")
+	a.SetMethod(fiber.MethodGet)
+	a.SetURL(url)
+	resp, err := a.Send()
+	if err != nil {
+		return nil, err
+	}
+	body := resp.Body()
+	return body, nil
+}
+
+func after(url string) ([]byte, error) {
+	a := fiberMigrateAcquireAgent()
+	defer fiberMigrateReleaseAgent(a)
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	a.Name = "svc/1.0"
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+`,
+			},
+			notes: []string{
+				"main.go:25: setting Name after Parse(), which has no effect in v2" + clientShimNote,
+			},
+		},
+		{
 			name: "form_files_outside_of_a_request",
 			files: map[string]string{
 				"main.go": `package main
