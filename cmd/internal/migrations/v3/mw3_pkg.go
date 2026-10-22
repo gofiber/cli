@@ -19,6 +19,9 @@ import (
 // run does not change a declaration that a fact is about.
 type mw3Pkgs struct {
 	pkgs map[string]*mw3Pkg
+	// sources is what each module (by the directory of its go.mod) does with the
+	// Source type of the session middleware.
+	sources map[string]*mw3SourceMode
 	// indexes give the view of the whole module, for the facts that reach into
 	// other packages of it.
 	indexes moduleIndexes

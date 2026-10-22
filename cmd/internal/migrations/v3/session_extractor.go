@@ -582,10 +582,10 @@ func (p *mw3SessionExtractorPass) selector(sel *ast.SelectorExpr, stack []ast.No
 	if id, ok := sel.X.(*ast.Ident); ok && p.f.isPackage(id, stack) {
 		if name := sel.Sel.Name; name == mw3SessionSource || mw3SessionSourceValues[name] != "" {
 			internal.Notef(p.fi, g.line(sel.Pos()),
-				"%s was removed, and could not be written as a string here (it is an embedded field, the file declares string itself, "+
-					"or it is a case of a type switch that has a case string already): "+
+				"%s was removed, and could not be written here: the file declares string itself, or it is a case of a type switch that has a case string already, "+
+					"and the module cannot have the package for a type that keeps a Source and a string apart (it has no go.mod, or %s holds code that is not from \"fiber migrate\"). "+
 					"Source was a string type, and SourceCookie, SourceHeader and SourceURLQuery were \"cookie\", \"header\" and \"query\".",
-				g.text(sel))
+				g.text(sel), moduleShimDir)
 		}
 		return
 	}

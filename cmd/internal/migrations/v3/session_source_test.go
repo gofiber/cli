@@ -266,9 +266,9 @@ func shadowed(session struct {
 	assert.Empty(t, res.notes)
 }
 
-// A type that cannot be written as string where it stands is left, so that the
-// build fails on it, and is reported.
-func Test_MigrateSessionSource_ReportsWhatItCannotWrite(t *testing.T) {
+// An embedded field is called after its type: it keeps the name when the type is
+// written as string.
+func Test_MigrateSessionSource_EmbeddedFieldsKeepTheirName(t *testing.T) {
 	t.Parallel()
 
 	got, res := mw3RunOne(t, `package main
@@ -280,19 +280,25 @@ type embedded struct {
 }
 
 type embeddedPointer struct {
-	*session.Source
+	*session.Source `+"`json:\"src\"`"+`
+	name string
 }
 
-var kind session.Source = session.SourceCookie
+var kind = embedded{session.SourceCookie}
 `, v3.MigrateSessionExtractor)
 
-	assert.Contains(t, got, "\tsession.Source\n}")
-	assert.Contains(t, got, "\t*session.Source\n}")
-	assert.Contains(t, got, `var kind string = "cookie"`, "a use that can be written is written")
-	msgs := mw3Messages(res.notes)
-	require.Len(t, msgs, 2)
-	assert.Contains(t, msgs[0], "session.Source was removed")
-	assert.Contains(t, msgs[1], "session.Source was removed")
+	assert.Contains(t, got, "type embedded struct {\n\tSource string\n}")
+	assert.Contains(t, got, "\tSource *string `json:\"src\"`\n")
+	assert.Contains(t, got, `var kind = embedded{"cookie"}`)
+	assert.NotContains(t, got, "session")
+	assert.Empty(t, res.notes)
+}
+
+// A type that cannot be written as string where it stands, in a module that cannot
+// have the type of its own, is left so that the build fails on it, and is
+// reported.
+func Test_MigrateSessionSource_ReportsWhatItCannotWrite(t *testing.T) {
+	t.Parallel()
 
 	src := `package main
 
@@ -307,12 +313,13 @@ func show(src session.Source) {
 	fmt.Println(string, src, session.SourceCookie)
 }
 `
-	got, res = mw3RunOne(t, src, v3.MigrateSessionExtractor)
+	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
 	assert.Equal(t, src, got, "a file that declares string cannot name it")
-	msgs = mw3Messages(res.notes)
+	msgs := mw3Messages(res.notes)
 	require.Len(t, msgs, 2)
 	assert.Contains(t, msgs[0], "session.Source was removed")
 	assert.Contains(t, msgs[1], "session.SourceCookie was removed")
+	assert.Contains(t, msgs[0], "cannot have the package for a type that keeps a Source and a string apart")
 }
 
 // v2 told a Source from a string in a type switch, and the switch cannot have
