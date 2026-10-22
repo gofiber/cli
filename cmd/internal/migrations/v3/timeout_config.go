@@ -108,31 +108,42 @@ func (rw *timeoutRewrite) migrateNew(call *ast.CallExpr, pkg string, names []str
 	if len(call.Args) != 2 || call.Ellipsis.IsValid() || mw2IsTyped(call.Args[1], names, mw2ConfigType, stack, 0) {
 		return
 	}
-	rw.edits.replaceNode(rw.g, call.Args[1], pkg+".Config{Timeout: "+rw.g.text(call.Args[1])+", "+rw.onTimeout+"}")
+	rw.edits.replaceNode(rw.g, call.Args[1], rw.config(pkg, rw.g.text(call.Args[1]), ""))
 	rw.rewrote = true
 }
 
+// config writes the timeout.Config that takes the place of the duration (and of
+// the errors) of a call, a field to a line.
+func (rw *timeoutRewrite) config(pkg, timeout, errs string) string {
+	fields := []string{"Timeout: " + timeout}
+	if errs != "" {
+		fields = append(fields, "Errors: "+errs)
+	}
+	fields = append(fields, rw.onTimeout)
+	return pkg + ".Config{\n" + strings.Join(fields, ",\n") + ",\n}"
+}
+
 // migrateNewWithContext rewrites timeout.NewWithContext(handler, d, errs...)
-// to timeout.New(handler, timeout.Config{Timeout: d, Errors: []error{errs...}}).
+// to timeout.New(handler, timeout.Config{Timeout: d, Errors: []error{errs...}, OnTimeout: ...}).
 func (rw *timeoutRewrite) migrateNewWithContext(call *ast.CallExpr, sel *ast.SelectorExpr, pkg string) {
 	if len(call.Args) < 2 {
 		return
 	}
 	g := rw.g
 
-	cfg := pkg + ".Config{Timeout: " + g.text(call.Args[1])
+	errs := ""
 	if extra := call.Args[2:]; len(extra) > 0 {
 		if call.Ellipsis.IsValid() {
-			cfg += ", Errors: " + g.text(extra[len(extra)-1])
+			errs = g.text(extra[len(extra)-1])
 		} else {
 			texts := make([]string, len(extra))
 			for i, e := range extra {
 				texts[i] = g.text(e)
 			}
-			cfg += ", Errors: []error{" + strings.Join(texts, ", ") + "}"
+			errs = "[]error{" + strings.Join(texts, ", ") + "}"
 		}
 	}
-	cfg += ", " + rw.onTimeout + "}"
+	cfg := rw.config(pkg, g.text(call.Args[1]), errs)
 
 	end := g.offset(call.Args[len(call.Args)-1].End())
 	if call.Ellipsis.IsValid() {

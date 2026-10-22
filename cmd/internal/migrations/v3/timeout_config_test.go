@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,18 @@ import (
 // timeoutOn is the field every rewritten config gets, so that a timeout is still
 // answered with 408 Request Timeout.
 const timeoutOn = `OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout }`
+
+// timeoutCompact puts the text on one line, so that a test does not depend on
+// how gofmt lays out the fields of a config.
+func timeoutCompact(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// timeoutConfig is the config the migration writes for the given fields, in the
+// form timeoutCompact leaves it in.
+func timeoutConfig(pkg string, fields ...string) string {
+	return pkg + ".Config{ " + strings.Join(fields, ", ") + ", " + timeoutOn + ", }"
+}
 
 const timeoutSourceHead = `package main
 
@@ -50,12 +63,13 @@ func Test_MigrateTimeoutConfig_New(t *testing.T) {
 func wrap(a, b string) fiber.Handler { return slow }
 `)
 
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: reqTimeout, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: d, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: time.Duration(3) * time.Second, "+timeoutOn+"})")
-	assert.Contains(t, content, "}, timeout.Config{Timeout: 2 * time.Second, "+timeoutOn+"}))")
-	assert.Contains(t, content, `timeout.New(wrap("a", "b"), timeout.Config{Timeout: 2 * time.Second, `+timeoutOn+`})`)
+	compact := timeoutCompact(content)
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: 5 * time.Second")+")")
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: reqTimeout")+")")
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: d")+")")
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: time.Duration(3) * time.Second")+")")
+	assert.Contains(t, compact, "}, "+timeoutConfig("timeout", "Timeout: 2 * time.Second")+"))")
+	assert.Contains(t, compact, `timeout.New(wrap("a", "b"), `+timeoutConfig("timeout", "Timeout: 2 * time.Second")+")")
 	assert.Contains(t, run.out, "Migrating timeout middleware configs")
 	assert.Empty(t, run.notes)
 }
@@ -79,13 +93,14 @@ func Test_MigrateTimeoutConfig_NewWithContext(t *testing.T) {
 }
 `)
 
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, Errors: []error{errSlow}, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: reqTimeout, Errors: []error{errSlow, context.Canceled}, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(func(c *fiber.Ctx) error { return c.Next() }, timeout.Config{Timeout: 30 * time.Second, "+timeoutOn+"})")
-	assert.Contains(t, content, "h := timeout.New(slow, timeout.Config{Timeout: 1 * time.Second, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: d, Errors: errs, "+timeoutOn+"})")
-	assert.Contains(t, content, "timeout.New(\n\t\tslow,\n\t\ttimeout.Config{Timeout: d, Errors: []error{errSlow}, "+timeoutOn+"},\n\t)")
+	compact := timeoutCompact(content)
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: 5 * time.Second")+")")
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: 5 * time.Second", "Errors: []error{errSlow}")+")")
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: reqTimeout", "Errors: []error{errSlow, context.Canceled}")+")")
+	assert.Contains(t, compact, "timeout.New(func(c *fiber.Ctx) error { return c.Next() }, "+timeoutConfig("timeout", "Timeout: 30 * time.Second")+")")
+	assert.Contains(t, compact, "h := timeout.New(slow, "+timeoutConfig("timeout", "Timeout: 1 * time.Second")+")")
+	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: d", "Errors: errs")+")")
+	assert.Contains(t, compact, "timeout.New( slow, "+timeoutConfig("timeout", "Timeout: d", "Errors: []error{errSlow}")+", )")
 	assert.NotContains(t, content, "NewWithContext")
 	assert.Contains(t, run.out, "Migrating timeout middleware configs")
 	assert.Empty(t, run.notes)
@@ -111,7 +126,7 @@ func routes(app *fiber.App) {
 }
 `)
 
-	assert.Contains(t, content, "to.New(slow, to.Config{Timeout: 5 * time.Second, "+timeoutOn+"})")
+	assert.Contains(t, timeoutCompact(content), "to.New(slow, "+timeoutConfig("to", "Timeout: 5 * time.Second")+")")
 	assert.NotContains(t, content, "NewWithContext")
 	assert.NotContains(t, content, "timeout.Config")
 }
@@ -205,7 +220,7 @@ func routes(app *f.App) {
 `)
 
 	file := res.file()
-	assert.Contains(t, file, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, OnTimeout: func(c f.Ctx) error { return f.ErrRequestTimeout }})")
+	assert.Contains(t, timeoutCompact(file), "timeout.New(slow, timeout.Config{ Timeout: 5 * time.Second, OnTimeout: func(c f.Ctx) error { return f.ErrRequestTimeout }, })")
 	assert.Equal(t, 2, countOf(file, "OnTimeout: func(c f.Ctx)"))
 	assert.NotContains(t, file, "fiber.")
 	assert.Empty(t, res.notes)
@@ -249,7 +264,7 @@ var slow = timeout.NewWithContext(handlers.Slow, 5*time.Second)
 	file := res.file()
 	assert.Contains(t, file, `"github.com/gofiber/fiber/v3"`)
 	assert.Equal(t, 1, countOf(file, `"github.com/gofiber/fiber/v3"`))
-	assert.Contains(t, file, "var slow = timeout.New(handlers.Slow, timeout.Config{Timeout: 5 * time.Second, OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout }})")
+	assert.Contains(t, timeoutCompact(file), "var slow = timeout.New(handlers.Slow, "+timeoutConfig("timeout", "Timeout: 5 * time.Second")+")")
 	assert.Contains(t, res.stdout, "Migrating timeout middleware configs")
 }
 
@@ -281,4 +296,62 @@ func routes(app *fiber.App) {
 	assert.Equal(t, src, res.file())
 	assert.Empty(t, res.stdout)
 	assert.Empty(t, res.notes)
+}
+
+func Test_MigrateTimeoutConfig_Layout(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateTimeoutConfig, `package main
+
+import (
+	"errors"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/timeout"
+)
+
+var errSlow = errors.New("slow upstream")
+
+func slow(c *fiber.Ctx) error { return c.SendString("done") }
+
+func routes(app *fiber.App) {
+	app.Get("/a", timeout.New(slow, 5*time.Second))
+	app.Get("/b", timeout.NewWithContext(
+		slow,
+		time.Minute,
+		errSlow,
+	))
+}
+`)
+
+	assert.Equal(t, `package main
+
+import (
+	"errors"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/timeout"
+)
+
+var errSlow = errors.New("slow upstream")
+
+func slow(c *fiber.Ctx) error { return c.SendString("done") }
+
+func routes(app *fiber.App) {
+	app.Get("/a", timeout.New(slow, timeout.Config{
+		Timeout:   5 * time.Second,
+		OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout },
+	}))
+	app.Get("/b", timeout.New(
+		slow,
+		timeout.Config{
+			Timeout:   time.Minute,
+			Errors:    []error{errSlow},
+			OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout },
+		},
+	))
+}
+`, res.file())
 }
