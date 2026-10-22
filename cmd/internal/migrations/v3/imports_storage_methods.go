@@ -463,7 +463,7 @@ func %[1]s ResetWithContext(_ %[2]s.Context) error {
 func contextMethods(g *goSource, set *ast.FuncDecl, ctx string, missing []string) string {
 	recv := set.Recv.List[0]
 	name := "s"
-	if len(recv.Names) == 1 && recv.Names[0].Name != "_" {
+	if len(recv.Names) == 1 && recv.Names[0].Name != "_" && !slices.Contains([]string{"key", "val", "exp", ctx}, recv.Names[0].Name) {
 		name = recv.Names[0].Name
 	}
 	receiver := "(" + name + " " + g.text(recv.Type) + ")"

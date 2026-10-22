@@ -161,6 +161,18 @@ func (*Unnamed) Delete(key string) error                                        
 func (*Unnamed) Reset() error                                                   { return nil }
 func (*Unnamed) Close() error                                                   { return nil }
 `,
+		"clash.go": `package a
+
+import "time"
+
+type Clash struct{}
+
+func (val *Clash) Get(key string) ([]byte, error)                      { return nil, nil }
+func (val *Clash) Set(key string, v []byte, exp time.Duration) error { return nil }
+func (val *Clash) Delete(key string) error                             { return nil }
+func (val *Clash) Reset() error                                        { return nil }
+func (val *Clash) Close() error                                        { return nil }
+`,
 	})
 
 	require.NoError(t, v3.MigrateStorageInterface(newCmd(&bytes.Buffer{}), dir, nil, nil))
@@ -176,6 +188,10 @@ func (*Unnamed) Close() error                                                   
 
 	unnamed := importsRead(t, dir, "unnamed.go")
 	assert.Contains(t, unnamed, "func (s *Unnamed) ResetWithContext(_ context.Context) error {\n\treturn s.Reset()\n}", "a receiver without a name gets one")
+
+	clash := importsRead(t, dir, "clash.go")
+	assert.Contains(t, clash, "func (s *Clash) SetWithContext(_ context.Context, key string, val []byte, exp time.Duration) error {\n\treturn s.Set(key, val, exp)\n}",
+		"a receiver named like a parameter of the new methods is renamed")
 }
 
 func Test_MigrateStorageInterface_TheMethodsOfATypeCanBeInSeveralFiles(t *testing.T) {
