@@ -180,6 +180,101 @@ func read(s store) any { return s.Locals("requestid") }
 `},
 		},
 		{
+			name:    "the context key of the config goes once every read of it is migrated",
+			migrate: v3.MigrateMiddlewareLocals,
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{ContextKey: "rid"}))
+}
+`,
+				xpkgHandlers: `package handlers
+
+import "example.com/app/internal/web"
+
+func id(c *web.Context) string { return c.Locals("rid").(string) }
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{}))
+}
+`,
+				xpkgHandlers: `package handlers
+
+import (
+	"example.com/app/internal/web"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
+)
+
+func id(c *web.Context) string { return requestid.FromContext(c.Ctx) }
+`,
+			},
+			msg: "Migrating middleware locals",
+		},
+		{
+			name:    "the context key of the config stays while a read of it is not known to be a context's",
+			migrate: v3.MigrateMiddlewareLocals,
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{ContextKey: "rid"}))
+}
+`,
+				xpkgHandlers: `package handlers
+
+import (
+	"example.com/app/internal/web"
+	"example.org/lib"
+)
+
+var _ web.Ctx
+
+func id() string { return lib.Make().Locals("rid").(string) }
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{ContextKey: "rid"}))
+}
+`,
+			},
+			notes: []string{
+				"lib.Make().Locals(\"rid\") was left as it is: lib.Make() is not known to be a fiber context here",
+				"ContextKey: \"rid\" was kept: v3 has no such field, and 1 read(s) of that key could not be migrated",
+			},
+		},
+		{
 			name:    "the value of the token kept by the jwt middleware",
 			migrate: v3.MigrateMiddlewareLocals,
 			files: map[string]string{
