@@ -63,6 +63,8 @@ func MigrateOtelOptions(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 // otelFile is a file that imports the otel middleware.
 type otelFile struct {
 	*contribFile
+	// rep holds the notes until the edits are known, which move the lines below them.
+	rep *mw1Reporter
 	// names are the identifiers of the file for the middleware.
 	names []string
 	// customs is set when the file passes custom attributes to the middleware
@@ -83,7 +85,7 @@ func migrateOtelContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	o := &otelFile{contribFile: newContribFile(g, fi), names: names}
+	o := &otelFile{contribFile: newContribFile(g, fi), rep: newMW1Reporter(g, fi), names: names}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		if sel, isMember := o.member(n, stack); isMember {
 			o.customs = o.customs || sel.Sel.Name == otelWithCustomAttributes || sel.Sel.Name == otelWithCustomMetricAttributes
@@ -98,7 +100,9 @@ func migrateOtelContent(content string, fi internal.FileInfo) string {
 		}
 		return true
 	})
-	return o.apply()
+	out := o.apply()
+	o.rep.flush(&o.edits, out, out)
+	return out
 }
 
 // member returns e as pkg.Name when pkg is the middleware here, and not a variable
@@ -125,7 +129,7 @@ func (o *otelFile) memberNamed(e ast.Node, stack []ast.Node, names ...string) bo
 // serverName migrates one call of WithServerName, sel being its callee.
 func (o *otelFile) serverName(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast.Node) {
 	if reason := o.cannotRewrite(call, stack); reason != "" {
-		o.notef(call.Pos(), "otel: WithServerName is not in the v3 module. It put the attribute %s on the spans and on the metrics, "+
+		o.rep.notef(call, "otel: WithServerName is not in the v3 module. It put the attribute %s on the spans and on the metrics, "+
 			"and WithCustomAttributes and WithCustomMetricAttributes can put it there with attribute.String(%q, name) (left as it is: %s)",
 			otelServerNameKey, otelServerNameKey, reason)
 		return

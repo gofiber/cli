@@ -356,3 +356,20 @@ func Test_MigrateOtelOptions_CRLF(t *testing.T) {
 	assert.NotEqual(t, src, unix.file())
 	assert.Equal(t, unix.file(), strings.ReplaceAll(windows.file(), "\r", ""))
 }
+
+// The rewrite of one call adds lines, and the note of another call below it is
+// about the line it is on in the file that is written.
+func Test_MigrateOtelOptions_NoteLineFollowsTheRewrites(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateOtelOptions, otelSource(otelFiberImport, `func setup(app *fiber.App) {
+	app.Use(otelfiber.Middleware(otelfiber.WithServerName("checkout")))
+	app.Use(otelfiber.Middleware(otelfiber.WithServerName(os.Getenv("SERVICE"))))
+}`))
+
+	file := res.file()
+	assert.Contains(t, file, `attribute.String("http.server_name", "checkout")`)
+	if assert.Len(t, res.notes, 1) {
+		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: otel: WithServerName is not in the v3 module", mw1LineOf(t, file, "WithServerName")))
+	}
+}
