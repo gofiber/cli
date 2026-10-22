@@ -135,6 +135,7 @@ func (src *appListenSource) collect() {
 		}
 	}
 	if src.node != nil {
+		src.creations = append(src.creations, src.variableCreations()...)
 		src.collectVariableUses(field)
 	}
 
@@ -184,30 +185,44 @@ func (src *appListenSource) isTheVariable(rf *appFile, id *ast.Ident) bool {
 	return ok && b.node == src.node && b.file == src.file
 }
 
+// variableCreations finds the fiber.New calls that take the variable which
+// holds the source.
+func (src *appListenSource) variableCreations() []appNew {
+	var out []appNew
+	for _, r := range src.regions() {
+		ast.Inspect(r.root, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok && r.file.isNewCall(call) {
+				if id, isIdent := appArgIdent(call); isIdent && src.isTheVariable(r.file, id) {
+					out = append(out, appNew{file: r.file, call: call})
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
 // collectVariableUses finds what the code does with the variable that holds the
-// source: the fiber.New calls that take it and the settings it assigns or
-// reads.
+// source: the settings it assigns or reads.
 func (src *appListenSource) collectVariableUses(field func(string) *appSourceField) {
 	for _, r := range src.regions() {
 		ast.Inspect(r.root, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.CallExpr:
-				if id, ok := appArgIdent(x); ok && r.file.isNewCall(x) && src.isTheVariable(r.file, id) {
-					src.creations = append(src.creations, appNew{file: r.file, call: x})
-				}
-			case *ast.SelectorExpr:
-				id, ok := x.X.(*ast.Ident)
-				if !ok || appListenerFieldV3(x.Sel.Name) == "" || !src.isTheVariable(r.file, id) {
-					return true
-				}
-				occ := appOccurrence{node: x, elt: -1}
-				if as, isAssign := r.file.parent[x].(*ast.AssignStmt); isAssign && as.Tok == token.ASSIGN &&
-					len(as.Lhs) == 1 && len(as.Rhs) == 1 && as.Lhs[0] == x {
-					occ.assign = as
-				}
-				fld := field(x.Sel.Name)
-				fld.occs = append(fld.occs, occ)
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
 			}
+			id, isIdent := sel.X.(*ast.Ident)
+			if !isIdent || appListenerFieldV3(sel.Sel.Name) == "" || !src.isTheVariable(r.file, id) {
+				return true
+			}
+
+			occ := appOccurrence{node: sel, elt: -1}
+			if as, isAssign := r.file.parent[sel].(*ast.AssignStmt); isAssign && as.Tok == token.ASSIGN &&
+				len(as.Lhs) == 1 && len(as.Rhs) == 1 && as.Lhs[0] == sel {
+				occ.assign = as
+			}
+			fld := field(sel.Sel.Name)
+			fld.occs = append(fld.occs, occ)
 			return true
 		})
 	}

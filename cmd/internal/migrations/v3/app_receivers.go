@@ -24,9 +24,14 @@ func (k appKind) isRouter() bool { return k == appKindApp || k == appKindRouter 
 
 // Names of the identifiers of the fiber package the migrations look for.
 const (
-	appNameConfig   = "Config"
-	appNameListen   = "Listen"
-	appNameListener = "Listener"
+	appNameConfig       = "Config"
+	appNameListen       = "Listen"
+	appNameListener     = "Listener"
+	appNameListenConfig = "ListenConfig"
+	appNameStatic       = "Static"
+	appMethodGet        = "Get"
+	appMethodAdd        = "Add"
+	appMethodGroup      = "Group"
 )
 
 // appMaxDepth bounds how far the resolvers follow declarations, which also
@@ -36,8 +41,8 @@ const appMaxDepth = 10
 // appRouterMethods are the methods of an app or router that return the router
 // again, so that app.Group("/a").Get(...) is still a router.
 var appRouterMethods = []string{
-	"Use", "Get", "Head", "Post", "Put", "Delete", "Connect", "Options", "Trace", "Patch", "Query",
-	"Add", "All", "Static", "Group", "Route", "RouteChain", "Mount", "Name", "Domain",
+	"Use", appMethodGet, "Head", "Post", "Put", "Delete", "Connect", "Options", "Trace", "Patch", "Query",
+	appMethodAdd, "All", appNameStatic, appMethodGroup, "Route", "RouteChain", "Mount", "Name", "Domain",
 }
 
 // isFiberQualifier reports whether name is how f refers to the fiber package.

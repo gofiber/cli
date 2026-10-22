@@ -1,136 +1,162 @@
 package v3_test
 
 import (
-	"bytes"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gofiber/cli/cmd/internal"
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
 func Test_MigrateAddMethod(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "maddtest")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	dir := appSingle(t, `package main
 
-	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/fiber/v2"
-func main() {
-    app := fiber.New()
-    app.Add(fiber.MethodGet, "/foo", func(c fiber.Ctx) error { return nil })
-}
-`)
+import (
+	"net/http"
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+	"github.com/gofiber/fiber/v2"
+)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `Add([]string{fiber.MethodGet}, "/foo"`)
-	assert.Contains(t, buf.String(), "Migrating Add method calls")
+type server struct{ app *fiber.App }
+
+func register(r fiber.Router) {
+	r.Add(fiber.MethodGet, "/r", func(c *fiber.Ctx) error { return nil })
 }
 
-func Test_MigrateAddMethod_NestedCall(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("", "maddnested")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/fiber/v2"
 func merge(a, b string) string { return a + b }
+
 func main() {
-    app := fiber.New()
-    app.Add(merge("GE", "T"), "/foo", func(c fiber.Ctx) error { return nil })
+	h := func(c *fiber.Ctx) error { return c.SendString("ok") }
+
+	app := fiber.New()
+	app.Add(fiber.MethodGet, "/a", h)
+	app.Add("POST", "/b", h)
+	app.Add(http.MethodPut, "/c", h, h)
+	app.Add(merge("GE", "T"), "/nested", h)
+
+	grp := app.Group("/g")
+	grp.Add(fiber.MethodGet, "/d", h)
+
+	s := &server{app: fiber.New()}
+	s.app.Add(fiber.MethodGet, "/e", h)
+
+	app.Add(
+		fiber.MethodDelete,
+		"/multi",
+		h,
+	)
 }
 `)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+	out := appRun(t, dir, v3.MigrateAddMethod)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `Add([]string{merge("GE", "T")}, "/foo"`)
-	assert.Contains(t, buf.String(), "Migrating Add method calls")
-}
-
-func Test_MigrateAddMethod_Group(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("", "maddgroup")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/fiber/v2"
-func main() {
-    app := fiber.New()
-    grp := app.Group("/api")
-    grp.Add(fiber.MethodGet, "/foo", func(c fiber.Ctx) error { return nil })
-}`)
-
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
-
-	content := readFile(t, file)
-	assert.Contains(t, content, `grp.Add([]string{fiber.MethodGet}, "/foo"`)
-	assert.Contains(t, buf.String(), "Migrating Add method calls")
+	content := appRead(t, dir, "main.go")
+	assert.Contains(t, content, `r.Add([]string{fiber.MethodGet}, "/r"`)
+	assert.Contains(t, content, `app.Add([]string{fiber.MethodGet}, "/a", h)`)
+	assert.Contains(t, content, `app.Add([]string{"POST"}, "/b", h)`)
+	assert.Contains(t, content, `app.Add([]string{http.MethodPut}, "/c", h, h)`)
+	assert.Contains(t, content, `app.Add([]string{merge("GE", "T")}, "/nested", h)`)
+	assert.Contains(t, content, `grp.Add([]string{fiber.MethodGet}, "/d", h)`)
+	assert.Contains(t, content, `s.app.Add([]string{fiber.MethodGet}, "/e", h)`)
+	assert.Contains(t, content, "[]string{fiber.MethodDelete},\n\t\t\"/multi\",")
+	assert.Contains(t, out, "Migrating Add method calls")
+	assert.Empty(t, internal.DrainNotes(dir))
 }
 
 func Test_MigrateAddMethod_SkipUnrelated(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "maddskip")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	src := `package main
 
-	file := writeTempFile(t, dir, `package main
-func main() {
-    req.Header.Add("Authorization", "Bearer "+test.Token)
-    reqHeader.Add("X-Key", "Value")
-    c.Response().Header.Add("X-Key", "Value")
-    httpServerActiveRequests.Add(1)
-}`)
+import (
+	"net/http"
+	"sync/atomic"
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
+	"github.com/gofiber/fiber/v2"
+)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `req.Header.Add("Authorization", "Bearer "+test.Token)`)
-	assert.Contains(t, content, `reqHeader.Add("X-Key", "Value")`)
-	assert.Contains(t, content, `c.Response().Header.Add("X-Key", "Value")`)
-	assert.Contains(t, content, `httpServerActiveRequests.Add(1)`)
-	assert.NotContains(t, content, "[]string{")
-	assert.NotContains(t, buf.String(), "Migrating Add method calls")
+var httpServerActiveRequests atomic.Int64
+
+func handler(c *fiber.Ctx, req *http.Request) error {
+	req.Header.Add("Authorization", "Bearer token")
+	c.Response().Header.Add("X-Key", "Value")
+	httpServerActiveRequests.Add(1)
+	return nil
+}
+`
+	dir := appSingle(t, src)
+
+	out := appRun(t, dir, v3.MigrateAddMethod)
+
+	assert.Equal(t, src, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
 }
 
 func Test_MigrateAddMethod_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "maddid")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	dir := appSingle(t, `package main
 
-	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
-func main() {
-    app := fiber.New()
-    app.Add(fiber.MethodGet, "/foo", func(c fiber.Ctx) error { return nil })
-}`)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
-	first := readFile(t, file)
-	require.NoError(t, v3.MigrateAddMethod(cmd, dir, nil, nil))
-	second := readFile(t, file)
-	assert.Equal(t, first, second)
+func main() {
+	app := fiber.New()
+	app.Add(fiber.MethodGet, "/foo", func(c *fiber.Ctx) error { return nil })
+}
+`)
+
+	appRun(t, dir, v3.MigrateAddMethod)
+	first := appRead(t, dir, "main.go")
+	out := appRun(t, dir, v3.MigrateAddMethod)
+
+	assert.Equal(t, first, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
+}
+
+func Test_MigrateAddMethod_HandlerSlices(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func auth(c *fiber.Ctx) error { return c.Next() }
+
+func route(r fiber.Router, method, path string, handlers ...fiber.Handler) {
+	r.Add(method, path, handlers...)
+}
+
+func get(r fiber.Router, path string, handlers ...fiber.Handler) fiber.Router {
+	return r.Get(path, handlers...)
+}
+
+func main() {
+	app := fiber.New()
+	chain := []fiber.Handler{auth}
+	app.Get("/a", chain...)
+	g := app.Group("/x", chain...)
+	_ = g
+	anys := []any{auth}
+	app.Group("/y", anys...)
+	app.Post("/z", auth, anys...)
+}
+`)
+
+	appRun(t, dir, v3.MigrateAddMethod)
+
+	content := appRead(t, dir, "main.go")
+	// the method is still wrapped, the spread cannot be rewritten by hand-free rules
+	assert.Contains(t, content, "r.Add([]string{method}, path, handlers...)")
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 4)
+	lines := make([]int, 0, len(notes))
+	for _, n := range notes {
+		lines = append(lines, n.Line)
+		assert.Contains(t, n.Message, "...any")
+	}
+	assert.ElementsMatch(t, []int{8, 12, 18, 19}, lines)
 }

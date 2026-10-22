@@ -59,18 +59,22 @@ func appRemoveStmt(g *goSource, edits *editSet, stmt ast.Stmt) bool {
 }
 
 // appRemoveElements schedules the removal of the elements of lit at the given
-// indexes and reports whether the literal has a layout it can edit: a literal
-// on one line is rebuilt from the elements that stay, in a literal over several
-// lines every removed element must sit on lines of its own. Nothing is
-// scheduled when it returns false.
-func appRemoveElements(g *goSource, edits *editSet, lit *ast.CompositeLit, drop []int) bool {
-	if len(drop) == 0 {
-		return true
-	}
-
+// indexes, and the replacement of the elements in repl by new text, and reports
+// whether the literal has a layout it can edit: a literal on one line is rebuilt
+// from the elements that stay, in a literal over several lines every removed
+// element must sit on lines of its own. Nothing is scheduled when it returns
+// false.
+func appRemoveElements(g *goSource, edits *editSet, lit *ast.CompositeLit, drop []int, repl map[int]string) bool {
 	src := g.src
 	open, closing := g.offset(lit.Lbrace), g.offset(lit.Rbrace)
 	dropped := func(i int) bool { return slices.Contains(drop, i) }
+
+	if len(drop) == 0 {
+		for i, text := range repl {
+			edits.replaceNode(g, lit.Elts[i], text)
+		}
+		return true
+	}
 
 	if g.line(lit.Lbrace) == g.line(lit.Rbrace) {
 		var kept []string
@@ -81,7 +85,11 @@ func appRemoveElements(g *goSource, edits *editSet, lit *ast.CompositeLit, drop 
 				return false // a comment between the elements
 			}
 			prevEnd = end
-			if !dropped(i) {
+			switch text, replaced := repl[i]; {
+			case dropped(i):
+			case replaced:
+				kept = append(kept, text)
+			default:
 				kept = append(kept, src[start:end])
 			}
 		}
@@ -110,6 +118,11 @@ func appRemoveElements(g *goSource, edits *editSet, lit *ast.CompositeLit, drop 
 	for _, s := range spans {
 		edits.replace(s.from, s.to, "")
 	}
+	for i, text := range repl {
+		if !dropped(i) {
+			edits.replaceNode(g, lit.Elts[i], text)
+		}
+	}
 	return true
 }
 
@@ -137,9 +150,9 @@ func appKeyedElement(lit *ast.CompositeLit, key string) (idx int, kv *ast.KeyVal
 	return -1, nil
 }
 
-// appNameTaken reports whether name is already in use in f: as a package-level
-// name, as the name of an import or as any identifier of the file.
-func (f *appFile) nameTaken(name string) bool {
+// packageLevelNameTaken reports whether name is declared by the package of f or
+// is the name of one of the imports of f.
+func (f *appFile) packageLevelNameTaken(name string) bool {
 	if pkg := f.ix.pkgOf(f); pkg != nil && pkg.names[name] {
 		return true
 	}
@@ -151,6 +164,15 @@ func (f *appFile) nameTaken(name string) bool {
 		if local == name {
 			return true
 		}
+	}
+	return false
+}
+
+// nameTaken reports whether name is already in use in f: as a package-level
+// name, as the name of an import or as any identifier of the file.
+func (f *appFile) nameTaken(name string) bool {
+	if f.packageLevelNameTaken(name) {
+		return true
 	}
 
 	taken := false
@@ -331,4 +353,76 @@ func (a *appImports) apply(content string) string {
 		edits.replace(at, at, "\n\nimport (\n"+specs.String()+")")
 	}
 	return edits.apply(content)
+}
+
+// constString evaluates e when it is a constant string made of literals, string
+// constants of the package and +.
+func (f *appFile) constString(e ast.Expr, depth int) (string, bool) {
+	if depth > appMaxDepth {
+		return "", false
+	}
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return f.constString(x.X, depth+1)
+	case *ast.BasicLit:
+		if x.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(x.Value)
+		return v, err == nil
+	case *ast.BinaryExpr:
+		if x.Op != token.ADD {
+			return "", false
+		}
+		l, lok := f.constString(x.X, depth+1)
+		r, rok := f.constString(x.Y, depth+1)
+		return l + r, lok && rok
+	case *ast.Ident:
+		pkg := f.ix.pkgOf(f)
+		if pkg == nil {
+			return "", false
+		}
+		c := pkg.consts[x.Name]
+		if c == nil || len(c.spec.Values) != len(c.spec.Names) {
+			return "", false
+		}
+		if _, shadowed := f.binding(x); shadowed {
+			return "", false
+		}
+		return c.file.constString(c.spec.Values[c.index], depth+1)
+	}
+	return "", false
+}
+
+// provablyNotEmpty reports whether the string e is never empty: a non-empty
+// constant, a concatenation with one, or a path.Join or filepath.Join that has
+// one among its elements.
+func (f *appFile) provablyNotEmpty(e ast.Expr, depth int) bool {
+	if depth > appMaxDepth {
+		return false
+	}
+	if v, ok := f.constString(e, 0); ok {
+		return v != ""
+	}
+
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return f.provablyNotEmpty(x.X, depth+1)
+	case *ast.BinaryExpr:
+		return x.Op == token.ADD && (f.provablyNotEmpty(x.X, depth+1) || f.provablyNotEmpty(x.Y, depth+1))
+	case *ast.CallExpr:
+		sel, ok := x.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Join" {
+			return false
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		if p := f.importPathOf(id.Name); p != "path" && p != "path/filepath" {
+			return false
+		}
+		return slices.ContainsFunc(x.Args, func(a ast.Expr) bool { return f.provablyNotEmpty(a, depth+1) })
+	}
+	return false
 }

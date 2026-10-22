@@ -78,6 +78,7 @@ type appPackage struct {
 	methods map[string]*appFunc
 	types   map[string]*appTypeDecl
 	vars    map[string]*appVarDecl
+	consts  map[string]*appVarDecl
 	// names holds every package-level name, whatever it declares.
 	names map[string]bool
 	dir   string
@@ -97,8 +98,8 @@ type appTypeDecl struct {
 	spec *ast.TypeSpec
 }
 
-// appVarDecl is a package-level variable. index is the position of the name in
-// the declaration, count the number of names it declares.
+// appVarDecl is a package-level variable or constant. index is the position of
+// the name in the declaration.
 type appVarDecl struct {
 	file  *appFile
 	spec  *ast.ValueSpec
@@ -228,6 +229,7 @@ func (ix *appIndex) loadPackage(dir, name string, self *appFile) *appPackage {
 		methods: map[string]*appFunc{},
 		types:   map[string]*appTypeDecl{},
 		vars:    map[string]*appVarDecl{},
+		consts:  map[string]*appVarDecl{},
 		names:   map[string]bool{},
 	}
 
@@ -280,8 +282,12 @@ func (p *appPackage) declare(f *appFile) {
 				case *ast.ValueSpec:
 					for i, id := range spec.Names {
 						p.names[id.Name] = true
-						if d.Tok == token.VAR {
+						switch d.Tok {
+						case token.VAR:
 							p.vars[id.Name] = &appVarDecl{file: f, spec: spec, index: i}
+						case token.CONST:
+							p.consts[id.Name] = &appVarDecl{file: f, spec: spec, index: i}
+						default:
 						}
 					}
 				}

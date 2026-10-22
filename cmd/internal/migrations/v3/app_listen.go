@@ -161,7 +161,7 @@ func (s appStart) rewritePlain(extras []appListenField, out appStartRewrite) app
 			return out
 		}
 		lit, ok := args[1].(*ast.CompositeLit)
-		if !ok || lit.Type == nil || s.file.fiberTypeName(lit.Type) != "ListenConfig" {
+		if !ok || lit.Type == nil || s.file.fiberTypeName(lit.Type) != appNameListenConfig {
 			out.problem = "its fiber.ListenConfig is not a literal the settings can be added to"
 			return out
 		}

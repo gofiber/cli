@@ -374,3 +374,33 @@ func main() {
 		assert.Equal(t, tt.complete, got.complete, tt.label)
 	}
 }
+
+// The text based helpers of common.go and the AST based kinds agree on the
+// simple files the helpers were written for.
+func Test_appKinds_AgreeWithTheTextHelpers(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func main() {
+	app := fiber.New()
+	grp := app.Group("/g")
+	var r fiber.Router
+	r = grp
+	app.Mount("app", nil)
+	grp.Mount("grp", nil)
+	r.Mount("r", nil)
+}
+`
+	files := appTestFiles(t, map[string]string{"go.mod": "module example.com/demo\n", "main.go": src})
+	f := files["main.go"]
+
+	recvs := appTestCalls(f, "Mount")
+	require.Len(t, recvs, 3)
+	for i, name := range []string{"app", "grp", "r"} {
+		assert.Equal(t, isFiberRouter(src, name), f.kind(recvs[i]).isRouter(), name)
+	}
+	assert.False(t, isFiberRouter(src, "main"))
+}

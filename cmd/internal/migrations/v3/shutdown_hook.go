@@ -2,7 +2,8 @@ package v3
 
 import (
 	"fmt"
-	"regexp"
+	"go/ast"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -10,15 +11,18 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// MigrateShutdownHook turns the OnShutdown hook, which v2 ran after the server
+// was shut down, into OnPostShutdown, whose handler receives the shutdown
+// error:
+//
+//	app.Hooks().OnShutdown(func() error { ... }) -> app.Hooks().OnPostShutdown(func(error) error { ... })
+//	app.Hooks().OnShutdown(cleanup)              -> app.Hooks().OnPostShutdown(func(error) error { return cleanup() })
+//
+// The hooks may be held in a variable (hooks := app.Hooks()).
 func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		reName := regexp.MustCompile(`\.Hooks\(\)\.OnShutdown\(`)
-		content = reName.ReplaceAllString(content, ".Hooks().OnPostShutdown(")
-
-		reInline := regexp.MustCompile(`\.OnPostShutdown\(func\(\s*\)`)
-		content = reInline.ReplaceAllString(content, ".OnPostShutdown(func(err error)")
-
-		return content
+	ix := newAppIndex(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateShutdownHookContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate shutdown hooks: %w", err)
@@ -29,4 +33,72 @@ func MigrateShutdownHook(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 
 	cmd.Println("Migrating shutdown hooks")
 	return nil
+}
+
+func migrateShutdownHookContent(ix *appIndex, content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, "OnShutdown") {
+		return content
+	}
+	f, ok := ix.openFile(fi, content)
+	if !ok {
+		return content
+	}
+
+	var edits editSet
+	ast.Inspect(f.g.file, func(n ast.Node) bool {
+		call, isCall := n.(*ast.CallExpr)
+		if !isCall {
+			return true
+		}
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		if !isSel || sel.Sel.Name != "OnShutdown" || f.kind(sel.X) != appKindHooks {
+			return true
+		}
+
+		edits.replaceNode(f.g, sel.Sel, "OnPostShutdown")
+		if call.Ellipsis.IsValid() {
+			internal.Notef(fi, f.g.line(call.Pos()),
+				"OnPostShutdown handlers are func(error) error in v3: convert the handlers you spread into it by hand")
+			return true
+		}
+		for _, arg := range call.Args {
+			migrateShutdownHandler(f, &edits, arg)
+		}
+		return true
+	})
+	return edits.apply(content)
+}
+
+// migrateShutdownHandler adapts one OnShutdown handler, a func() error, to the
+// func(error) error that OnPostShutdown takes.
+func migrateShutdownHandler(f *appFile, edits *editSet, arg ast.Expr) {
+	switch h := arg.(type) {
+	case *ast.FuncLit:
+		if h.Type.Params == nil || len(h.Type.Params.List) > 0 {
+			return // already takes the shutdown error
+		}
+		at := f.g.offset(h.Type.Params.Opening) + 1
+		edits.replace(at, at, "error")
+	default:
+		if !appIsPureReference(arg) {
+			internal.Notef(f.fi, f.g.line(arg.Pos()),
+				"OnPostShutdown handlers are func(error) error in v3: wrap %s in func(error) error { return ...() }", f.g.text(arg))
+			return
+		}
+		edits.replaceNode(f.g, arg, "func(error) error { return "+f.g.text(arg)+"() }")
+	}
+}
+
+// appIsPureReference reports whether e names a function or method value
+// without calling anything: cleanup, res.Close, pkg.Cleanup.
+func appIsPureReference(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return true
+	case *ast.SelectorExpr:
+		return appIsPureReference(x.X)
+	case *ast.ParenExpr:
+		return appIsPureReference(x.X)
+	}
+	return false
 }

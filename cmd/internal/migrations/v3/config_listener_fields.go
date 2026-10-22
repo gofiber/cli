@@ -215,7 +215,7 @@ func (src *appListenSource) planRemoval(movable []*appSourceField, edits *editSe
 			}
 		}
 	}
-	if len(drop) > 0 && !appRemoveElements(src.file.g, edits, src.lit, drop) {
+	if len(drop) > 0 && !appRemoveElements(src.file.g, edits, src.lit, drop, nil) {
 		return "the fiber.Config literal is laid out in a way that cannot be edited safely"
 	}
 	return ""
