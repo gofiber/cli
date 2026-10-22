@@ -259,6 +259,53 @@ func shadows(c *fiber.Ctx) error {
 			notes: note,
 		},
 		{
+			name: "an assignment to a local variable that nothing else reads is guarded as well",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx, size int) error {
+	var err error
+	var petID int
+	petID, err = c.ParamsInt("petId")
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	size, err = c.ParamsInt("size")
+	if err != nil {
+		return err
+	}
+	_, _ = petID, size
+	return nil
+}
+`,
+			want: `package main
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func handler(c *fiber.Ctx, size int) error {
+	var err error
+	var petID int
+	petID, err = strconv.Atoi(c.Params("petId"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	size, err = strconv.Atoi(c.Params("size"))
+	if err != nil {
+		return err
+	}
+	_, _ = petID, size
+	return nil
+}
+`,
+			msg:   msg,
+			notes: note,
+		},
+		{
 			name: "the results of the call that a function returns are 0 and the error",
 			in: `package main
 

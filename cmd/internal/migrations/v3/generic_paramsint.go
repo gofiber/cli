@@ -105,16 +105,57 @@ func ctxParamsIntErr(call *ast.CallExpr, stack []ast.Node) ctxParamsErr {
 	if at == 0 {
 		return ctxParamsErr{}
 	}
-	if isIdent && define {
+	if isIdent {
 		ifs := ctxGuard(stmt, stack[at-1], errID.Name, valueID.Name)
-		// A variable of the initialization of the if statement is a new one. Any other
-		// may be there already (an assignment to a named result, or to a variable that a
-		// closure reads): the value after the error can be seen then.
-		if ifs != nil && ctxGuardsError(ifs, errID.Name, valueID.Name) && (ifs.Init == stmt || !ctxMentionedBefore(valueID.Name, stmt.Pos(), stack)) {
+		if ifs != nil && ctxGuardsError(ifs, errID.Name, valueID.Name) && ctxValueUnseen(ifs, stmt, valueID.Name, define, stack) {
 			return ctxParamsErr{use: ctxErrGuarded}
 		}
 	}
 	return ctxResetErr(value, errID.Name, stack[at-1])
+}
+
+// ctxValueUnseen reports whether nothing but the code after the guard can read the variable the
+// ParamsInt statement stmt assigns: a variable of the initialization of the if statement, or one
+// that the statement declares, is a new one; an assignment can be to a named result (a bare
+// return reads it), or to a variable that a closure reads, and then the value after the error
+// can be seen.
+func ctxValueUnseen(ifs *ast.IfStmt, stmt ast.Stmt, name string, define bool, stack []ast.Node) bool {
+	if ifs.Init == stmt {
+		return define
+	}
+	if define {
+		return !ctxMentionedBefore(name, stmt.Pos(), stack)
+	}
+
+	for _, node := range slices.Backward(stack) {
+		var ft *ast.FuncType
+		var body *ast.BlockStmt
+		switch fn := node.(type) {
+		case *ast.FuncDecl:
+			ft, body = fn.Type, fn.Body
+		case *ast.FuncLit:
+			ft, body = fn.Type, fn.Body
+		default:
+			continue
+		}
+		if body == nil || (ft.Results != nil && ctxMentions(ft.Results, name)) {
+			return false
+		}
+		return !ctxMentionedInClosure(body, name)
+	}
+	return false
+}
+
+// ctxMentionedInClosure reports whether a function literal inside the body uses the name.
+func ctxMentionedInClosure(body *ast.BlockStmt, name string) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.FuncLit); ok && ctxMentions(lit, name) {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // ctxResetErr is the use of an error that is read, where the code may read the value as
