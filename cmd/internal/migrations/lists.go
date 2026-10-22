@@ -91,7 +91,9 @@ var Migrations = []Migration{
 			v3migrations.MigrateSessionExtractor,
 			v3migrations.MigrateSessionStore,
 			v3migrations.MigrateStorageVersions,
+			v3migrations.MigrateStorageInterface,
 			v3migrations.MigrateTemplateVersions,
+			MigrateReplaceDirectives,
 			v3migrations.MigrateSessionRelease,
 			v3migrations.MigrateSessionMethods,
 			v3migrations.MigrateKeyAuthConfig,
@@ -102,7 +104,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateBasicauthConfig,
 			v3migrations.MigrateBasicauthStorePassword,
 			v3migrations.MigrateReqHeaderParser,
-			MigrateGoVersion("1.25"),
+			MigrateGoVersion,
 		},
 	},
 	{

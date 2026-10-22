@@ -210,7 +210,7 @@ require github.com/gofiber/contrib/fiberzap v1.0.2
 	defer httpmock.DeactivateAndReset()
 
 	hash := "abcdef1234567890abcdef1234567890abcdef12"
-	commitURL := "https://api.github.com/repos/gofiber/contrib/v3/commits/" + hash
+	commitURL := "https://api.github.com/repos/gofiber/contrib/commits/" + hash
 	httpmock.RegisterResponder(http.MethodGet, commitURL,
 		httpmock.NewBytesResponder(http.StatusOK, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
 
@@ -229,7 +229,8 @@ require github.com/gofiber/contrib/fiberzap v1.0.2
 
 	gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
 	require.NoError(t, err)
-	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/zap")
+	assert.Contains(t, string(gm), "github.com/gofiber/contrib/v3/zap v1.1.1-0.20200102030405-abcdef123456",
+		"the commit is looked up in the gofiber/contrib repository, /v3 is only a directory of it")
 	assert.NotContains(t, string(gm), "github.com/gofiber/contrib/fiberzap")
 }
 
@@ -301,4 +302,73 @@ require github.com/gofiber/template/html/v2 v2.0.0
 	gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
 	require.NoError(t, err)
 	assert.Contains(t, string(gm), "github.com/gofiber/template/html/v3 v3.2.1")
+}
+
+func Test_refreshThirdParty_HashLooksTheCommitUpInItsOwnRepository(t *testing.T) {
+	tests := []struct {
+		name    string
+		refresh func(*cobra.Command, string, string) (bool, error)
+		latest  *func(string, string) string
+		repo    string
+		imp     string
+		require string
+		want    string
+	}{
+		{
+			name:    "storage",
+			refresh: refreshStorage,
+			latest:  &latestStorageVersionFn,
+			repo:    "gofiber/storage",
+			imp:     "github.com/gofiber/storage/redis/v3",
+			require: "github.com/gofiber/storage/redis/v3 v3.3.0",
+			want:    "github.com/gofiber/storage/redis/v3 v3.6.3-0.20200102030405-abcdef123456",
+		},
+		{
+			name:    "template",
+			refresh: refreshTemplates,
+			latest:  &latestTemplateVersionFn,
+			repo:    "gofiber/template",
+			imp:     "github.com/gofiber/template/html/v3",
+			require: "github.com/gofiber/template/html/v3 v3.0.0",
+			want:    "github.com/gofiber/template/html/v3 v3.0.12-0.20200102030405-abcdef123456",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"),
+				[]byte("package main\n\nimport _ \""+tt.imp+"\"\n\nfunc main(){}\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module test\n\nrequire "+tt.require+"\n"), 0o600))
+
+			old := *tt.latest
+			*tt.latest = func(string, string) string {
+				if tt.name == "storage" {
+					return "v3.6.2"
+				}
+				return "v3.0.11"
+			}
+			defer func() { *tt.latest = old }()
+
+			httpmock.Activate()
+			defer httpmock.DeactivateAndReset()
+			clearHTTPCache()
+			hash := "abcdef1234567890abcdef1234567890abcdef12"
+			httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/"+tt.repo+"/commits/"+hash,
+				httpmock.NewBytesResponder(http.StatusOK, []byte(`{"sha":"`+hash+`","commit":{"committer":{"date":"2020-01-02T03:04:05Z"}}}`)))
+
+			c := &cobra.Command{}
+			var buf bytes.Buffer
+			c.SetOut(&buf)
+
+			changed, err := tt.refresh(c, dir, hash)
+			require.NoError(t, err)
+			assert.True(t, changed)
+
+			gm, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304
+			require.NoError(t, err)
+			assert.Contains(t, string(gm), tt.want)
+		})
+	}
 }

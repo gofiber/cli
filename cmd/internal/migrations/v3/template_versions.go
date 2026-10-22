@@ -2,28 +2,18 @@ package v3
 
 import (
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/gofiber/cli/cmd/internal"
+	"github.com/gofiber/cli/cmd/internal/gomod"
 )
-
-var reTemplateImport = regexp.MustCompile(`"github\.com/gofiber/template/([a-zA-Z0-9_-]+)(?:/v(\d+))?([^\"]*)"`)
 
 type templateTarget struct {
 	modulePath string
 	version    string
-}
-
-type templateGoModPatterns struct {
-	require *regexp.Regexp
-	replace *regexp.Regexp
 }
 
 // templateTargets maps template packages to their minimum module path and version
@@ -43,31 +33,39 @@ var templateTargets = map[string]templateTarget{
 	"slim":       {modulePath: "github.com/gofiber/template/slim/v3", version: "v3.0.0"},
 }
 
+var importsTemplateFamily = newImportsFamily("github.com/gofiber/template/", importsResolveTemplate)
+
+// importsResolveTemplate says where the engine name on the major version line moves
+// to. An engine that is already on a newer line than the one Fiber v3 started
+// with is left alone: the table only knows where to start.
+func importsResolveTemplate(name, major string) importsDestination {
+	target, ok := templateTargets[name]
+	if !ok {
+		return importsDestination{}
+	}
+
+	elems := strings.Split(target.modulePath, "/")
+	if importsMajorRank(major) > importsMajorRank(elems[len(elems)-1]) {
+		return importsDestination{known: true}
+	}
+	return importsDestination{path: target.modulePath, minimum: target.version, known: true}
+}
+
 // MigrateTemplateVersions updates template package imports and go.mod entries
-// to the minimum versions required for Fiber v3 core compatibility.
+// to the minimum versions required for Fiber v3 core compatibility. A version
+// that is already higher is kept: the table only raises.
 func MigrateTemplateVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changedImports, err := internal.ChangeFileContent(cwd, func(content string) string {
-		return reTemplateImport.ReplaceAllStringFunc(content, func(match string) string {
-			sub := reTemplateImport.FindStringSubmatch(match)
-			if len(sub) != 4 {
-				return match
-			}
-
-			target, ok := templateTargets[sub[1]]
-			if !ok {
-				return match
-			}
-
-			return fmt.Sprintf(`"%s%s"`, target.modulePath, sub[3])
-		})
-	})
+	changedImports, err := internal.ChangeFileContentInfo(cwd, importsMigrateTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to migrate template imports: %w", err)
 	}
 
-	modChanged, err := migrateTemplateModules(cwd)
+	modChanged, err := gomod.Edit(cwd, func(f *gomod.File) error {
+		importsTemplateFamily.retarget(f, nil)
+		return nil
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to migrate template modules: %w", err)
 	}
 
 	if !changedImports && !modChanged {
@@ -78,82 +76,16 @@ func MigrateTemplateVersions(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	return nil
 }
 
-func migrateTemplateModules(cwd string) (bool, error) {
-	modChanged := false
-	patterns := compileTemplateGoModPatterns()
-
-	walkErr := filepath.WalkDir(cwd, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			if d.Name() == vendorDirName {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() != goModFileName {
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return fmt.Errorf("stat %s: %w", path, err)
-		}
-
-		b, err := os.ReadFile(path) // #nosec G304 -- reading module file
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		content := string(b)
-		updated := content
-
-		for pkg, target := range templateTargets {
-			updated = updateTemplateGoModModule(updated, target.modulePath, target.version, patterns[pkg])
-		}
-
-		if updated == content {
-			return nil
-		}
-
-		if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
-		}
-		modChanged = true
-		return nil
-	})
-	if walkErr != nil {
-		return false, fmt.Errorf("failed to migrate template modules: %w", walkErr)
+func importsMigrateTemplate(content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, importsTemplateFamily.prefix) {
+		return content
+	}
+	g, ok := parseFile(fi, content)
+	if !ok {
+		return content
 	}
 
-	return modChanged, nil
-}
-
-func compileTemplateGoModPatterns() map[string]templateGoModPatterns {
-	patterns := make(map[string]templateGoModPatterns, len(templateTargets))
-	for pkg := range templateTargets {
-		rePath := fmt.Sprintf(`github\.com/gofiber/template/%s(?:/v\d+)?`, regexp.QuoteMeta(pkg))
-		patterns[pkg] = templateGoModPatterns{
-			require: regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)%s\s+%s`, rePath, goModVersionPattern)),
-			replace: regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*replace\s+)%s(\s+%s)?(\s+=>\s+)`, rePath, goModVersionPattern)),
-		}
-	}
-	return patterns
-}
-
-func updateTemplateGoModModule(content, newPath, version string, patterns templateGoModPatterns) string {
-	content = patterns.require.ReplaceAllString(content, fmt.Sprintf(`${1}%s %s`, newPath, version))
-	content = patterns.replace.ReplaceAllStringFunc(content, func(s string) string {
-		sub := patterns.replace.FindStringSubmatch(s)
-		if len(sub) != 4 {
-			return s
-		}
-
-		if strings.TrimSpace(sub[2]) == "" {
-			return fmt.Sprintf("%s%s%s", sub[1], newPath, sub[3])
-		}
-		return fmt.Sprintf("%s%s %s%s", sub[1], newPath, version, sub[3])
-	})
-
-	return content
+	var edits editSet
+	importsTemplateFamily.moveImports(g, &edits)
+	return edits.apply(content)
 }

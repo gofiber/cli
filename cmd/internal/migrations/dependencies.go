@@ -12,6 +12,8 @@ import (
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
+
+	"github.com/gofiber/cli/cmd/internal/gomod"
 )
 
 // ExecCommand is used to run external commands. It can be replaced in tests.
@@ -19,7 +21,9 @@ var ExecCommand = exec.Command
 
 // MigrateDependencies ensures that dependencies shared with Fiber are at least
 // the versions required by the target Fiber release, and preserves higher
-// versions already declared by the project.
+// versions already declared by the project. The go directive is raised to the
+// one the release declares; MigrateGoVersion has set it from a table by then, so
+// this only changes it for a release the table does not know.
 //
 // The current map contains the dependency versions present before any
 // migrations ran, keyed by module directory.
@@ -48,13 +52,17 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[
 	if err != nil {
 		return fmt.Errorf("read fiber go.mod: %w", err)
 	}
-	mf, err := modfile.Parse(info.GoMod, b, nil)
+	fiberMod, err := modfile.Parse(info.GoMod, b, nil)
 	if err != nil {
 		return fmt.Errorf("parse fiber go.mod: %w", err)
 	}
+	fiberGo := ""
+	if fiberMod.Go != nil {
+		fiberGo = fiberMod.Go.Version
+	}
 
-	deps := make(map[string]*semver.Version, len(mf.Require))
-	for _, r := range mf.Require {
+	deps := make(map[string]*semver.Version, len(fiberMod.Require))
+	for _, r := range fiberMod.Require {
 		v, err := semver.NewVersion(strings.TrimPrefix(r.Mod.Version, "v"))
 		if err != nil {
 			return fmt.Errorf("parse fiber dependency %s version %s: %w", r.Mod.Path, r.Mod.Version, err)
@@ -62,26 +70,14 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[
 		deps[r.Mod.Path] = v
 	}
 
-	dirs, err := fiberModuleDirs(cwd)
-	if err != nil {
-		return fmt.Errorf("find modules: %w", err)
-	}
-
-	anyChanged := false
-	for _, dir := range dirs {
-		modFile := filepath.Join(dir, "go.mod")
-		b, err := os.ReadFile(modFile) // #nosec G304
-		if err != nil {
-			return fmt.Errorf("read %s: %w", modFile, err)
-		}
-		mf, err := modfile.Parse(modFile, b, nil)
-		if err != nil {
-			return fmt.Errorf("parse %s: %w", modFile, err)
+	depsChanged, goRaised := false, false
+	_, err = gomod.Edit(cwd, func(f *gomod.File) error {
+		if !importsRequiresFiber(f.File) {
+			return nil
 		}
 
-		changed := false
-		orig := current[dir]
-		for _, r := range mf.Require {
+		orig := current[filepath.Dir(f.Path)]
+		for _, r := range f.Requirements(func(string) bool { return true }) {
 			targetVer, ok := deps[r.Mod.Path]
 			if !ok {
 				continue
@@ -92,29 +88,35 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[
 			}
 			currVer, err := semver.NewVersion(strings.TrimPrefix(r.Mod.Version, "v"))
 			if err != nil {
-				return fmt.Errorf("parse %s version in %s: %w", r.Mod.Path, modFile, err)
+				return fmt.Errorf("parse %s version in %s: %w", r.Mod.Path, f.Path, err)
 			}
 			if currVer.LessThan(maxVer) {
-				r.Mod.Version = "v" + maxVer.String()
-				changed = true
+				f.SetRequire(r, r.Mod.Path, "v"+maxVer.String())
+				depsChanged = true
 			}
 		}
 
-		if changed {
-			mf.SetRequire(mf.Require)
-			formatted, err := mf.Format()
-			if err != nil {
-				return fmt.Errorf("format %s: %w", modFile, err)
-			}
-			if err := os.WriteFile(modFile, formatted, 0o600); err != nil {
-				return fmt.Errorf("write %s: %w", modFile, err)
-			}
-			anyChanged = true
+		if fiberGo != "" && f.RaiseGo(fiberGo) {
+			goRaised = true
 		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("update go.mod files: %w", err)
+	}
+	workChanged, err := gomod.SyncWork(cwd)
+	if err != nil {
+		return fmt.Errorf("update go.work files: %w", err)
 	}
 
-	if anyChanged {
+	if depsChanged {
 		cmd.Println("Updating dependency versions")
+	}
+	if goRaised {
+		cmd.Printf("Ensuring go version >= %s\n", fiberGo)
+	}
+	if workChanged {
+		cmd.Println(importsWorkVersionMessage)
 	}
 	return nil
 }
@@ -131,7 +133,7 @@ func dependencyVersions(root string) (map[string]map[string]*semver.Version, err
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", modFile, err)
 		}
-		mf, err := modfile.Parse(modFile, b, nil)
+		mf, err := modfile.ParseLax(modFile, b, nil)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", modFile, err)
 		}
