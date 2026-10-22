@@ -59,9 +59,11 @@ func (m *csrfMigration) lookup(lit *ast.CompositeLit, fields map[string]*ast.Key
 
 	text, ok := m.lookupExtractor(kv.Value)
 	switch {
+	case !ok && csrfLookupSource(kv.Value) == csrfCookieSource:
+		m.notef(kv, csrfCookieLookupNote, name, m.g.text(kv.Value))
 	case !ok:
 		m.notef(kv, "csrf.Config has no %s in v3, and %s cannot be turned into an Extractor (left as it is): "+
-			"use extractors.FromHeader, FromForm, FromQuery or FromParam; v3 panics when the extractor reads the CSRF cookie itself",
+			"use extractors.FromHeader, FromForm, FromQuery or FromParam",
 			name, m.g.text(kv.Value))
 	case text == "":
 		// "" is the default lookup, which is also the default extractor
@@ -71,6 +73,42 @@ func (m *csrfMigration) lookup(lit *ast.CompositeLit, fields map[string]*ast.Key
 		m.edits.replaceNode(m.g, kv.Value, text)
 		m.usesExtractors = true
 	}
+}
+
+// csrfCookieSource is the source of a lookup that reads the token from a cookie.
+const csrfCookieSource = "cookie"
+
+// csrfCookieLookupNote tells why a lookup that reads a cookie stays as it is. v2
+// named the CSRF cookie after the cookie of such a lookup (Config.KeyLookup
+// "cookie:x" set CookieName to x), so the token of the request and the cookie
+// that it was compared with were the same value.
+const csrfCookieLookupNote = "csrf.Config has no %s in v3, and %s stays as it is on purpose: v2 made the cookie of such a lookup the CSRF cookie, " +
+	"so the token of the request was compared with the cookie it came from and the check could not reject a request that carried the cookie " +
+	"(browsers attach it to cross-site requests on their own; only the Referer check of HTTPS requests protected the route), " +
+	"and v3 refuses an extractor that reads the CSRF cookie (csrf.New panics). " +
+	"Read the token from a header or a form field instead, with Extractor: extractors.FromHeader(\"X-Csrf-Token\") or extractors.FromForm(\"_csrf\"), " +
+	"and put csrf.TokenFromContext(c) into it (or let the client copy the cookie into it)"
+
+// csrfLookupSource returns the source a lookup reads the token from ("header",
+// "cookie", ...) when the value of the lookup starts with a literal that names
+// it, "" otherwise.
+func csrfLookupSource(e ast.Expr) string {
+	if s, ok := mw1StringLiteral(e); ok {
+		source, _, found := strings.Cut(s, ":")
+		if found {
+			return source
+		}
+		return ""
+	}
+	if bin, ok := e.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
+		if prefix, isLiteral := mw1StringLiteral(bin.X); isLiteral {
+			source, _, found := strings.Cut(prefix, ":")
+			if found {
+				return source
+			}
+		}
+	}
+	return ""
 }
 
 // lookupExtractor turns the value of a KeyLookup into the extractor of v3. The

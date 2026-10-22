@@ -203,6 +203,8 @@ func (m *csrfMigration) assignment(as *ast.AssignStmt, stack []ast.Node) {
 			m.edits.replaceNode(m.g, sel.Sel, csrfExtractor)
 			m.edits.replaceNode(m.g, as.Rhs[0], text)
 			m.usesExtractors = true
+		} else if csrfLookupSource(as.Rhs[0]) == csrfCookieSource {
+			m.notef(as, csrfCookieLookupNote, field, m.g.text(as.Rhs[0]))
 		} else {
 			m.notef(as, "csrf.Config has no %s in v3: set the Extractor instead, with extractors.FromHeader, FromForm, FromQuery or FromParam", field)
 		}

@@ -146,8 +146,56 @@ func configs(lookup string) []fiber.Handler {
 	assert.NotContains(t, file, "Extractor")
 	if assert.Len(t, res.notes, 4) {
 		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: csrf.Config has no KeyLookup in v3", mw1LineOf(t, file, `"cookie:csrf_"`)))
-		assert.Contains(t, res.notes[0], "v3 panics when the extractor reads the CSRF cookie")
+		// the cookie lookup says why, the other lookups do not need to
+		assert.Contains(t, res.notes[0], `"cookie:csrf_" stays as it is on purpose`)
+		assert.Contains(t, res.notes[0], "compared with the cookie it came from")
+		assert.Contains(t, res.notes[0], "csrf.New panics")
+		assert.Contains(t, res.notes[0], `extractors.FromHeader("X-Csrf-Token")`)
+		assert.Contains(t, res.notes[0], "csrf.TokenFromContext(c)")
+		for _, note := range res.notes[1:] {
+			assert.NotContains(t, note, "on purpose", "only the cookie lookup is a security hole")
+		}
 	}
+}
+
+func Test_MigrateCSRFConfig_CookieLookupIsTheCSRFCookie(t *testing.T) {
+	t.Parallel()
+
+	// v2 named the CSRF cookie after the cookie of the lookup, whatever CookieName said
+	src := `package main
+
+` + csrfImports + `
+func configs(name string) []fiber.Handler {
+	return []fiber.Handler{
+		csrf.New(csrf.Config{KeyLookup: "cookie:other", CookieName: "csrf_"}),
+		csrf.New(csrf.Config{TokenLookup: "cookie:" + name}),
+	}
+}
+
+func assigned() csrf.Config {
+	var cfg csrf.Config
+	cfg.KeyLookup = "cookie:csrf_"
+	return cfg
+}
+`
+	res := mw1Run(t, v3.MigrateCSRFConfig, src)
+
+	file := res.file()
+	assert.Contains(t, file, `KeyLookup: "cookie:other", CookieName: "csrf_"`)
+	assert.Contains(t, file, `TokenLookup: "cookie:" + name`)
+	assert.Contains(t, file, `cfg.KeyLookup = "cookie:csrf_"`)
+	assert.NotContains(t, file, "extractors")
+	if assert.Len(t, res.notes, 3) {
+		assert.Contains(t, res.notes[0], `"cookie:other" stays as it is on purpose`)
+		assert.Contains(t, res.notes[1], `"cookie:" + name stays as it is on purpose`)
+		assert.Contains(t, res.notes[1], "TokenLookup")
+		assert.Contains(t, res.notes[2], `"cookie:csrf_" stays as it is on purpose`)
+		assert.Contains(t, res.notes[2], "KeyLookup")
+	}
+
+	// a second run has nothing to add
+	again := mw1Run(t, v3.MigrateCSRFConfig, file)
+	assert.Equal(t, file, again.file())
 }
 
 func Test_MigrateCSRFConfig_OneLineConfigsStayValid(t *testing.T) {
@@ -223,15 +271,71 @@ func Test_MigrateCSRFConfig_CookieExtractorIsReported(t *testing.T) {
 
 ` + csrfImports + `
 var _ = csrf.New(csrf.Config{Extractor: csrf.CsrfFromCookie("csrf_")})
+var _ = csrf.New(csrf.Config{CookieName: "session_csrf", Extractor: csrf.CsrfFromCookie("session_csrf")})
+var _ = csrf.New(csrf.Config{Cookie: &fiber.Cookie{Name: "deprecated_csrf"}, Extractor: csrf.CsrfFromCookie("deprecated_csrf")})
 `
 	res := mw1Run(t, v3.MigrateCSRFConfig, src)
 
 	// the helper stays, so that the compiler points at it
 	assert.Contains(t, res.file(), `csrf.Config{IdleTimeout: time.Hour, Extractor: csrf.CsrfFromCookie("csrf_")}`)
+	assert.Contains(t, res.file(), `CookieName: "session_csrf", Extractor: csrf.CsrfFromCookie("session_csrf")`)
+	assert.Contains(t, res.file(), `Extractor: csrf.CsrfFromCookie("deprecated_csrf")`)
 	assert.NotContains(t, res.file(), "extractors")
-	if assert.Len(t, res.notes, 1) {
-		assert.Contains(t, res.notes[0], "csrf.CsrfFromCookie is gone in v3, which panics when the extractor reads the CSRF cookie")
+	if assert.Len(t, res.notes, 3) {
+		assert.Contains(t, res.notes[0], `csrf.CsrfFromCookie("csrf_") reads the CSRF cookie itself, which v3 refuses (csrf.New panics)`)
+		assert.Contains(t, res.notes[0], "the check could not reject a request that carried the cookie")
+		assert.Contains(t, res.notes[0], `extractors.FromHeader("X-Csrf-Token")`)
+		assert.Contains(t, res.notes[1], `csrf.CsrfFromCookie("session_csrf") reads the CSRF cookie itself`)
+		assert.Contains(t, res.notes[2], `csrf.CsrfFromCookie("deprecated_csrf") reads the CSRF cookie itself`)
 	}
+}
+
+func Test_MigrateCSRFConfig_CookieExtractorOfAnotherCookie(t *testing.T) {
+	t.Parallel()
+
+	// a cookie that is not the CSRF cookie is compared with it in v2 and in v3
+	res := mw1Run(t, v3.MigrateCSRFConfig, `package main
+
+`+csrfImports+`
+func configs(name string) []fiber.Handler {
+	return []fiber.Handler{
+		csrf.New(csrf.Config{Extractor: csrf.CsrfFromCookie("echo_csrf")}),
+		csrf.New(csrf.Config{CookieName: "session_csrf", Extractor: csrf.CsrfFromCookie("echo_csrf")}),
+		csrf.New(csrf.Config{Cookie: &fiber.Cookie{Name: "deprecated_csrf"}, Extractor: csrf.CsrfFromCookie("echo_csrf")}),
+		csrf.New(csrf.Config{CookieName: name, Extractor: csrf.CsrfFromCookie("echo_csrf")}),
+		csrf.New(csrf.Config{Extractor: csrf.CsrfFromCookie(name)}),
+	}
+}
+
+func token(c *fiber.Ctx) (string, error) {
+	return csrf.CsrfFromCookie("echo_csrf")(c)
+}
+`)
+
+	file := res.file()
+	assert.Equal(t, 4, strings.Count(file, `Extractor: extractors.FromCookie("echo_csrf")`))
+	assert.Contains(t, file, `Extractor: extractors.FromCookie(name)`)
+	assert.Contains(t, file, `return extractors.FromCookie("echo_csrf").Extract(c)`)
+	assert.NotContains(t, file, "CsrfFromCookie")
+	assert.Contains(t, file, csrfExtractorsImport)
+	assert.Empty(t, res.notes)
+}
+
+func Test_MigrateCSRFConfig_CookieExtractorOfTheCookieThatTheNameHides(t *testing.T) {
+	t.Parallel()
+
+	// the name of the CSRF cookie is only known when it is a string literal; v3
+	// panics at startup when the extractor turns out to read it
+	res := mw1Run(t, v3.MigrateCSRFConfig, `package main
+
+`+csrfImports+`
+const cookie = "csrf_"
+
+var _ = csrf.New(csrf.Config{CookieName: cookie, Extractor: csrf.CsrfFromCookie("csrf_")})
+`)
+
+	assert.Contains(t, res.file(), `Extractor: extractors.FromCookie("csrf_")`)
+	assert.Empty(t, res.notes)
 }
 
 func Test_MigrateCSRFConfig_CustomExtractor(t *testing.T) {

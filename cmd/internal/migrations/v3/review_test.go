@@ -450,3 +450,23 @@ func routes(app *fiber.App) {
 	require.Len(t, notes, 1, "%v", notes)
 	assert.Contains(t, notes[0], "a.go:5: healthcheck: each probe is a route of its own now")
 }
+
+func Test_Review_CookieLookupOfTheCSRFMiddleware(t *testing.T) {
+	t.Parallel()
+
+	notes := reviewNotes(t, map[string]string{"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/csrf"
+)
+
+var _ = csrf.New(csrf.Config{KeyLookup: "cookie:csrf_"})
+var _ = csrf.New(csrf.Config{TokenLookup: "form:_csrf"})
+var _ fiber.Handler
+`})
+
+	// the advice for the other lookups does not fit one that reads the CSRF cookie
+	assert.Contains(t, notes, "main.go:8: csrf.Config has no KeyLookup field in Fiber v3: a lookup of a cookie is the CSRF cookie itself, which v3 refuses; send the token in a header or a form field")
+	assert.Contains(t, notes, "main.go:9: csrf.Config has no TokenLookup field in Fiber v3: use Extractor with the extractors package")
+}
