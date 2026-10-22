@@ -11,11 +11,11 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// reFilesystemPath matches the import path of the filesystem middleware at any
-// major version, and reStaticPath that of the static middleware.
+// mw3CoreFilesystemPath matches the import path of the filesystem middleware at any
+// major version, and mw3CoreStaticPath that of the static middleware.
 var (
-	reFilesystemPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/filesystem$`)
-	reStaticPath     = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/static$`)
+	mw3CoreFilesystemPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/filesystem$`)
+	mw3CoreStaticPath     = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/static$`)
 )
 
 // What the filesystem package exports, and the middleware packages name a
@@ -97,7 +97,7 @@ func mw3FilesystemContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) strin
 	if !strings.Contains(src, "middleware/filesystem") {
 		return src
 	}
-	names := importNames(src, reFilesystemPath, "filesystem")
+	names := importNames(src, mw3CoreFilesystemPath, "filesystem")
 	if len(names) == 0 {
 		return src
 	}
@@ -276,7 +276,7 @@ func (p *mw3FSPass) existingStaticName() string {
 	if p.dot {
 		return ""
 	}
-	for _, name := range importNames(p.g.src, reStaticPath, "static") {
+	for _, name := range importNames(p.g.src, mw3CoreStaticPath, "static") {
 		if name != "." {
 			return name
 		}
@@ -294,7 +294,7 @@ func (p *mw3FSPass) chooseStaticName() {
 
 	// An import with a name of its own keeps it: the code says fs.New already.
 	for _, spec := range p.g.file.Imports {
-		if path, err := strconv.Unquote(spec.Path.Value); err == nil && reFilesystemPath.MatchString(path) && spec.Name != nil && spec.Name.Name != "_" {
+		if path, err := strconv.Unquote(spec.Path.Value); err == nil && mw3CoreFilesystemPath.MatchString(path) && spec.Name != nil && spec.Name.Name != "_" {
 			p.static = spec.Name.Name
 			return
 		}
@@ -315,7 +315,7 @@ func (p *mw3FSPass) rewriteImport() {
 	staticImported := p.existingStaticName() != ""
 	for _, spec := range p.g.file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || !reFilesystemPath.MatchString(path) || (spec.Name != nil && spec.Name.Name == "_") {
+		if err != nil || !mw3CoreFilesystemPath.MatchString(path) || (spec.Name != nil && spec.Name.Name == "_") {
 			continue
 		}
 		if staticImported {

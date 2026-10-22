@@ -12,7 +12,7 @@ import (
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
-func migrateSessionKeyLookup(t *testing.T, lookup string) (content, out string) {
+func mw3MigrateSessionKeyLookup(t *testing.T, lookup string) (content, out string) {
 	t.Helper()
 
 	dir, err := os.MkdirTemp("", "msessionkl")
@@ -49,7 +49,7 @@ func Test_MigrateSessionExtractor_Literals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			content, out := migrateSessionKeyLookup(t, tc.lookup)
+			content, out := mw3MigrateSessionKeyLookup(t, tc.lookup)
 			assert.NotContains(t, content, "KeyLookup")
 			assert.Contains(t, content, "Extractor: "+tc.extractor+", // comment")
 			assert.Contains(t, content, `"github.com/gofiber/fiber/v3/extractors"`)

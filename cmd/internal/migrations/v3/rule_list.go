@@ -18,12 +18,12 @@ import (
 // ruleListPackages are the middlewares that took a rule map and now take an
 // ordered list. Both deprecated the map for the same reason and their new
 // fields are spelled the same, so one migration serves them.
-var ruleListPackages = []ruleListPackage{
+var ruleListPackages = []mw3RuleListPackage{
 	{name: "redirect", patternBytes: `*.[](){}+?^|\$`},
 	{name: "rewrite", patternBytes: "*", quotedKeys: true},
 }
 
-type ruleListPackage struct {
+type mw3RuleListPackage struct {
 	name string
 	// patternBytes are the key bytes ranked as syntax rather than path text:
 	// redirect compiles a key as a regexp, rewrite reads only "*".
@@ -33,9 +33,9 @@ type ruleListPackage struct {
 	quotedKeys bool
 }
 
-// ruleRegexpSyntax are the bytes of a key that v2 compiled as a regular
+// mw3RuleRegexpSyntax are the bytes of a key that v2 compiled as a regular
 // expression and that rewrite v3 reads as the path text they spell.
-const ruleRegexpSyntax = `[](){}+?^|\$`
+const mw3RuleRegexpSyntax = `[](){}+?^|\$`
 
 // MigrateRuleList rewrites a Rules map into the RuleList slice that replaced it.
 //
@@ -69,7 +69,7 @@ func migrateRuleListContent(content string, fi internal.FileInfo) string {
 	}
 
 	type target struct {
-		pkg   ruleListPackage
+		pkg   mw3RuleListPackage
 		names []string
 	}
 	var targets []target
@@ -115,13 +115,13 @@ func migrateRuleListContent(content string, fi internal.FileInfo) string {
 }
 
 // rewriteRuleMap replaces the Rules map of a config literal with the list.
-func rewriteRuleMap(g *goSource, edits *editSet, fi internal.FileInfo, lit *ast.CompositeLit, alias string, pkg ruleListPackage) {
+func rewriteRuleMap(g *goSource, edits *editSet, fi internal.FileInfo, lit *ast.CompositeLit, alias string, pkg mw3RuleListPackage) {
 	kv := mw3Field(lit, "Rules")
 	if kv == nil {
 		return
 	}
 	mapLit, ok := kv.Value.(*ast.CompositeLit)
-	if !ok || !isStringMap(mapLit.Type) {
+	if !ok || !mw3IsStringMap(mapLit.Type) {
 		return
 	}
 
@@ -136,7 +136,7 @@ func rewriteRuleMap(g *goSource, edits *editSet, fi internal.FileInfo, lit *ast.
 		var dead []string
 		first := token.NoPos
 		for _, r := range rules {
-			if strings.ContainsAny(r.key, ruleRegexpSyntax) {
+			if strings.ContainsAny(r.key, mw3RuleRegexpSyntax) {
 				dead = append(dead, r.from)
 				if first == token.NoPos {
 					first = r.pos
@@ -165,8 +165,8 @@ func rewriteRuleMap(g *goSource, edits *editSet, fi internal.FileInfo, lit *ast.
 	edits.replaceNode(g, kv, b.String())
 }
 
-// isStringMap reports whether the type is map[string]string.
-func isStringMap(typ ast.Expr) bool {
+// mw3IsStringMap reports whether the type is map[string]string.
+func mw3IsStringMap(typ ast.Expr) bool {
 	m, ok := typ.(*ast.MapType)
 	return ok && isIdentNamed(m.Key, "string") && isIdentNamed(m.Value, "string")
 }

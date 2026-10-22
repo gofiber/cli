@@ -228,7 +228,7 @@ func Test_mw3FreeName(t *testing.T) {
 }
 
 // The migrations of this area write their own imports.
-func Test_MigrationsWriteTheirImports(t *testing.T) {
+func Test_Mw3MigrationsWriteTheirImports(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -397,7 +397,7 @@ func purge() error { return store.Reset() }
 
 // However the code is laid out, what a migration writes parses and has the
 // imports it needs.
-func Test_MigrationsWriteValidGoForAnyLayout(t *testing.T) {
+func Test_Mw3MigrationsWriteValidGoForAnyLayout(t *testing.T) {
 	t.Parallel()
 
 	const sessionHeader = `package main

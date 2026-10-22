@@ -14,9 +14,9 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// reMonitorPath matches the import path of the monitor middleware of the core
+// mw3CoreMonitorPath matches the import path of the monitor middleware of the core
 // module at any major version; v3 moved it to the contrib module.
-var reMonitorPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/monitor$`)
+var mw3CoreMonitorPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/monitor$`)
 
 const mw3MonitorPath = "github.com/gofiber/contrib/v3/monitor"
 
@@ -49,7 +49,7 @@ func mw3MonitorContent(src string, fi internal.FileInfo) string {
 	if !strings.Contains(src, "middleware/monitor") {
 		return src
 	}
-	names := importNames(src, reMonitorPath, "monitor")
+	names := importNames(src, mw3CoreMonitorPath, "monitor")
 	if len(names) == 0 {
 		return src
 	}
@@ -60,7 +60,7 @@ func mw3MonitorContent(src string, fi internal.FileInfo) string {
 
 	var edits editSet
 	for _, spec := range g.file.Imports {
-		if path, err := strconv.Unquote(spec.Path.Value); err == nil && reMonitorPath.MatchString(path) {
+		if path, err := strconv.Unquote(spec.Path.Value); err == nil && mw3CoreMonitorPath.MatchString(path) {
 			edits.replaceNode(g, spec.Path, strconv.Quote(mw3MonitorPath))
 		}
 	}

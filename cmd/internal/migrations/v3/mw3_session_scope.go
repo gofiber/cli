@@ -11,10 +11,10 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// reSessionPath matches the import path of the fiber session middleware at any
+// mw3SessionPath matches the import path of the fiber session middleware at any
 // major version: v3 once MigrateGoPkgs has run, v2 when a migration is run on
 // its own.
-var reSessionPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/session$`)
+var mw3SessionPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/session$`)
 
 // The functions that make a session store: New in v2, NewStore in v3.
 const (
@@ -49,7 +49,7 @@ func (f *mw3SessionFacts) scan(file *ast.File, src string) {
 	if !strings.Contains(src, "middleware/session") {
 		return
 	}
-	names := importNames(src, reSessionPath, "session")
+	names := importNames(src, mw3SessionPath, "session")
 	if len(names) == 0 {
 		return
 	}
@@ -141,7 +141,7 @@ func mw3OpenSessionFile(fi internal.FileInfo, src string, pkgs *mw3Pkgs) (*mw3Se
 	if !strings.Contains(src, "middleware/session") {
 		return nil, false
 	}
-	names := importNames(src, reSessionPath, "session")
+	names := importNames(src, mw3SessionPath, "session")
 	if len(names) == 0 {
 		return nil, false
 	}

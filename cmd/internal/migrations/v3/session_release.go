@@ -16,9 +16,9 @@ import (
 
 const releaseComment = "// Important: Manual cleanup required"
 
-// reSessionV3Path matches the import path of the v3 session middleware: the
+// mw3SessionV3Path matches the import path of the v3 session middleware: the
 // release only exists there, and this migration runs after MigrateGoPkgs.
-var reSessionV3Path = regexp.MustCompile(`^github\.com/gofiber/fiber/v3/middleware/session$`)
+var mw3SessionV3Path = regexp.MustCompile(`^github\.com/gofiber/fiber/v3/middleware/session$`)
 
 // MigrateSessionRelease adds defer sess.Release() after store.Get() calls
 // when using the Store Pattern (legacy pattern).
@@ -56,7 +56,7 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 func mw3SessionReleaseContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	// Skip v2 imports - this migration only works with v3.
-	if strings.Contains(src, "middleware/session") && len(importNames(src, reSessionV3Path, "session")) == 0 {
+	if strings.Contains(src, "middleware/session") && len(importNames(src, mw3SessionV3Path, "session")) == 0 {
 		return src
 	}
 	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
