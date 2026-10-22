@@ -23,11 +23,18 @@ var mw1Healthcheck = newMW1Package("healthcheck")
 //	app.Use(healthcheck.New(healthcheck.Config{LivenessProbe: ..., ReadinessEndpoint: "/ready"}))
 //
 // which becomes one `Get` per probe, each with a config of its own. The rewrite
-// is limited to what the file imports from the healthcheck package; a config
-// that cannot be split safely is left as it is and reported.
+// is limited to what the file imports from the healthcheck package.
 //
 // A config that is declared in another file of the package than the Use call
 // that registers it is split where it is declared (see hcProject).
+//
+// A config that cannot be split (one that several routes share, that a function
+// returns or a struct keeps, that is a parameter, that another package declares or
+// exports, that the code completes after its declaration), a group, and a handler
+// that is kept in a variable or passed on keep the behavior of v2: the module
+// package holds the middleware of v2 (see healthcheck_shim.go), and the places of
+// the module that have such a value use it. Where the module cannot have the
+// package, the call stays as it is and is reported.
 func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	proj, err := planHealthcheck(cwd)
 	if err != nil {
@@ -70,7 +77,9 @@ type hcMigration struct {
 	split map[*ast.CompositeLit]bool
 	rep   *mw1Reporter
 	// proj knows the other files of the package.
-	proj  *hcProject
+	proj *hcProject
+	// shim is set when the module package holds the middleware of v2 for this file.
+	shim  *hcShimFile
 	fiber string
 	// renames holds the identifier edits. They are applied inside the text that
 	// is copied into a rewritten statement, and as edits of their own elsewhere.
@@ -84,8 +93,6 @@ type hcMigration struct {
 	needsFiber bool
 	// fiberUsed is set when a rename writes a type of the core package.
 	fiberUsed bool
-	// shim is set when the module package holds the middleware of v2 for this file.
-	shim *hcShimFile
 }
 
 // newHCMigration prepares the rewrite of a file that imports the healthcheck
@@ -750,16 +757,16 @@ func hcConfigLiteral(pkg string, cfg hcConfig, probe hcProbe, override string) s
 func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack []ast.Node) (cfg hcConfig, split hcSplit, ok bool) {
 	d, found := resolveIdent(id.Name, id.Pos(), stack)
 	if !found {
-		dh, lit, why, unreadable := h.packageDeclaration(id.Name)
-		if lit == nil {
-			if unreadable {
-				h.reportUnmigrated(newCall, "its config "+id.Name+" "+why)
+		pd := h.packageDeclaration(id.Name)
+		if pd.lit == nil {
+			if pd.unreadable {
+				h.reportUnmigrated(newCall, "its config "+id.Name+" "+pd.why)
 			} else {
-				h.refuse(newCall, stack, "its config "+id.Name+" "+why)
+				h.refuse(newCall, stack, "its config "+id.Name+" "+pd.why)
 			}
 			return cfg, split, false
 		}
-		return h.splitVariable(newCall, id, dh, lit, stack)
+		return h.splitVariable(newCall, id, pd.host, pd.lit, stack)
 	}
 
 	lit, isLit := d.init.(*ast.CompositeLit)

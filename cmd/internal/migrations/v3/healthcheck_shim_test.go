@@ -252,6 +252,17 @@ func handler() fiber.Handler {
 			},
 		},
 		{
+			name:  "a spread of configs",
+			decls: ``,
+			body: `	configs := []healthcheck.Config{{LivenessEndpoint: "/a"}}
+	app.Use(healthcheck.New(configs...))
+`,
+			want: []string{
+				`configs := []fibermigrate.HealthConfig{{LivenessEndpoint: "/a"}}`,
+				"app.Use(fibermigrate.Health(configs...))",
+			},
+		},
+		{
 			name:  "a first argument that may be a path or a handler",
 			decls: ``,
 			body: `	app.Use(unknown, healthcheck.New(healthcheck.Config{LivenessEndpoint: "/up"}))
@@ -563,6 +574,34 @@ func main() {
 	assert.NotContains(t, file, "healthcheck", "the middleware of v3 is not used any more")
 	assert.Empty(t, res.added)
 	assert.Equal(t, shim, res.files[hcShimFile], "the file of an earlier run is left as it is")
+}
+
+func Test_MigrateHealthcheckConfig_ShimAfterABlankImport(t *testing.T) {
+	t.Parallel()
+
+	res := mw1RunModule(t, v3.MigrateHealthcheckConfig, map[string]string{"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/healthcheck"
+
+	_ "example.com/app/internal/fibermigrate"
+)
+
+var shared = healthcheck.Config{LivenessEndpoint: "/shared"}
+
+func main() {
+	app := fiber.New()
+	app.Use(healthcheck.New(shared))
+	app.Use("/x", healthcheck.New(shared))
+}
+`})
+
+	file := res.file()
+	assert.Contains(t, file, "app.Use(fibermigrate.Health(shared))")
+	assert.Contains(t, file, "\t_ \"example.com/app/internal/fibermigrate\"\n")
+	assert.Contains(t, file, "\t\"example.com/app/internal/fibermigrate\"\n")
+	hcShimAgain(t, res)
 }
 
 func Test_MigrateHealthcheckConfig_ShimEmbeddedConfig(t *testing.T) {

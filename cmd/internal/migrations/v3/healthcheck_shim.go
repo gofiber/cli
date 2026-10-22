@@ -2,7 +2,6 @@ package v3
 
 import (
 	"bytes"
-	_ "embed" // the source of the file that keeps the health check middleware of Fiber v2
 	"go/ast"
 	"maps"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	_ "embed" // the source of the file that keeps the health check middleware of Fiber v2
 
 	"github.com/gofiber/cli/cmd/internal"
 )
@@ -274,7 +275,10 @@ func hcCallee(call *ast.CallExpr) *ast.SelectorExpr {
 		}
 		fun = p.X
 	}
-	sel, _ := fun.(*ast.SelectorExpr)
+	sel, ok := fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
 	return sel
 }
 
@@ -339,8 +343,8 @@ func (h *hcMigration) mention(sel *ast.SelectorExpr, stack []ast.Node, keep map[
 
 // hcIsCallee reports whether the selector is what a call calls.
 func hcIsCallee(sel *ast.SelectorExpr, stack []ast.Node) bool {
-	for i := len(stack) - 1; i >= 0; i-- {
-		switch p := stack[i].(type) {
+	for _, node := range slices.Backward(stack) {
+		switch p := node.(type) {
 		case *ast.ParenExpr:
 			continue
 		case *ast.CallExpr:

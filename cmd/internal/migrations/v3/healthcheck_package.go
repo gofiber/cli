@@ -210,17 +210,27 @@ func hcPackageVar(file *ast.File, name string) *ast.ValueSpec {
 	return nil
 }
 
+// hcPackageDecl is what packageDeclaration found.
+type hcPackageDecl struct {
+	// host is the rewrite of the file that declares the variable, lit its literal.
+	// lit is nil when the package does not have exactly one such variable, or when
+	// it cannot be followed, and why says so.
+	host *hcMigration
+	lit  *ast.CompositeLit
+	why  string
+	// unreadable is set when the reason is a file of the package that cannot be read:
+	// what the variable is cannot be told then.
+	unreadable bool
+}
+
 // packageDeclaration finds the variable called name that another file of the
-// package declares with a literal, and the rewrite of that file. lit is nil when
-// the package does not have exactly one such variable, or when it cannot be
-// followed, and why says so. unreadable is set when the reason is a file of the
-// package that cannot be read: what the variable is cannot be told then.
-func (h *hcMigration) packageDeclaration(name string) (dh *hcMigration, lit *ast.CompositeLit, why string, unreadable bool) {
+// package declares with a literal.
+func (h *hcMigration) packageDeclaration(name string) hcPackageDecl {
 	const notHere = "is not declared next to it"
 
 	pkg := h.pkg()
 	if !pkg.complete {
-		return nil, nil, notHere + " and a file of its package cannot be read, so it cannot be followed", true
+		return hcPackageDecl{why: notHere + " and a file of its package cannot be read, so it cannot be followed", unreadable: true}
 	}
 
 	var found *hcFile
@@ -228,20 +238,20 @@ func (h *hcMigration) packageDeclaration(name string) (dh *hcMigration, lit *ast
 	for _, f := range pkg.files {
 		if s := hcPackageVar(f.g.file, name); s != nil {
 			if found != nil {
-				return nil, nil, "is declared more than once in its package, as build constraints can have it", false
+				return hcPackageDecl{why: "is declared more than once in its package, as build constraints can have it"}
 			}
 			found, spec = f, s
 		}
 	}
 	if found == nil || found.h == nil || found.path == h.fi.Path || len(spec.Names) != 1 || len(spec.Values) != 1 {
-		return nil, nil, notHere, false
+		return hcPackageDecl{why: notHere}
 	}
 
 	value, isLit := spec.Values[0].(*ast.CompositeLit)
 	if !isLit {
-		return nil, nil, "is declared in " + h.relPath(found.path) + ", but not with a literal", false
+		return hcPackageDecl{why: "is declared in " + h.relPath(found.path) + ", but not with a literal"}
 	}
-	return found.h, value, "", false
+	return hcPackageDecl{host: found.h, lit: value}
 }
 
 // splitPackageConfigs splits the variables of the file that a Use call of
