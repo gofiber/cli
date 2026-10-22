@@ -8,13 +8,17 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// scanModuleContexts looks at a file that imports no Fiber package for the removed
-// methods of the context: it can hold a value of a type another package of the
-// module declares, a wrapper that embeds the context or an alias of it, and call
-// what v3 removed on it. Nothing else of the file concerns Fiber.
+// reviewModuleCalls are the methods of the context that the review looks for in a
+// file that imports no Fiber package: the ones v3 removed, and the ones that
+// changed what they do.
+var reviewModuleCalls = append(slices.Clone(reviewRemovedMethods[reviewCorePath+".Ctx"]), mw3SendFile, "Download", "Redirect")
+
+// scanModuleContexts looks at a file that imports no Fiber package for what v3
+// changed in the methods of the context: it can hold a value of a type another
+// package of the module declares, a wrapper that embeds the context or an alias
+// of it, and call them on it. Nothing else of the file concerns Fiber.
 func (r *reviewer) scanModuleContexts(content string, fi internal.FileInfo) {
-	removed := reviewRemovedMethods[reviewCorePath+".Ctx"]
-	if !slices.ContainsFunc(removed, func(name string) bool { return strings.Contains(content, "."+name+"(") }) {
+	if !slices.ContainsFunc(reviewModuleCalls, func(name string) bool { return strings.Contains(content, "."+name+"(") }) {
 		return
 	}
 	if !r.run.reachesContexts(fi, ctxImportsOf(content)) {
@@ -28,13 +32,8 @@ func (r *reviewer) scanModuleContexts(content string, fi internal.FileInfo) {
 
 	rf := &reviewFile{r: r, g: g, fi: fi, packages: map[string]string{}}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && slices.Contains(removed, sel.Sel.Name) && rf.isCtxMethod(sel, stack) {
-			rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s%s", sel.Sel.Name, reviewHint("Ctx."+sel.Sel.Name), rf.wrapperHint(sel, stack))
+		if call, ok := n.(*ast.CallExpr); ok {
+			rf.checkCall(call, stack)
 		}
 		return true
 	})

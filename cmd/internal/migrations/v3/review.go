@@ -218,18 +218,18 @@ func (rf *reviewFile) checkLiteral(lit *ast.CompositeLit) {
 // groups and hooks.
 func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || len(rf.core) == 0 {
+	if !ok {
 		return
 	}
 	name := sel.Sel.Name
 
 	switch {
-	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && isFiberCtxExpr(sel.X, rf.core, stack):
+	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && rf.isCtxMethod(sel, stack):
 		rf.r.fileNameSeen = true
 		rf.notef(sel.Sel.Pos(), "%s takes the file name literally in Fiber v3 instead of percent-decoding it, so a name taken from a route parameter keeps its %%XX escapes unless fiber.Config{UnescapePath: true} is set; decode it and make sure it stays inside the directory you serve", name)
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && rf.isCtxMethod(sel, stack):
 		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s%s", name, reviewHint("Ctx."+name), rf.wrapperHint(sel, stack))
-	case name == "Redirect" && len(call.Args) > 0 && isFiberCtxExpr(sel.X, rf.core, stack):
+	case name == "Redirect" && len(call.Args) > 0 && rf.isCtxMethod(sel, stack):
 		rf.notef(sel.Sel.Pos(), "Redirect takes no arguments in Fiber v3%s", reviewHint("Ctx.Redirect"))
 	case reviewRemovedRouterMethod(name) && rf.isRouterExpr(sel.X, stack, 0):
 		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s", name, reviewHint("App."+name))
