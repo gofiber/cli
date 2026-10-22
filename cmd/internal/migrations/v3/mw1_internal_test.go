@@ -257,3 +257,56 @@ func Test_mw1AddImport(t *testing.T) {
 		})
 	}
 }
+
+func Test_migrateCacheContent_AddsTheTimeImport(t *testing.T) {
+	t.Parallel()
+
+	out := migrateCacheContent(`package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v3/middleware/cache"
+)
+
+var _ = fmt.Sprint
+var _ = cache.New()
+`, mw1FileInfo(t))
+
+	assert.Contains(t, out, "\t\"fmt\"\n\t\"time\"\n")
+	assert.Contains(t, out, "cache.Config{DisableCacheControl: true, Expiration: time.Minute}")
+}
+
+func Test_migrateCacheContent_UsesTheAliasOfTime(t *testing.T) {
+	t.Parallel()
+
+	out := migrateCacheContent(`package main
+
+import (
+	t "time"
+
+	"github.com/gofiber/fiber/v3/middleware/cache"
+)
+
+var _ = t.Second
+var _ = cache.Config{}
+`, mw1FileInfo(t))
+
+	assert.Contains(t, out, "Expiration: t.Minute")
+	assert.Equal(t, 1, strings.Count(out, `"time"`))
+}
+
+func Test_migrateCacheContent_NoTimeImportWhenTheExpirationIsSet(t *testing.T) {
+	t.Parallel()
+
+	out := migrateCacheContent(`package main
+
+import (
+	"github.com/gofiber/fiber/v3/middleware/cache"
+)
+
+var _ = cache.Config{Expiration: 5, CacheControl: true}
+`, mw1FileInfo(t))
+
+	assert.NotContains(t, out, `"time"`)
+}

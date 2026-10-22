@@ -221,6 +221,34 @@ func mw1MultiLine(g *goSource, lit *ast.CompositeLit) bool {
 	return g.line(lit.Lbrace) != g.line(lit.Rbrace)
 }
 
+// mw1AppendElements returns the offset and the text that add elements to the
+// end of a composite literal.
+func mw1AppendElements(g *goSource, lit *ast.CompositeLit, elems []string) (offset int, text string) {
+	multi := mw1MultiLine(g, lit)
+	if len(lit.Elts) == 0 {
+		offset = g.offset(lit.Lbrace) + 1
+		if multi {
+			return offset, "\n" + strings.Join(elems, ",\n") + ",\n"
+		}
+		return offset, strings.Join(elems, ", ")
+	}
+
+	offset = g.offset(lit.Elts[len(lit.Elts)-1].End())
+	comma := mw1SkipSpaces(g.src, offset)
+	hasComma := comma < len(g.src) && g.src[comma] == ','
+	switch {
+	case multi && hasComma:
+		// after the comma, and after the comment that trails it
+		return mw1TrailingComment(g.src, comma+1), "\n" + strings.Join(elems, ",\n") + ","
+	case multi:
+		return offset, ",\n" + strings.Join(elems, ",\n") + ","
+	case hasComma:
+		return comma + 1, " " + strings.Join(elems, ", ") + ","
+	default:
+		return offset, ", " + strings.Join(elems, ", ")
+	}
+}
+
 // mw1QuoteList renders a []string literal.
 func mw1QuoteList(items []string) string {
 	quoted := make([]string, len(items))
