@@ -100,7 +100,7 @@ func migrateJWTContent(content string, fi internal.FileInfo) string {
 	}
 
 	f := newContribFile(g, fi)
-	for _, c := range f.findConfigs(names, "Config") {
+	for _, c := range f.findConfigs(names) {
 		f.jwtConfig(c)
 	}
 	f.jwtErrors(contribImportsOf(g, "jwt"))
@@ -127,10 +127,10 @@ func (f *contribFile) jwtConfig(c *contribConfig) {
 		f.notef(at.pos(), "jwt Config: %s; v3 reads the token with Config.Extractor instead of TokenLookup and AuthScheme "+
 			"(extractors.FromAuthHeader, FromCookie, FromQuery, Chain, ...), set it by hand", reason)
 	case len(parts) > 0 && t != nil:
-		c.setExtractor("TokenLookup", f.renderExtractors(parts))
+		c.replace("TokenLookup", "Extractor", f.renderExtractors(parts))
 		c.remove("AuthScheme")
 	case len(parts) > 0:
-		c.setExtractor("AuthScheme", f.renderExtractors(parts))
+		c.replace("AuthScheme", "Extractor", f.renderExtractors(parts))
 	default:
 		// The scheme is the one v3 defaults to.
 		c.remove("AuthScheme")

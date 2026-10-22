@@ -73,8 +73,10 @@ type contribFile struct {
 	fi     internal.FileInfo
 	g      *goSource
 	idents map[string]bool
-	// extractors is the name of the fiber extractors package, filled on first use.
+	// extractors and fiber are the names of the fiber extractors package and of
+	// the fiber package, filled on first use.
 	extractors string
+	fiber      string
 	edits      editSet
 }
 
@@ -99,6 +101,19 @@ func (f *contribFile) extractorsName() string {
 		f.extractors = f.importName(contribExtractorsPath, "extractors", "fiberextractors")
 	}
 	return f.extractors
+}
+
+// fiberName returns the name of the fiber package in this file, importing it when
+// it is not imported yet.
+func (f *contribFile) fiberName() string {
+	if f.fiber == "" {
+		if names := fiberNames(f.g.src); len(names) > 0 && names[0] != "." {
+			f.fiber = names[0]
+		} else {
+			f.fiber = f.importName(contribFiberPath, "fiber", "fiberv3")
+		}
+	}
+	return f.fiber
 }
 
 // importName returns the name the file has for path, adding the import when it
@@ -162,26 +177,28 @@ type contribConfig struct {
 	// lit is nil for a variable that is declared without a value.
 	lit *ast.CompositeLit
 	// decl is the statement that declares the variable.
-	decl    ast.Stmt
+	decl ast.Stmt
+	// pkg is the name the file has for the package of the config.
+	pkg     string
 	varName string
 	slots   []*contribSlot
 	added   []string
 	removed []int
 }
 
-// findConfigs finds the values of the type typeName of the packages names in the
+// findConfigs finds the values of the type Config of the packages names in the
 // file: composite literals, and variables declared with the type. The
 // assignments to the fields of the variable a value is bound to belong to it:
 // cfg := jwtware.Config{...} followed by cfg.TokenLookup = "...".
-func (f *contribFile) findConfigs(names []string, typeName string) []*contribConfig {
+func (f *contribFile) findConfigs(names []string) []*contribConfig {
 	var configs []*contribConfig
 	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CompositeLit:
-			if x.Type == nil || !contribIsPkgType(x.Type, names, typeName) {
+			if x.Type == nil || !contribIsPkgType(x.Type, names, "Config") {
 				return true
 			}
-			c := &contribConfig{f: f, lit: x}
+			c := &contribConfig{f: f, lit: x, pkg: contribPkgOf(x.Type)}
 			for i, elt := range x.Elts {
 				if kv, ok := elt.(*ast.KeyValueExpr); ok && contribKeyName(elt) != "" {
 					c.slots = append(c.slots, &contribSlot{field: contribKeyName(elt), value: kv.Value, index: i, direct: true})
@@ -191,11 +208,11 @@ func (f *contribFile) findConfigs(names []string, typeName string) []*contribCon
 			configs = append(configs, c)
 		case *ast.ValueSpec:
 			sel, ok := x.Type.(*ast.SelectorExpr)
-			if !ok || len(x.Values) > 0 || !contribIsPkgType(sel, names, typeName) {
+			if !ok || len(x.Values) > 0 || !contribIsPkgType(sel, names, "Config") {
 				return true
 			}
 			for _, id := range x.Names {
-				c := &contribConfig{f: f, varName: id.Name}
+				c := &contribConfig{f: f, varName: id.Name, pkg: contribPkgOf(sel)}
 				if c.bindDeclared(stack) {
 					configs = append(configs, c)
 				}
@@ -204,6 +221,23 @@ func (f *contribFile) findConfigs(names []string, typeName string) []*contribCon
 		return true
 	})
 	return configs
+}
+
+// contribPkgOf returns the name of the package of the type expression pkg.Type.
+func contribPkgOf(typ ast.Expr) string {
+	for {
+		star, ok := typ.(*ast.StarExpr)
+		if !ok {
+			break
+		}
+		typ = star.X
+	}
+	if sel, ok := typ.(*ast.SelectorExpr); ok {
+		if id, ok := sel.X.(*ast.Ident); ok {
+			return id.Name
+		}
+	}
+	return ""
 }
 
 // bind looks for the variable the literal is assigned to and collects the
@@ -341,18 +375,18 @@ func (c *contribConfig) removeSlot(s *contribSlot) {
 	c.removed = append(c.removed, s.index)
 }
 
-// setExtractor sets the Extractor field to value where the last slot of field
-// is, and deletes the other slots of field.
-func (c *contribConfig) setExtractor(field, value string) {
+// replace sets newField to value where the last slot of field is, and deletes
+// the other slots of field.
+func (c *contribConfig) replace(field, newField, value string) {
 	slots := c.slotsOf(field)
 	for i, s := range slots {
 		switch {
 		case i < len(slots)-1:
 			c.removeSlot(s)
 		case s.assign != nil:
-			c.f.edits.replaceNode(c.f.g, s.assign, c.varName+".Extractor = "+value)
+			c.f.edits.replaceNode(c.f.g, s.assign, c.varName+"."+newField+" = "+value)
 		default:
-			c.f.edits.replaceNode(c.f.g, c.lit.Elts[s.index], "Extractor: "+value)
+			c.f.edits.replaceNode(c.f.g, c.lit.Elts[s.index], newField+": "+value)
 		}
 	}
 }

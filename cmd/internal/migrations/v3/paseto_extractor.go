@@ -77,7 +77,7 @@ func migratePasetoContent(content string, fi internal.FileInfo) string {
 	}
 
 	f := newContribFile(g, fi)
-	for _, c := range f.findConfigs(names, "Config") {
+	for _, c := range f.findConfigs(names) {
 		f.pasetoConfig(c, names)
 	}
 	return f.apply()
@@ -103,10 +103,10 @@ func (f *contribFile) pasetoConfig(c *contribConfig, names []string) {
 		f.notef(at.pos(), "paseto Config: %s; v3 reads the token with Config.Extractor instead of TokenLookup and TokenPrefix "+
 			"(extractors.FromAuthHeader, FromCookie, FromQuery, ...), set it by hand", reason)
 	case t != nil:
-		c.setExtractor("TokenLookup", f.renderExtractors(parts))
+		c.replace("TokenLookup", "Extractor", f.renderExtractors(parts))
 		c.remove("TokenPrefix")
 	case p != nil:
-		c.setExtractor("TokenPrefix", f.renderExtractors(parts))
+		c.replace("TokenPrefix", "Extractor", f.renderExtractors(parts))
 	default:
 		// v2 took the bare token of the Authorization header here, v3 wants a
 		// Bearer scheme in front of it.
