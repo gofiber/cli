@@ -25,8 +25,16 @@ var mw1Healthcheck = newMW1Package("healthcheck")
 // which becomes one `Get` per probe, each with a config of its own. The rewrite
 // is limited to what the file imports from the healthcheck package; a config
 // that cannot be split safely is left as it is and reported.
+//
+// A config that is declared in another file of the package than the Use call
+// that registers it is split where it is declared (see hcProject).
 func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateHealthcheckContent)
+	proj, err := planHealthcheck(cwd)
+	if err != nil {
+		return fmt.Errorf("failed to plan the migration of healthcheck configs: %w", err)
+	}
+
+	changed, err := internal.ChangeFileContentInfo(cwd, proj.migrate)
 	if err != nil {
 		return fmt.Errorf("failed to migrate healthcheck configs: %w", err)
 	}
@@ -60,11 +68,14 @@ type hcMigration struct {
 	g     *goSource
 	split map[*ast.CompositeLit]bool
 	rep   *mw1Reporter
+	// proj knows the other files of the package.
+	proj  *hcProject
 	fiber string
 	// renames holds the identifier edits. They are applied inside the text that
 	// is copied into a rewritten statement, and as edits of their own elsewhere.
 	renames editSet
 	edits   editSet
+	fi      internal.FileInfo
 	names   []string
 	// v2Configs are the healthcheck.Config literals that still have fields of v2,
 	// split holds the ones that were taken apart.
@@ -72,19 +83,35 @@ type hcMigration struct {
 	needsFiber bool
 }
 
-func migrateHealthcheckContent(content string, fi internal.FileInfo) string {
+// newHCMigration prepares the rewrite of a file that imports the healthcheck
+// package under names.
+func newHCMigration(proj *hcProject, g *goSource, fi internal.FileInfo, names []string) *hcMigration {
+	h := &hcMigration{g: g, rep: newMW1Reporter(g, fi), proj: proj, fi: fi, names: names, split: map[*ast.CompositeLit]bool{}}
+	h.fiber, h.needsFiber = mw1FiberName(g.src)
+	h.collectRenames()
+	return h
+}
+
+// migrate rewrites a file. While the project is being planned nothing is
+// reported: the pass only finds the configs that have to be split in another file.
+func (p *hcProject) migrate(content string, fi internal.FileInfo) string {
 	names := mw1Qualifiers(mw1Healthcheck.names(content))
 	if len(names) == 0 {
 		return content
 	}
-	g, ok := parseFile(fi, content)
+	var g *goSource
+	var ok bool
+	if p.planning {
+		g, ok = parseSource(content)
+	} else {
+		g, ok = parseFile(fi, content)
+	}
 	if !ok {
 		return content
 	}
 
-	h := &hcMigration{g: g, rep: newMW1Reporter(g, fi), names: names, split: map[*ast.CompositeLit]bool{}}
-	h.fiber, h.needsFiber = mw1FiberName(content)
-	h.collectRenames()
+	h := newHCMigration(p, g, fi, names)
+	h.splitPackageConfigs()
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
@@ -106,7 +133,9 @@ func migrateHealthcheckContent(content string, fi internal.FileInfo) string {
 	if h.needsFiber && h.usesFiberType() {
 		out = mw1AddImport(out, mw1FiberCoreImport)
 	}
-	h.rep.flush(&all, applied, out)
+	if !p.planning {
+		h.rep.flush(&all, applied, out)
+	}
 	return out
 }
 
@@ -294,9 +323,20 @@ func (h *hcMigration) reportUnmigrated(at ast.Node, why string) {
 
 // hcProbe is one of the two probes of a v2 config.
 type hcProbe struct {
-	// endpoint is the path of the probe, nil for the default one.
-	endpoint ast.Expr
+	// endpoint is the path of the probe, the zero value for the default one.
+	endpoint hcEndpoint
 	elems    []hcElement
+}
+
+// hcEndpoint is the path a probe is registered on.
+type hcEndpoint struct {
+	// expr is the expression of the config it was read from.
+	expr ast.Expr
+	// text is the Go expression of the path, empty for the default path.
+	text string
+	// literal is the value of the path when it is a string literal.
+	literal   string
+	isLiteral bool
 }
 
 // hcElement is a field of a healthcheck.Config literal and the comment that
@@ -421,29 +461,29 @@ func isStringDecl(d decl) bool {
 
 // route renders the path a probe is registered on: the path the Use call was
 // mounted on followed by the endpoint of the probe.
-func (h *hcMigration) route(prefix, endpoint ast.Expr, fallback string) string {
+func (h *hcMigration) route(prefix ast.Expr, endpoint hcEndpoint, fallback string) string {
 	if prefix == nil {
-		if endpoint == nil {
+		if endpoint.text == "" {
 			return fallback
 		}
-		return h.textOf(endpoint)
+		return endpoint.text
 	}
 
 	if p, ok := mw1StringLiteral(prefix); ok {
 		p = strings.TrimRight(p, "/")
-		if endpoint == nil {
+		if endpoint.text == "" {
 			return strconv.Quote(p) + " + " + fallback
 		}
-		if e, isLiteral := mw1StringLiteral(endpoint); isLiteral {
-			return strconv.Quote(p + e)
+		if endpoint.isLiteral {
+			return strconv.Quote(p + endpoint.literal)
 		}
-		return strconv.Quote(p) + " + " + h.textOf(endpoint)
+		return strconv.Quote(p) + " + " + endpoint.text
 	}
 
-	if endpoint == nil {
+	if endpoint.text == "" {
 		return h.textOf(prefix) + " + " + fallback
 	}
-	return h.textOf(prefix) + " + " + h.textOf(endpoint)
+	return h.textOf(prefix) + " + " + endpoint.text
 }
 
 // replacementTarget is the node a rewritten Use call replaces: the whole
@@ -565,9 +605,9 @@ func (h *hcMigration) parseConfig(lit *ast.CompositeLit) (cfg hcConfig, ok bool)
 		case hcReadinessProbe:
 			cfg.readiness.elems = append(cfg.readiness.elems, hcElement{text: "Probe: " + value, comment: comment})
 		case hcLivenessEndpoint:
-			cfg.liveness.endpoint = hcEndpoint(kv.Value)
+			cfg.liveness.endpoint = h.endpointOf(kv.Value)
 		case hcReadinessEndpoint:
-			cfg.readiness.endpoint = hcEndpoint(kv.Value)
+			cfg.readiness.endpoint = h.endpointOf(kv.Value)
 		default:
 			return cfg, false
 		}
@@ -580,13 +620,14 @@ func (h *hcMigration) parseConfig(lit *ast.CompositeLit) (cfg hcConfig, ok bool)
 	return cfg, true
 }
 
-// endpoint returns the endpoint expression, nil for the empty string that v2
-// replaced with the default.
-func hcEndpoint(e ast.Expr) ast.Expr {
-	if s, ok := mw1StringLiteral(e); ok && s == "" {
-		return nil
+// endpointOf describes the value of an endpoint field: the empty string that v2
+// replaced with the default is no path at all.
+func (h *hcMigration) endpointOf(e ast.Expr) hcEndpoint {
+	s, isLiteral := mw1StringLiteral(e)
+	if isLiteral && s == "" {
+		return hcEndpoint{}
 	}
-	return e
+	return hcEndpoint{expr: e, text: h.textOf(e), literal: s, isLiteral: isLiteral}
 }
 
 // trailingComment returns the line comment that follows the field.
@@ -628,62 +669,129 @@ func hcConfigLiteral(pkg string, cfg hcConfig, probe hcProbe, override string) s
 	return pkg + ".Config{" + strings.Join(parts, ", ") + "}"
 }
 
-// variableConfig handles `healthcheck.New(cfg)` where cfg is a variable of the
-// file: a config without a probe or an endpoint is used for both routes as it
-// is, any other is split at its declaration when nothing else uses it.
+// variableConfig handles `healthcheck.New(cfg)` where cfg is a variable: a
+// config without a probe or an endpoint is used for both routes as it is, any
+// other is split at its declaration when nothing else uses it. The declaration
+// is in this file or, for a variable of the package, in another one.
 func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack []ast.Node) (cfg hcConfig, split hcSplit, ok bool) {
 	d, found := resolveIdent(id.Name, id.Pos(), stack)
+	if !found {
+		dh, lit, why := h.packageDeclaration(id.Name)
+		if lit == nil {
+			h.reportUnmigrated(newCall, "its config "+id.Name+" "+why)
+			return cfg, split, false
+		}
+		return h.splitVariable(newCall, id, dh, lit, stack)
+	}
+
 	lit, isLit := d.init.(*ast.CompositeLit)
-	if !found || !isLit {
+	if !isLit {
 		h.reportUnmigrated(newCall, "its config "+id.Name+" is not declared next to it")
 		return cfg, split, false
 	}
-	if _, isConfig := mw1ConfigLit(lit, h.names); !isConfig {
-		h.reportUnmigrated(newCall, "its config "+id.Name+" is not a healthcheck.Config literal")
-		return cfg, split, false
+	return h.splitVariable(newCall, id, h, lit, stack)
+}
+
+// splitVariable plans the routes of `healthcheck.New(id)` for the config that the
+// literal lit declares. dh is the rewrite of the file that holds the literal: the
+// one of this file, or of another file of the package, whose declaration is then
+// split when the project is written.
+func (h *hcMigration) splitVariable(newCall *ast.CallExpr, id *ast.Ident, dh *hcMigration, lit *ast.CompositeLit, stack []ast.Node) (cfg hcConfig, split hcSplit, ok bool) {
+	name := id.Name
+	subject := "its config " + name
+	if dh != h {
+		subject += " (declared in " + h.relPath(dh.fi.Path) + ")"
+	}
+	refuse := func(why string) (hcConfig, hcSplit, bool) {
+		h.reportUnmigrated(newCall, subject+" "+why)
+		return hcConfig{}, hcSplit{}, false
 	}
 
-	parsed, valid := h.parseConfig(lit)
-	if !valid {
-		h.reportUnmigrated(newCall, "its config "+id.Name+" has fields it does not know")
-		return cfg, split, false
+	if _, isConfig := mw1ConfigLit(lit, dh.names); !isConfig {
+		return refuse("is not a healthcheck.Config literal")
 	}
-	if field := h.assignedV2Field(id.Name); field != "" {
-		h.reportUnmigrated(newCall, "its config "+id.Name+" gets "+field+" assigned after its declaration and has to be split by hand")
-		return cfg, split, false
+	parsed, valid := dh.parseConfig(lit)
+	if !valid {
+		return refuse("has fields it does not know")
+	}
+
+	// whoever else can mention the variable: a variable of the package is visible
+	// in all of its files
+	sources := []*goSource{h.g}
+	packageLevel := hcPackageVar(dh.g.file, name) != nil
+	if pkg := h.pkg(); packageLevel && pkg.complete {
+		sources = pkg.sources()
+	}
+	for _, src := range sources {
+		if field := hcAssignedV2Field(src, name); field != "" {
+			return refuse("gets " + field + " assigned after its declaration and has to be split by hand")
+		}
 	}
 	if !hasV2OnlyField(lit) {
 		// nothing to split: both routes can share it
-		split = hcSplit{liveness: id.Name, readiness: id.Name}
-		return hcConfig{}, split, true
+		return hcConfig{}, hcSplit{liveness: name, readiness: name}, true
 	}
 
-	if countIdent(h.g.file, id.Name) != 2 {
-		h.reportUnmigrated(newCall, "its config "+id.Name+" is used in more places than this one and has to be split by hand")
-		return cfg, split, false
+	count := 0
+	for _, src := range sources {
+		count += countIdent(src.file, name)
 	}
-	readiness := id.Name + "Readiness"
-	for i := 2; mw1UsesName(h.g.file, readiness); i++ {
-		readiness = id.Name + "Readiness" + strconv.Itoa(i)
+	switch {
+	case count != 2:
+		return refuse("is used in more places than this one and has to be split by hand")
+	case packageLevel && ast.IsExported(name) && h.g.file.Name.Name != "main":
+		return refuse("is exported and may be used by other packages, so it has to be split by hand")
+	}
+	if dh != h {
+		if _, visited := h.proj.files[dh.fi.Path]; !visited {
+			return refuse("is in a file that is left out of the migration")
+		}
 	}
 
-	apply, ok := h.splitDeclaration(lit, parsed, readiness)
+	readiness := h.readinessName(name)
+	apply, ok := dh.splitDeclaration(lit, parsed, readiness)
 	if !ok {
-		h.reportUnmigrated(newCall, "its config "+id.Name+" is declared in a way that cannot be split")
-		return cfg, split, false
+		return refuse("is declared in a way that cannot be split")
 	}
-	split = hcSplit{liveness: id.Name, readiness: readiness, apply: apply}
+	if dh != h {
+		pkgName := h.packageName(newCall.Fun)
+		if parsed.liveness.endpoint, ok = portableEndpoint(parsed.liveness.endpoint, dh, pkgName, stack); !ok {
+			return refuse("has an endpoint that cannot be written in this file")
+		}
+		if parsed.readiness.endpoint, ok = portableEndpoint(parsed.readiness.endpoint, dh, pkgName, stack); !ok {
+			return refuse("has an endpoint that cannot be written in this file")
+		}
+		apply = func() { h.proj.addSplit(dh.fi.Path, name, readiness) }
+	}
+
+	split = hcSplit{liveness: name, readiness: readiness, apply: apply}
 	// the endpoints are still needed to register the routes
 	parsed.liveness.elems = nil
 	parsed.readiness.elems = nil
 	return parsed, split, true
 }
 
-// assignedV2Field returns the first field of v2 that the file assigns to a
+// readinessName chooses the name of the config of the readiness probe that
+// replaces the config called name: no identifier of the package may have it.
+func (h *hcMigration) readinessName(name string) string {
+	readiness := name + "Readiness"
+	for i := 2; h.nameTaken(readiness); i++ {
+		readiness = name + "Readiness" + strconv.Itoa(i)
+	}
+	return readiness
+}
+
+// nameTaken reports whether the file, or another file of its package, mentions
+// an identifier called name.
+func (h *hcMigration) nameTaken(name string) bool {
+	return mw1UsesName(h.g.file, name) || h.proj.packageOf(h.fi.Path, h.g.file.Name.Name).mentions(name)
+}
+
+// hcAssignedV2Field returns the first field of v2 that the file assigns to a
 // variable of that name, as in `cfg.LivenessProbe = probe`, or "".
-func (h *hcMigration) assignedV2Field(name string) string {
+func hcAssignedV2Field(g *goSource, name string) string {
 	field := ""
-	h.g.walk(func(n ast.Node, _ []ast.Node) bool {
+	g.walk(func(n ast.Node, _ []ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
 		if !ok || field != "" {
 			return field == ""
