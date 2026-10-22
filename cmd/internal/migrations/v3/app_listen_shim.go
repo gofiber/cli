@@ -151,6 +151,9 @@ type appModuleOf struct {
 type appShimRefusal struct {
 	why  string
 	tell bool
+	// nobody is set when no call of the module starts the app, so that the settings
+	// have no effect and can be dropped.
+	nobody bool
 }
 
 // carry plans to keep the settings of the source with the apps it creates: every
@@ -347,7 +350,7 @@ func (pl *appPlanner) shimStarts(src *appListenSource, mod goModule) (wrap []*ap
 		}
 	}
 	if len(wrap) == 0 && len(values) == 0 && pl.reads[mod.root] == nil {
-		return nil, nil, appShimRefusal{why: "no Listen call of this module starts the app, so it would hold the settings for nobody", tell: true}
+		return nil, nil, appShimRefusal{why: "no Listen call of this module starts the app, so it would hold the settings for nobody", tell: true, nobody: true}
 	}
 
 	// a call that sets the same setting itself says two things

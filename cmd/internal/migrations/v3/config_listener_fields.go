@@ -122,11 +122,13 @@ type appPlanner struct {
 	// followed are the reads and assignments of settings that the migration handled
 	// where a config it follows is held by a variable or handed on.
 	followed map[*ast.SelectorExpr]bool
-	root     string
-	files    []*appFile
-	starts   []*appStartInfo
-	values   []*appValueInfo
-	sources  []*appListenSource
+	// unreadable is set when a file that may start an app does not parse.
+	unreadable bool
+	root       string
+	files      []*appFile
+	starts     []*appStartInfo
+	values     []*appValueInfo
+	sources    []*appListenSource
 }
 
 // appPlanListenerFields reads the project and plans the migration.
@@ -134,6 +136,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 	ix := newAppIndex(cwd)
 
 	var files []*appFile
+	unreadable := false
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		// only a file that mentions fiber or starts an app can matter, and the
 		// file of an earlier run is not the project's code
@@ -142,6 +145,8 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		}
 		if f, ok := ix.openFile(fi, content); ok {
 			files = append(files, f)
+		} else if strings.Contains(content, "Listen") {
+			unreadable = true // it may start an app
 		}
 		return content
 	})
@@ -160,6 +165,9 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		followed: map[*ast.SelectorExpr]bool{},
 		root:     cwd,
 		files:    files,
+		// a file that cannot be read and starts an app somewhere makes "nothing starts
+		// it" a guess
+		unreadable: unreadable,
 	}
 	pl.collectReads()
 	for _, f := range files {
@@ -326,6 +334,16 @@ func (pl *appPlanner) move(src *appListenSource) string {
 			fld.problem = ""
 		}
 		return ""
+	}
+
+	if refusal.nobody {
+		if drop, dropped := pl.dropUnstarted(src); drop != nil {
+			drop()
+			ip.dropped = append(ip.dropped, dropped...)
+			if !src.hasLeftovers(ip) {
+				return ip.reason
+			}
+		}
 	}
 
 	ip.apply()
@@ -542,20 +560,73 @@ func (pl *appPlanner) commit(src *appListenSource, work *appMovePlan, imports ma
 // planRemoval schedules the removal of the movable settings from the source.
 func (src *appListenSource) planRemoval(movable []*appSourceField, edits *editSet) string {
 	var drop []int
+	var assigns []*ast.AssignStmt
 	for _, fld := range movable {
 		for _, occ := range fld.occs {
-			switch {
-			case occ.elt >= 0:
+			if occ.elt >= 0 {
 				drop = append(drop, occ.elt)
-			case !appRemoveStmt(src.file.g, edits, occ.assign):
-				return fmt.Sprintf("the assignment of %s shares its line with other code", fld.v2)
+			} else {
+				assigns = append(assigns, occ.assign)
 			}
+		}
+	}
+
+	for _, stmt := range src.file.removedWith(assigns) {
+		if !appRemoveStmt(src.file.g, edits, stmt) {
+			for _, fld := range movable {
+				for _, occ := range fld.occs {
+					if occ.assign != nil && occ.assign == stmt {
+						return fmt.Sprintf("the assignment of %s shares its line with other code", fld.v2)
+					}
+				}
+			}
+			return "a statement that sets a setting shares its line with other code"
 		}
 	}
 	if len(drop) > 0 && !appRemoveElements(src.file.g, edits, src.lit, drop, nil) {
 		return appLiteralLayoutProblem
 	}
 	return ""
+}
+
+// removedWith returns the statements to remove when the assignments go: the
+// assignments themselves, and instead of them the `if` that nothing but them is
+// left in, when its condition does nothing but compute a value.
+func (f *appFile) removedWith(assigns []*ast.AssignStmt) []ast.Stmt {
+	gone := map[ast.Stmt]bool{}
+	for _, as := range assigns {
+		gone[as] = true
+	}
+
+	for changed := true; changed; {
+		changed = false
+		for stmt := range gone {
+			block, ok := f.parent[stmt].(*ast.BlockStmt)
+			if !ok {
+				continue
+			}
+			ifs, ok := f.parent[block].(*ast.IfStmt)
+			if !ok || ifs.Body != block || ifs.Else != nil || ifs.Init != nil || gone[ifs] || f.impure(ifs.Cond) {
+				continue
+			}
+			if slices.ContainsFunc(block.List, func(s ast.Stmt) bool { return !gone[s] }) {
+				continue
+			}
+			for _, s := range block.List {
+				delete(gone, s)
+			}
+			gone[ifs] = true
+			changed = true
+			break
+		}
+	}
+
+	out := make([]ast.Stmt, 0, len(gone))
+	for stmt := range gone {
+		out = append(out, stmt)
+	}
+	slices.SortFunc(out, func(a, b ast.Stmt) int { return int(a.Pos()) - int(b.Pos()) })
+	return out
 }
 
 // linkedStarts finds the calls that start the apps the source creates. It

@@ -366,7 +366,9 @@ func main() {
 	}
 }
 
-func Test_MigrateConfigListenerFields_UnlinkedAppKeepsItsFields(t *testing.T) {
+// The settings of an app that no call of the module starts take effect nowhere, so they
+// are dropped, with one note.
+func Test_MigrateConfigListenerFields_UnstartedAppDropsItsSettings(t *testing.T) {
 	t.Parallel()
 
 	dir := appSingle(t, `package main
@@ -385,17 +387,17 @@ func main() {
 	log.Println(app.Config().AppName)
 }
 `)
-	before := appRead(t, dir, "main.go")
 
 	out := appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	assert.Equal(t, before, appRead(t, dir, "main.go"))
-	assert.Empty(t, out)
+	assert.Contains(t, out, "Migrating listener related config fields")
+	assert.Contains(t, appRead(t, dir, "main.go"), "app := fiber.New(fiber.Config{\n\t\tAppName: \"x\",\n\t})")
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, 11, notes[0].Line)
-	assert.Contains(t, notes[0].Message, "EnablePrefork")
-	assert.Contains(t, notes[0].Message, "no Listen call")
+	assert.Contains(t, notes[0].Message, "Prefork field in v3: dropped, because no call of this module starts the app this config makes")
+	assert.Contains(t, notes[0].Message, "set it in the fiber.ListenConfig of the call that starts the app if you start it later")
+	assert.Empty(t, appRun(t, dir, v3.MigrateConfigListenerFields), "a second run changes nothing")
 }
 
 func Test_MigrateConfigListenerFields_OtherTypesAreNotApps(t *testing.T) {
@@ -819,20 +821,19 @@ func main() { _ = newApp() }
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	// printing is all those two settings change, and the app is never started
+	// nothing starts these apps: the settings take effect nowhere
 	test := appRead(t, dir, "app_test.go")
-	assert.NotContains(t, test, "DisableStartupMessage")
-	assert.NotContains(t, test, "EnablePrintRoutes")
-	assert.Contains(t, test, "Prefork:")
+	for _, setting := range []string{"DisableStartupMessage", "EnablePrintRoutes", "Prefork"} {
+		assert.NotContains(t, test, setting)
+		assert.NotContains(t, appRead(t, dir, "app.go"), setting)
+	}
 	assert.Contains(t, test, `AppName: "test"`)
-	// an app of the program itself may be started from anywhere
-	assert.Contains(t, appRead(t, dir, "app.go"), "DisableStartupMessage: true")
 
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 2)
 	assert.Equal(t, "app.go", notes[0].File)
 	assert.Equal(t, "app_test.go", notes[1].File)
-	assert.Contains(t, notes[1].Message, "EnablePrefork")
+	assert.Contains(t, notes[1].Message, "Prefork, DisableStartupMessage and EnablePrintRoutes fields in v3: dropped")
 }
 
 // A value that has side effects is evaluated where it was written, as it was in
