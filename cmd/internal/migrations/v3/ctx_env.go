@@ -62,6 +62,8 @@ type ctxEnv struct {
 	mod *ctxModule
 	// imports are the imports of the file, known with a module.
 	imports *ctxImports
+	// pkgPath is the import path of the package of the file, known with a module.
+	pkgPath string
 	// declFile is the file that declares each type, function, method and variable
 	// of the package that the environment knows.
 	declFile map[ast.Node]*ast.File

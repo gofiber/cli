@@ -66,7 +66,7 @@ func (r *ctxRun) module(fi internal.FileInfo) *ctxModule {
 // the other files of its package and, in a module, those of the other packages.
 func (r *ctxRun) newEnv(fi internal.FileInfo, g *goSource, names []string) *ctxEnv {
 	env := newCtxEnv(g, names, r.siblings(fi, g)...)
-	env.attach(r.module(fi))
+	env.attach(r.module(fi), filepath.Dir(fi.Path))
 	if len(names) == 0 {
 		env.alias = env.freeFiberName()
 	}

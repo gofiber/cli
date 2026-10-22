@@ -708,3 +708,53 @@ func Test_ctxEnv_freeFiberName(t *testing.T) {
 		})
 	}
 }
+
+func Test_ctxEnv_declarationsOfOtherFilesThatDotImport(t *testing.T) {
+	t.Parallel()
+
+	// The sibling dot-imports fiber, and uses names that its own package declares
+	// bare: they are the package's, not fiber's.
+	files := map[string]string{
+		"internal/web/web.go": ctxModuleWeb,
+		"cmd/api/types.go": `package main
+
+import (
+	. "github.com/gofiber/fiber/v2"
+
+	. "example.com/app/internal/web"
+)
+
+type Wrapper struct{ *Ctx }
+
+type Holder struct {
+	W    *Wrapper
+	Self *Holder
+	Web  *Context
+	Al   Ctx2
+}
+
+func Current() *Wrapper { return nil }
+
+var Shared = &Holder{}
+`,
+		"cmd/api/main.go": `package main
+
+func f() {
+	Current().probe("function result of a sibling that dot-imports fiber")
+	Shared.W.probe("field of a name of the package")
+	Shared.Self.W.probe("field of a field of the package")
+	Shared.Web.probe("field of a name of a package of the module that the sibling dot-imports")
+	Shared.Al.probe("alias of a package of the module that the sibling dot-imports")
+}
+`,
+	}
+
+	want := map[string]ctxKind{
+		`"function result of a sibling that dot-imports fiber"`:                     ctxYes,
+		`"field of a name of the package"`:                                          ctxYes,
+		`"field of a field of the package"`:                                         ctxYes,
+		`"field of a name of a package of the module that the sibling dot-imports"`: ctxYes,
+		`"alias of a package of the module that the sibling dot-imports"`:           ctxYes,
+	}
+	assert.Equal(t, want, ctxModuleKinds(t, files, "cmd/api/main.go"))
+}

@@ -114,15 +114,22 @@ func (i *ctxImports) pathOf(name string) string {
 type ctxModule struct {
 	ix      *moduleIndex
 	imports map[*ast.File]*ctxImports
-	specs   map[*ast.TypeSpec]*ast.TypeSpec
-	funcs   map[*ast.FuncDecl]*ast.FuncDecl
-	types   map[ast.Expr]ast.Expr
+	specs   map[ctxTransKey[*ast.TypeSpec]]*ast.TypeSpec
+	funcs   map[ctxTransKey[*ast.FuncDecl]]*ast.FuncDecl
+	types   map[ctxTransKey[ast.Expr]]ast.Expr
 	members map[string]*ctxMember
 	// carrying says, for the packages looked at, whether they can hold a context.
 	carrying map[string]bool
 	// fiberPath is the import path of the core fiber package the module uses.
 	fiberPath  string
 	fiberKnown bool
+}
+
+// ctxTransKey is the key of a translation: the node, and whether the bare names of
+// the declaration are references to its package (see ctxTranslator.abs).
+type ctxTransKey[N comparable] struct {
+	node N
+	abs  bool
 }
 
 func newCtxModule(ix *moduleIndex) *ctxModule {
@@ -132,9 +139,9 @@ func newCtxModule(ix *moduleIndex) *ctxModule {
 	return &ctxModule{
 		ix:       ix,
 		imports:  map[*ast.File]*ctxImports{},
-		specs:    map[*ast.TypeSpec]*ast.TypeSpec{},
-		funcs:    map[*ast.FuncDecl]*ast.FuncDecl{},
-		types:    map[ast.Expr]ast.Expr{},
+		specs:    map[ctxTransKey[*ast.TypeSpec]]*ast.TypeSpec{},
+		funcs:    map[ctxTransKey[*ast.FuncDecl]]*ast.FuncDecl{},
+		types:    map[ctxTransKey[ast.Expr]]ast.Expr{},
 		members:  map[string]*ctxMember{},
 		carrying: map[string]bool{},
 	}
@@ -273,7 +280,8 @@ func (m *ctxModule) fiberImportPath() string {
 type ctxTranslator struct {
 	m    *ctxModule
 	imps *ctxImports
-	own  *modPackage
+	// own is the package the declaration belongs to, nil when it is not known
+	own *modPackage
 	// tparams are the type parameters in scope, which are no references.
 	tparams map[string]bool
 	ownPath string
@@ -284,7 +292,7 @@ type ctxTranslator struct {
 
 func (m *ctxModule) translator(file *ast.File, ownPath string, abs bool) *ctxTranslator {
 	tr := &ctxTranslator{m: m, imps: m.importsOf(file), ownPath: ownPath, abs: abs, tparams: map[string]bool{}}
-	if abs {
+	if ownPath != "" {
 		tr.own = m.pkg(ownPath)
 	}
 	return tr
@@ -329,17 +337,26 @@ func (tr *ctxTranslator) ident(id *ast.Ident) ast.Expr {
 		return id
 	}
 
-	if tr.abs && tr.own.lookup(name) != nil {
-		return ctxAbsRef(tr.ownPath, name)
+	if tr.own.lookup(name) != nil {
+		if tr.abs {
+			return ctxAbsRef(tr.ownPath, name)
+		}
+		// a name of the package of the file stays the name of its package
+		return id
 	}
 	if tr.imps != nil && appIsExported(name) {
+		fiberDot := false
 		for _, importPath := range tr.imps.dots {
-			if reFiberCorePath.MatchString(importPath) {
-				return ctxFiberRef(name)
-			}
-			if tr.m.pkg(importPath).lookup(name) != nil {
+			switch {
+			case reFiberCorePath.MatchString(importPath):
+				fiberDot = true
+			case tr.m.pkg(importPath).lookup(name) != nil:
 				return ctxAbsRef(importPath, name)
 			}
+		}
+		// what no package of the module declares is the fiber package's
+		if fiberDot {
+			return ctxFiberRef(name)
 		}
 	}
 	return id
@@ -448,7 +465,7 @@ func (tr *ctxTranslator) funcType(ft *ast.FuncType) *ast.FuncType {
 // every file. file is the file that declares it, ownPath the import path of its
 // package when that is another package than the one of the environment.
 func (m *ctxModule) translatedSpec(spec *ast.TypeSpec, file *ast.File, ownPath string, abs bool) *ast.TypeSpec {
-	if cached, ok := m.specs[spec]; ok {
+	if cached, ok := m.specs[ctxTransKey[*ast.TypeSpec]{spec, abs}]; ok {
 		return cached
 	}
 
@@ -458,14 +475,14 @@ func (m *ctxModule) translatedSpec(spec *ast.TypeSpec, file *ast.File, ownPath s
 	if typ := tr.expr(spec.Type); typ != spec.Type {
 		out = &ast.TypeSpec{Doc: spec.Doc, Name: spec.Name, TypeParams: spec.TypeParams, Assign: spec.Assign, Type: typ, Comment: spec.Comment}
 	}
-	m.specs[spec] = out
+	m.specs[ctxTransKey[*ast.TypeSpec]{spec, abs}] = out
 	return out
 }
 
 // translatedFunc is translatedSpec for a function or a method. The copy has no
 // body.
 func (m *ctxModule) translatedFunc(fn *ast.FuncDecl, file *ast.File, ownPath string, abs bool) *ast.FuncDecl {
-	if cached, ok := m.funcs[fn]; ok {
+	if cached, ok := m.funcs[ctxTransKey[*ast.FuncDecl]{fn, abs}]; ok {
 		return cached
 	}
 
@@ -476,18 +493,18 @@ func (m *ctxModule) translatedFunc(fn *ast.FuncDecl, file *ast.File, ownPath str
 	if typ != fn.Type || recv != fn.Recv {
 		out = &ast.FuncDecl{Doc: fn.Doc, Recv: recv, Name: fn.Name, Type: typ}
 	}
-	m.funcs[fn] = out
+	m.funcs[ctxTransKey[*ast.FuncDecl]{fn, abs}] = out
 	return out
 }
 
 // translatedType is translatedSpec for a type expression that is not part of a
 // declaration of a type, the declared type of a variable.
 func (m *ctxModule) translatedType(e ast.Expr, file *ast.File, ownPath string, abs bool) ast.Expr {
-	if cached, ok := m.types[e]; ok {
+	if cached, ok := m.types[ctxTransKey[ast.Expr]{e, abs}]; ok {
 		return cached
 	}
 	out := m.translator(file, ownPath, abs).expr(e)
-	m.types[e] = out
+	m.types[ctxTransKey[ast.Expr]{e, abs}] = out
 	return out
 }
 

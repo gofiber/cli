@@ -13,12 +13,13 @@ import (
 // imports of the file that declares them are not the ones of this file.
 
 // attach connects the environment to the module the file belongs to.
-func (env *ctxEnv) attach(mod *ctxModule) {
+func (env *ctxEnv) attach(mod *ctxModule, dir string) {
 	if mod == nil {
 		return
 	}
 	env.mod = mod
 	env.imports = mod.importsOf(env.g.file)
+	env.pkgPath, _ = mod.ix.importPathOf(dir)
 }
 
 // typeKey returns the key of the declaration of the type that t names, looking
@@ -233,7 +234,7 @@ func (env *ctxEnv) typeSpec(key string) *ast.TypeSpec {
 
 	spec := env.typeDecl[key]
 	if file, other := env.declaredElsewhere(spec); other {
-		return env.mod.translatedSpec(spec, file, "", false)
+		return env.mod.translatedSpec(spec, file, env.pkgPath, false)
 	}
 	return spec
 }
@@ -243,7 +244,7 @@ func (env *ctxEnv) typeSpec(key string) *ast.TypeSpec {
 func (env *ctxEnv) funcDeclOf(name string) *ast.FuncDecl {
 	fn := env.funcDecl[name]
 	if file, other := env.declaredElsewhere(fn); other {
-		return env.mod.translatedFunc(fn, file, "", false)
+		return env.mod.translatedFunc(fn, file, env.pkgPath, false)
 	}
 	return fn
 }
@@ -256,7 +257,7 @@ func (env *ctxEnv) methodDecl(typeKey, name string) *ast.FuncDecl {
 
 	fn := env.methods[typeKey+"."+name]
 	if file, other := env.declaredElsewhere(fn); other {
-		return env.mod.translatedFunc(fn, file, "", false)
+		return env.mod.translatedFunc(fn, file, env.pkgPath, false)
 	}
 	return fn
 }
@@ -317,7 +318,7 @@ func (env *ctxEnv) pkgVarType(name string, depth int) ast.Expr {
 	switch {
 	case spec.Type != nil:
 		if elsewhere {
-			return env.mod.translatedType(spec.Type, file, "", false)
+			return env.mod.translatedType(spec.Type, file, env.pkgPath, false)
 		}
 		return spec.Type
 	case !elsewhere:
@@ -366,11 +367,11 @@ func (env *ctxEnv) elsewhereExprType(e ast.Expr, idx int, file *ast.File, depth 
 		}
 	case *ast.CompositeLit:
 		if x.Type != nil && idx == 0 {
-			return env.mod.translatedType(x.Type, file, "", false)
+			return env.mod.translatedType(x.Type, file, env.pkgPath, false)
 		}
 	case *ast.TypeAssertExpr:
 		if x.Type != nil && idx == 0 {
-			return env.mod.translatedType(x.Type, file, "", false)
+			return env.mod.translatedType(x.Type, file, env.pkgPath, false)
 		}
 	case *ast.Ident:
 		// another variable of the package
@@ -405,7 +406,7 @@ func (env *ctxEnv) elsewhereCallType(call *ast.CallExpr, idx int, file *ast.File
 			env.typeDecl[fun.Name] == nil && env.pkgVars[fun.Name].spec == nil:
 			// new(T) and make(T, ...) make a value of the type of their first argument
 			if idx == 0 {
-				return env.mod.translatedType(call.Args[0], file, "", false)
+				return env.mod.translatedType(call.Args[0], file, env.pkgPath, false)
 			}
 		}
 	case *ast.SelectorExpr:
