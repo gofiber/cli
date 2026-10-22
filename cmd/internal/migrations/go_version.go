@@ -13,12 +13,12 @@ import (
 	"github.com/gofiber/cli/cmd/internal/gomod"
 )
 
-// fiberGoVersions lists the go directive that Fiber v3 releases declare in
+// importsFiberGoVersions lists the go directive that Fiber v3 releases declare in
 // their go.mod, as the first release of each value. A release needs the Go
 // version of the newest row it is at or after; a release newer than the table
 // is assumed to need the last one (MigrateDependencies reads the real value
 // from the release once it is downloaded).
-var fiberGoVersions = []struct{ since, goVersion string }{
+var importsFiberGoVersions = []struct{ since, goVersion string }{
 	{since: "3.0.0-0", goVersion: "1.21"},
 	{since: "3.0.0-beta.4", goVersion: "1.23"},
 	{since: "3.0.0-beta.5", goVersion: "1.24.0"},
@@ -26,17 +26,17 @@ var fiberGoVersions = []struct{ since, goVersion string }{
 	{since: "3.6.0", goVersion: "1.26.0"},
 }
 
-// workVersionMessage is printed when the go line of a workspace was raised.
-const workVersionMessage = "Ensuring the go version of go.work is not behind its modules"
+// importsWorkVersionMessage is printed when the go line of a workspace was raised.
+const importsWorkVersionMessage = "Ensuring the go version of go.work is not behind its modules"
 
-// reFiberCore matches the module path of the core fiber module at any major.
-var reFiberCore = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
+// importsReFiberCore matches the module path of the core fiber module at any major.
+var importsReFiberCore = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
 
-// minimumGoVersion returns the Go version that the Fiber release target needs,
+// importsMinimumGoVersion returns the Go version that the Fiber release target needs,
 // "" when the target is not a Fiber v3 release.
-func minimumGoVersion(target *semver.Version) string {
+func importsMinimumGoVersion(target *semver.Version) string {
 	minimum := ""
-	for _, row := range fiberGoVersions {
+	for _, row := range importsFiberGoVersions {
 		since, err := semver.NewVersion(row.since)
 		if err != nil || target.Compare(since) < 0 {
 			break
@@ -51,13 +51,13 @@ func minimumGoVersion(target *semver.Version) string {
 // line of a workspace that uses such a module follows, the go command refuses a
 // workspace that is behind one of its modules.
 func MigrateGoVersion(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
-	minimum := minimumGoVersion(target)
+	minimum := importsMinimumGoVersion(target)
 	if minimum == "" {
 		return nil
 	}
 
 	changed, err := gomod.Edit(cwd, func(f *gomod.File) error {
-		if requiresFiber(f.File) {
+		if importsRequiresFiber(f.File) {
 			f.RaiseGo(minimum)
 		}
 		return nil
@@ -73,15 +73,15 @@ func MigrateGoVersion(cmd *cobra.Command, cwd string, _, target *semver.Version)
 		cmd.Printf("Ensuring go version >= %s\n", minimum)
 	}
 	if workChanged {
-		cmd.Println(workVersionMessage)
+		cmd.Println(importsWorkVersionMessage)
 	}
 	return nil
 }
 
-// requiresFiber reports whether the module requires the core fiber module.
-func requiresFiber(f *modfile.File) bool {
+// importsRequiresFiber reports whether the module requires the core fiber module.
+func importsRequiresFiber(f *modfile.File) bool {
 	for _, r := range f.Require {
-		if reFiberCore.MatchString(r.Mod.Path) {
+		if importsReFiberCore.MatchString(r.Mod.Path) {
 			return true
 		}
 	}
@@ -107,7 +107,7 @@ func fiberModuleDirs(root string) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		if requiresFiber(mf) {
+		if importsRequiresFiber(mf) {
 			dirs = append(dirs, filepath.Dir(path))
 		}
 	}

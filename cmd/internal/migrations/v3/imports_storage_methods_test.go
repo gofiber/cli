@@ -326,9 +326,9 @@ func (Cache) Close()                            {}
 	}
 }
 
-// storageEmbeddingMethods are the five methods of Fiber v2's Storage on a type
+// importsEmbeddingMethods are the five methods of Fiber v2's Storage on a type
 // named Wrapped.
-const storageEmbeddingMethods = `
+const importsEmbeddingMethods = `
 func (w *Wrapped) Get(key string) ([]byte, error)                      { return nil, nil }
 func (w *Wrapped) Set(key string, val []byte, exp time.Duration) error { return nil }
 func (w *Wrapped) Delete(key string) error                             { return nil }
@@ -380,7 +380,7 @@ func Test_MigrateStorageInterface_EmbeddingMayBringTheMethods(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			src := "package a\n\nimport \"time\"\n\n" + tt.more + "\n" + tt.decl + storageEmbeddingMethods
+			src := "package a\n\nimport \"time\"\n\n" + tt.more + "\n" + tt.decl + importsEmbeddingMethods
 			dir := importsTree(t, map[string]string{"wrapped.go": src})
 
 			var buf bytes.Buffer
@@ -415,7 +415,7 @@ func Test_MigrateStorageInterface_EmbeddingAnythingElseKeepsTheMethodsComing(t *
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			src := "package a\n\nimport (\n\t\"sync\"\n\t\"time\"\n\n\t\"github.com/gofiber/storage/memory/v2\"\n)\n\nvar (\n\t_ sync.Mutex\n\t_ = memory.New\n)\n\n" + tt.decl + storageEmbeddingMethods
+			src := "package a\n\nimport (\n\t\"sync\"\n\t\"time\"\n\n\t\"github.com/gofiber/storage/memory/v2\"\n)\n\nvar (\n\t_ sync.Mutex\n\t_ = memory.New\n)\n\n" + tt.decl + importsEmbeddingMethods
 			dir := importsTree(t, map[string]string{"wrapped.go": src})
 
 			var buf bytes.Buffer

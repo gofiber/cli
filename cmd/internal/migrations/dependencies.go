@@ -72,7 +72,7 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[
 
 	depsChanged, goRaised := false, false
 	_, err = gomod.Edit(cwd, func(f *gomod.File) error {
-		if !requiresFiber(f.File) {
+		if !importsRequiresFiber(f.File) {
 			return nil
 		}
 
@@ -116,7 +116,7 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[
 		cmd.Printf("Ensuring go version >= %s\n", fiberGo)
 	}
 	if workChanged {
-		cmd.Println(workVersionMessage)
+		cmd.Println(importsWorkVersionMessage)
 	}
 	return nil
 }

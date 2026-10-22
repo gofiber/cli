@@ -20,14 +20,14 @@ import (
 )
 
 var (
-	// reFiberImport matches the import path of the core fiber module or one of
+	// importsReFiberImport matches the import path of the core fiber module or one of
 	// its packages, at any major version.
-	reFiberImport = regexp.MustCompile(`^github\.com/gofiber/fiber/v(\d+)(/.*)?$`)
-	// reFiberModulePath matches the module path of the core fiber module with a
+	importsReFiberImport = regexp.MustCompile(`^github\.com/gofiber/fiber/v(\d+)(/.*)?$`)
+	// importsReFiberModulePath matches the module path of the core fiber module with a
 	// major version.
-	reFiberModulePath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+$`)
-	// reFiberMention finds the core fiber module path in a line of text.
-	reFiberMention = regexp.MustCompile(`github\.com/gofiber/fiber/v(\d+)`)
+	importsReFiberModulePath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+$`)
+	// importsReFiberMention finds the core fiber module path in a line of text.
+	importsReFiberMention = regexp.MustCompile(`github\.com/gofiber/fiber/v(\d+)`)
 )
 
 // MigrateGoPkgs moves the project to the module path and version of the target
@@ -36,21 +36,21 @@ var (
 // scripts and replace directives, are left as they are and reported.
 func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return rewriteFiberImports(content, fi, target.Major())
+		return importsRewriteFiberImports(content, fi, target.Major())
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate Go packages: %w", err)
 	}
 
 	modChanged, err := gomod.Edit(cwd, func(f *gomod.File) error {
-		retargetFiberModule(cwd, f, target)
+		importsRetargetFiber(cwd, f, target)
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate go.mod: %w", err)
 	}
 
-	if err := noteFiberReferences(cwd, target.Major()); err != nil {
+	if err := importsNoteFiberReferences(cwd, target.Major()); err != nil {
 		return err
 	}
 
@@ -63,10 +63,10 @@ func MigrateGoPkgs(cmd *cobra.Command, cwd string, _, target *semver.Version) er
 	return nil
 }
 
-// rewriteFiberImports moves the import paths of the core fiber module in one Go
+// importsRewriteFiberImports moves the import paths of the core fiber module in one Go
 // file to the given major version. Only import declarations are changed, not
 // strings, struct tags or comments that happen to contain the path.
-func rewriteFiberImports(content string, fi internal.FileInfo, major uint64) string {
+func importsRewriteFiberImports(content string, fi internal.FileInfo, major uint64) string {
 	if !strings.Contains(content, "github.com/gofiber/fiber/") {
 		return content
 	}
@@ -85,7 +85,7 @@ func rewriteFiberImports(content string, fi internal.FileInfo, major uint64) str
 		if err != nil {
 			continue
 		}
-		m := reFiberImport.FindStringSubmatch(path)
+		m := importsReFiberImport.FindStringSubmatch(path)
 		if len(m) == 0 || m[1] == strconv.FormatUint(major, 10) {
 			continue
 		}
@@ -98,15 +98,15 @@ func rewriteFiberImports(content string, fi internal.FileInfo, major uint64) str
 		out = out[:start] + quote + fmt.Sprintf("github.com/gofiber/fiber/v%d%s", major, m[2]) + quote + out[end:]
 	}
 
-	noteGenerateDirectives(out, fi, major)
+	importsNoteGenerate(out, fi, major)
 
 	return out
 }
 
-// noteGenerateDirectives reports //go:generate lines that name the core fiber
+// importsNoteGenerate reports //go:generate lines that name the core fiber
 // module at another major than the target. The directive is a comment as far
 // as the compiler is concerned, so it cannot be rewritten like an import.
-func noteGenerateDirectives(content string, fi internal.FileInfo, major uint64) {
+func importsNoteGenerate(content string, fi internal.FileInfo, major uint64) {
 	if !strings.Contains(content, "//go:generate") {
 		return
 	}
@@ -115,16 +115,16 @@ func noteGenerateDirectives(content string, fi internal.FileInfo, major uint64) 
 		if !strings.HasPrefix(line, "//go:generate") {
 			continue
 		}
-		if path := staleFiberMention(line, major); path != "" {
+		if path := importsStaleFiberMention(line, major); path != "" {
 			internal.Notef(fi, i+1, "`//go:generate` runs %s, which is not the migrated Fiber module; update the directive by hand.", path)
 		}
 	}
 }
 
-// staleFiberMention returns the first core fiber module path in line whose major
+// importsStaleFiberMention returns the first core fiber module path in line whose major
 // version is not the given one.
-func staleFiberMention(line string, major uint64) string {
-	for _, m := range reFiberMention.FindAllStringSubmatch(line, -1) {
+func importsStaleFiberMention(line string, major uint64) string {
+	for _, m := range importsReFiberMention.FindAllStringSubmatch(line, -1) {
 		if m[1] != strconv.FormatUint(major, 10) {
 			return m[0]
 		}
@@ -132,18 +132,18 @@ func staleFiberMention(line string, major uint64) string {
 	return ""
 }
 
-// retargetFiberModule points the requirements of the core fiber module in one
+// importsRetargetFiber points the requirements of the core fiber module in one
 // go.mod at the target release.
-func retargetFiberModule(cwd string, f *gomod.File, target *semver.Version) {
+func importsRetargetFiber(cwd string, f *gomod.File, target *semver.Version) {
 	path := fmt.Sprintf("github.com/gofiber/fiber/v%d", target.Major())
 	vers := "v" + target.String()
 
-	for _, r := range f.Requirements(reFiberModulePath.MatchString) {
+	for _, r := range f.Requirements(importsReFiberModulePath.MatchString) {
 		f.SetRequire(r, path, vers)
 	}
 	f.DedupeRequires()
 
-	for _, rep := range f.Replacements(reFiberModulePath.MatchString) {
+	for _, rep := range f.Replacements(importsReFiberModulePath.MatchString) {
 		if rep.Old.Path != path {
 			internal.AddNote(cwd, internal.Note{
 				File: f.Rel,
@@ -155,11 +155,11 @@ func retargetFiberModule(cwd string, f *gomod.File, target *semver.Version) {
 	}
 }
 
-// noteFiberReferences reports files other than Go source that still name the
+// importsNoteFiberReferences reports files other than Go source that still name the
 // core fiber module at another major version than the target: build scripts,
 // Dockerfiles, CI workflows. They are not rewritten, a script may pin the old
 // version on purpose.
-func noteFiberReferences(cwd string, major uint64) error {
+func importsNoteFiberReferences(cwd string, major uint64) error {
 	err := filepath.WalkDir(cwd, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -171,11 +171,11 @@ func noteFiberReferences(cwd string, major uint64) error {
 			}
 			return nil
 		}
-		if !mentionsModules(d.Name()) {
+		if !importsMentionsModules(d.Name()) {
 			return nil
 		}
 		info, err := d.Info()
-		if err != nil || info.Size() > maxReferenceFileSize {
+		if err != nil || info.Size() > importsMaxReferenceSize {
 			return nil //nolint:nilerr // a file we cannot stat is not worth failing the migration for
 		}
 		b, err := os.ReadFile(path) // #nosec G304 -- reading a text file of the migrated project
@@ -188,7 +188,7 @@ func noteFiberReferences(cwd string, major uint64) error {
 			rel = path
 		}
 		for i, line := range strings.Split(string(b), "\n") {
-			if mention := staleFiberMention(line, major); mention != "" {
+			if mention := importsStaleFiberMention(line, major); mention != "" {
 				internal.AddNote(cwd, internal.Note{
 					File: filepath.ToSlash(rel),
 					Line: i + 1,
@@ -205,13 +205,13 @@ func noteFiberReferences(cwd string, major uint64) error {
 	return nil
 }
 
-// maxReferenceFileSize bounds the files noteFiberReferences reads.
-const maxReferenceFileSize = 1 << 20
+// importsMaxReferenceSize bounds the files importsNoteFiberReferences reads.
+const importsMaxReferenceSize = 1 << 20
 
-// mentionsModules reports whether a file of this name is a build script, a
+// importsMentionsModules reports whether a file of this name is a build script, a
 // container file or a CI definition, the places where a module path is spelled
 // out for the go tool.
-func mentionsModules(name string) bool {
+func importsMentionsModules(name string) bool {
 	lower := strings.ToLower(name)
 	switch lower {
 	case "makefile", "gnumakefile", "justfile", "go.work":

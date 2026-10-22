@@ -21,31 +21,31 @@ import (
 
 const importsContextPath = "context"
 
-// storageContextMethods are the methods fiber.Storage gained in v3.
-var storageContextMethods = strings.Fields("GetWithContext SetWithContext DeleteWithContext ResetWithContext")
+// importsStorageContextMethods are the methods fiber.Storage gained in v3.
+var importsStorageContextMethods = strings.Fields("GetWithContext SetWithContext DeleteWithContext ResetWithContext")
 
-// storageSignatures are the methods that make a type a fiber.Storage of Fiber v2,
+// importsStorageSignatures are the methods that make a type a fiber.Storage of Fiber v2,
 // with their signatures. The type of the expiration is matched by its name,
 // whatever the file calls the time package.
-const storageSignatures = `Get(string) ([]byte, error)
+const importsStorageSignatures = `Get(string) ([]byte, error)
 Set(string, []byte, time.Duration) error
 Delete(string) error
 Reset() error
 Close() error`
 
-// storageMethod is a method as the scan of the package saw it: its declaration
+// importsStorageMethod is a method as the scan of the package saw it: its declaration
 // and where in which file it is.
-type storageMethod struct {
+type importsStorageMethod struct {
 	decl *ast.FuncDecl
 	path string
 	// offset is where the declaration starts and end where it ends.
 	offset, end int
 }
 
-// storageType is what the package says about one named type: the methods it
+// importsStorageType is what the package says about one named type: the methods it
 // declares and the types it embeds, which can bring methods along.
-type storageType struct {
-	methods map[string]storageMethod
+type importsStorageType struct {
+	methods map[string]importsStorageMethod
 	// promoted are the methods of an interface type.
 	promoted map[string]bool
 	// embedded are the names of the types of the package that the type embeds.
@@ -55,17 +55,17 @@ type storageType struct {
 	foreign bool
 }
 
-// storagePackages indexes the types of every package below a directory by the
+// importsStoragePackages indexes the types of every package below a directory by the
 // directory and package name, then by type name. The methods of a type may be
 // declared in any file of its package.
-type storagePackages map[string]map[string]*storageType
+type importsStoragePackages map[string]map[string]*importsStorageType
 
 // MigrateStorageInterface gives the hand-written implementations of Fiber v2's
 // Storage interface the four context methods that Fiber v3 added to it, so that
 // they still satisfy fiber.Storage. The new methods call the ones that exist and
 // ignore the context, which is as much as a storage written for v2 can do.
 func MigrateStorageInterface(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	pkgs, err := scanStoragePackages(cwd)
+	pkgs, err := importsScanStorage(cwd)
 	if err != nil {
 		return err
 	}
@@ -82,11 +82,11 @@ func MigrateStorageInterface(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	return nil
 }
 
-// scanStoragePackages parses the Go files below root, without regard for the
+// importsScanStorage parses the Go files below root, without regard for the
 // include and exclude filters: the methods of a type may be in a file that is
 // not being migrated.
-func scanStoragePackages(root string) (storagePackages, error) {
-	pkgs := storagePackages{}
+func importsScanStorage(root string) (importsStoragePackages, error) {
+	pkgs := importsStoragePackages{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -120,16 +120,16 @@ func scanStoragePackages(root string) (storagePackages, error) {
 	return pkgs, nil
 }
 
-func (p storagePackages) add(path string, fset *token.FileSet, file *ast.File) {
+func (p importsStoragePackages) add(path string, fset *token.FileSet, file *ast.File) {
 	key := filepath.Dir(path) + "\x00" + file.Name.Name
 	pkg := p[key]
 	if pkg == nil {
-		pkg = map[string]*storageType{}
+		pkg = map[string]*importsStorageType{}
 		p[key] = pkg
 	}
-	typ := func(name string) *storageType {
+	typ := func(name string) *importsStorageType {
 		if pkg[name] == nil {
-			pkg[name] = &storageType{methods: map[string]storageMethod{}, promoted: map[string]bool{}}
+			pkg[name] = &importsStorageType{methods: map[string]importsStorageMethod{}, promoted: map[string]bool{}}
 		}
 		return pkg[name]
 	}
@@ -138,8 +138,8 @@ func (p storagePackages) add(path string, fset *token.FileSet, file *ast.File) {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			if d.Recv != nil && len(d.Recv.List) == 1 {
-				if name := receiverTypeName(d.Recv.List[0].Type); name != "" {
-					typ(name).methods[d.Name.Name] = storageMethod{
+				if name := importsReceiverType(d.Recv.List[0].Type); name != "" {
+					typ(name).methods[d.Name.Name] = importsStorageMethod{
 						decl: d, path: path, offset: fset.Position(d.Pos()).Offset, end: fset.Position(d.End()).Offset,
 					}
 				}
@@ -154,10 +154,10 @@ func (p storagePackages) add(path string, fset *token.FileSet, file *ast.File) {
 	}
 }
 
-// receiverTypeName returns the name of the type a method is declared on:
+// importsReceiverType returns the name of the type a method is declared on:
 // *Store, Store and *Store[T] are all Store.
-func receiverTypeName(e ast.Expr) string {
-	if id, ok := receiverBase(e).(*ast.Ident); ok {
+func importsReceiverType(e ast.Expr) string {
+	if id, ok := importsTypeBase(e).(*ast.Ident); ok {
 		return id.Name
 	}
 	return ""
@@ -168,7 +168,7 @@ func receiverTypeName(e ast.Expr) string {
 // embeds or an alias names, which the type gets methods from. A type of the
 // standard library cannot have the context methods of fiber.Storage, one of
 // another package might.
-func (t *storageType) declare(spec *ast.TypeSpec, file *ast.File) {
+func (t *importsStorageType) declare(spec *ast.TypeSpec, file *ast.File) {
 	switch x := spec.Type.(type) {
 	case *ast.StructType:
 		t.embed(x.Fields, file)
@@ -187,7 +187,7 @@ func (t *storageType) declare(spec *ast.TypeSpec, file *ast.File) {
 }
 
 // embed records the embedded fields of a struct or an interface.
-func (t *storageType) embed(fields *ast.FieldList, file *ast.File) {
+func (t *importsStorageType) embed(fields *ast.FieldList, file *ast.File) {
 	for _, f := range fields.List {
 		if len(f.Names) == 0 {
 			t.embedType(f.Type, file)
@@ -195,14 +195,14 @@ func (t *storageType) embed(fields *ast.FieldList, file *ast.File) {
 	}
 }
 
-func (t *storageType) embedType(e ast.Expr, file *ast.File) {
-	switch x := receiverBase(e).(type) {
+func (t *importsStorageType) embedType(e ast.Expr, file *ast.File) {
+	switch x := importsTypeBase(e).(type) {
 	case *ast.Ident:
 		if types.Universe.Lookup(x.Name) == nil {
 			t.embedded = append(t.embedded, x.Name)
 		}
 	case *ast.SelectorExpr:
-		if id, ok := x.X.(*ast.Ident); !ok || !fromStandardLibrary(file, id.Name) {
+		if id, ok := x.X.(*ast.Ident); !ok || !importsFromStdlib(file, id.Name) {
 			t.foreign = true
 		}
 	default:
@@ -210,9 +210,9 @@ func (t *storageType) embedType(e ast.Expr, file *ast.File) {
 	}
 }
 
-// fromStandardLibrary reports whether the file binds name to a package of the
+// importsFromStdlib reports whether the file binds name to a package of the
 // standard library, whose import paths have no dot in their first element.
-func fromStandardLibrary(file *ast.File, name string) bool {
+func importsFromStdlib(file *ast.File, name string) bool {
 	for _, spec := range file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
 		if err != nil {
@@ -230,9 +230,9 @@ func fromStandardLibrary(file *ast.File, name string) bool {
 	return false
 }
 
-// receiverBase strips the pointer and the type arguments from the type of an
+// importsTypeBase strips the pointer and the type arguments from the type of an
 // embedded field or a receiver.
-func receiverBase(e ast.Expr) ast.Expr {
+func importsTypeBase(e ast.Expr) ast.Expr {
 	for {
 		switch x := e.(type) {
 		case *ast.StarExpr:
@@ -252,11 +252,11 @@ func receiverBase(e ast.Expr) ast.Expr {
 // bringsMethods reports whether the types t embeds can bring one of the methods
 // along: a type of another package might, and so does a type of this package
 // that declares one of them.
-func (t *storageType) bringsMethods(pkg map[string]*storageType, methods []string, depth int) bool {
+func (t *importsStorageType) bringsMethods(pkg map[string]*importsStorageType, methods []string, depth int) bool {
 	if t.foreign {
 		return true
 	}
-	if depth > maxStorageDepth {
+	if depth > importsMaxDepth {
 		return false
 	}
 	for _, name := range t.embedded {
@@ -274,18 +274,18 @@ func (t *storageType) bringsMethods(pkg map[string]*storageType, methods []strin
 
 // declares reports whether the type has a method of its own with the name, or an
 // interface type lists it.
-func (t *storageType) declares(name string) bool {
+func (t *importsStorageType) declares(name string) bool {
 	_, ok := t.methods[name]
 	return ok || t.promoted[name]
 }
 
 // isStorage reports whether the type declares the five methods of Fiber v2's
 // Storage interface with their signatures.
-func (t *storageType) isStorage() bool {
-	for line := range strings.Lines(storageSignatures) {
+func (t *importsStorageType) isStorage() bool {
+	for line := range strings.Lines(importsStorageSignatures) {
 		name, _, _ := strings.Cut(line, "(")
 		m, ok := t.methods[name]
-		if !ok || methodSignature(name, m.decl.Type) != strings.TrimSpace(line) {
+		if !ok || importsMethodSignature(name, m.decl.Type) != strings.TrimSpace(line) {
 			return false
 		}
 	}
@@ -293,9 +293,9 @@ func (t *storageType) isStorage() bool {
 }
 
 // missing returns the context methods the type does not declare.
-func (t *storageType) missing() []string {
+func (t *importsStorageType) missing() []string {
 	var missing []string
-	for _, name := range storageContextMethods {
+	for _, name := range importsStorageContextMethods {
 		if _, ok := t.methods[name]; !ok {
 			missing = append(missing, name)
 		}
@@ -303,11 +303,11 @@ func (t *storageType) missing() []string {
 	return missing
 }
 
-// methodSignature renders the signature of a method the way storageSignatures
+// importsMethodSignature renders the signature of a method the way importsStorageSignatures
 // does: the parameter types, then the result types in parentheses when there
 // are several. A type named Duration is the one from the time package.
-func methodSignature(name string, ft *ast.FuncType) string {
-	params := fieldTypes(ft.Params)
+func importsMethodSignature(name string, ft *ast.FuncType) string {
+	params := importsFieldTypes(ft.Params)
 	for i, p := range params {
 		if _, dur, ok := strings.Cut(p, "."); ok && dur == "Duration" {
 			params[i] = "time.Duration"
@@ -315,7 +315,7 @@ func methodSignature(name string, ft *ast.FuncType) string {
 	}
 
 	sig := name + "(" + strings.Join(params, ", ") + ")"
-	switch results := fieldTypes(ft.Results); len(results) {
+	switch results := importsFieldTypes(ft.Results); len(results) {
 	case 0:
 	case 1:
 		sig += " " + results[0]
@@ -325,8 +325,8 @@ func methodSignature(name string, ft *ast.FuncType) string {
 	return sig
 }
 
-// fieldTypes lists the type of every parameter or result, a name per entry.
-func fieldTypes(fields *ast.FieldList) []string {
+// importsFieldTypes lists the type of every parameter or result, a name per entry.
+func importsFieldTypes(fields *ast.FieldList) []string {
 	var out []string
 	if fields == nil {
 		return out
@@ -342,7 +342,7 @@ func fieldTypes(fields *ast.FieldList) []string {
 // addMethods adds the context methods to the storage types whose Set method is
 // declared in the file. The file with Set is the one that names time.Duration, so
 // the new methods can spell the type the way the file does.
-func (p storagePackages) addMethods(content string, fi internal.FileInfo) string {
+func (p importsStoragePackages) addMethods(content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "Set(") {
 		return content
 	}
@@ -372,7 +372,7 @@ func (p storagePackages) addMethods(content string, fi internal.FileInfo) string
 		if !ok || fn.Name.Name != "Set" || fn.Recv == nil || len(fn.Recv.List) != 1 {
 			continue
 		}
-		name := receiverTypeName(fn.Recv.List[0].Type)
+		name := importsReceiverType(fn.Recv.List[0].Type)
 		typ := pkg[name]
 		if typ == nil || !typ.isStorage() {
 			continue
@@ -398,8 +398,8 @@ func (p storagePackages) addMethods(content string, fi internal.FileInfo) string
 				last = max(last, m.end)
 			}
 		}
-		at := endOfLine(g.src, last)
-		edits.replace(at, at, contextMethods(g, fn, ctx, missing))
+		at := importsEndOfLine(g.src, last)
+		edits.replace(at, at, importsContextMethods(g, fn, ctx, missing))
 		added = true
 	}
 	if !added {
@@ -419,19 +419,19 @@ func (p storagePackages) addMethods(content string, fi internal.FileInfo) string
 	return imp.apply(out)
 }
 
-// endOfLine returns the offset just after the line break that ends the line
+// importsEndOfLine returns the offset just after the line break that ends the line
 // holding offset, or the end of the source.
-func endOfLine(src string, offset int) int {
+func importsEndOfLine(src string, offset int) int {
 	if nl := strings.IndexByte(src[offset:], '\n'); nl >= 0 {
 		return offset + nl + 1
 	}
 	return len(src)
 }
 
-// storageContextTemplates render the context methods. The arguments are the
+// importsContextTemplates render the context methods. The arguments are the
 // receiver, the identifier of the context package, the receiver's name, and the
 // types the file uses for the value and the expiration of Set.
-var storageContextTemplates = map[string]string{
+var importsContextTemplates = map[string]string{
 	"GetWithContext": `
 // GetWithContext calls Get.
 func %[1]s GetWithContext(_ %[2]s.Context, key string) ([]byte, error) {
@@ -458,9 +458,9 @@ func %[1]s ResetWithContext(_ %[2]s.Context) error {
 `,
 }
 
-// contextMethods renders the missing context methods of the type whose Set
+// importsContextMethods renders the missing context methods of the type whose Set
 // method is set. ctx is the identifier of the context package.
-func contextMethods(g *goSource, set *ast.FuncDecl, ctx string, missing []string) string {
+func importsContextMethods(g *goSource, set *ast.FuncDecl, ctx string, missing []string) string {
 	recv := set.Recv.List[0]
 	name := "s"
 	if len(recv.Names) == 1 && recv.Names[0].Name != "_" && !slices.Contains([]string{"key", "val", "exp", ctx}, recv.Names[0].Name) {
@@ -482,7 +482,7 @@ func contextMethods(g *goSource, set *ast.FuncDecl, ctx string, missing []string
 // canceled context is not honored: TODO(fiber migrate): pass ctx on to the backing store.
 `}
 	for _, method := range missing {
-		parts = append(parts, fmt.Sprintf(storageContextTemplates[method], receiver, ctx, name, valueType, expType))
+		parts = append(parts, fmt.Sprintf(importsContextTemplates[method], receiver, ctx, name, valueType, expType))
 	}
 	return strings.Join(parts, "")
 }

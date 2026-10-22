@@ -13,31 +13,31 @@ import (
 	"github.com/gofiber/cli/cmd/internal/gomod"
 )
 
-// storageLine is one module line of github.com/gofiber/storage: a module at a
+// importsStorageLine is one module line of github.com/gofiber/storage: a module at a
 // major version. minimum is the first release of the line that implements the
 // storage interface of Fiber v3, whose methods all take a context as well
 // (GetWithContext, SetWithContext, DeleteWithContext and ResetWithContext), and
 // that go mod tidy can resolve. An older release of the line builds with Fiber
 // v3 but is rejected as a fiber.Storage. target marks the line that imports are
 // moved to, the one Fiber v3 was released with.
-type storageLine struct {
+type importsStorageLine struct {
 	name    string
 	major   string
 	minimum string
 	target  bool
 }
 
-// storageLines lists the storage modules the CLI knows. The minimums were found
+// importsStorageLines lists the storage modules the CLI knows. The minimums were found
 // by reading every release on the module proxy for the four methods and running
 // go mod tidy on a module that imports the release. The first releases of
 // redis/v3 (3.3.0, 3.4.0), valkey (0.2.0) and rueidis (1.3.0, 1.3.1) have the
 // methods but require a placeholder module for their tests, and tidy fails for a
 // project that uses them; their minimum is the first one that tidies. The table
 // only needs a row when a module gets a new major version. Modules that are not
-// listed are looked up on the proxy (see storageMigration.unknown).
+// listed are looked up on the proxy (see importsStorageMigration.unknown).
 //
 //nolint:goconst // each module's first usable release moves on its own
-var storageLines = []storageLine{
+var importsStorageLines = []importsStorageLine{
 	// v3 adapters
 	{name: "postgres", major: "v3", minimum: "v3.3.0", target: true},
 	{name: "redis", major: "v3", minimum: "v3.4.1", target: true},
@@ -81,22 +81,22 @@ var storageLines = []storageLine{
 	{name: "valkey", minimum: "v0.2.1", target: true},
 }
 
-// storageWithContextRelease is when the *WithContext methods landed in the
+// importsStorageContextRelease is when the *WithContext methods landed in the
 // storage modules. No release of any module before it implements fiber.Storage.
-var storageWithContextRelease = time.Date(2025, time.July, 28, 0, 0, 0, 0, time.UTC)
+var importsStorageContextRelease = time.Date(2025, time.July, 28, 0, 0, 0, 0, time.UTC)
 
-const storagePrefix = "github.com/gofiber/storage/"
+const importsStoragePrefix = "github.com/gofiber/storage/"
 
-var storageFamily = newImportsFamily(storagePrefix, resolveStorage)
+var importsStorageFamily = newImportsFamily(importsStoragePrefix, importsResolveStorage)
 
-// resolveStorage says where the storage module name on the major version line
+// importsResolveStorage says where the storage module name on the major version line
 // goes: to the line Fiber v3 was released with, unless it is on a newer one,
 // which is kept. Every line gets the lowest release that implements
 // fiber.Storage, when that is known.
-func resolveStorage(name, major string) importsDestination {
+func importsResolveStorage(name, major string) importsDestination {
 	var target string
 	known := false
-	for _, l := range storageLines {
+	for _, l := range importsStorageLines {
 		if l.name == name && l.target {
 			target, known = l.major, true
 			break
@@ -111,8 +111,8 @@ func resolveStorage(name, major string) importsDestination {
 		line = target
 	}
 
-	dest := importsDestination{path: importsModulePath(storagePrefix, name, line), known: true}
-	for _, l := range storageLines {
+	dest := importsDestination{path: importsModulePath(importsStoragePrefix, name, line), known: true}
+	for _, l := range importsStorageLines {
 		if l.name == name && l.major == line {
 			dest.minimum = l.minimum
 			break
@@ -127,14 +127,14 @@ func resolveStorage(name, major string) importsDestination {
 // the context methods of fiber.Storage is raised to the first release that has
 // them. A version is never lowered, nor a newer major version replaced.
 func MigrateStorageVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changedImports, err := internal.ChangeFileContentInfo(cwd, migrateStorageImports)
+	changedImports, err := internal.ChangeFileContentInfo(cwd, importsMigrateStorage)
 	if err != nil {
 		return fmt.Errorf("failed to migrate storage versions: %w", err)
 	}
 
-	m := &storageMigration{cwd: cwd}
+	m := &importsStorageMigration{cwd: cwd}
 	modChanged, err := gomod.Edit(cwd, func(f *gomod.File) error {
-		storageFamily.retarget(f, func(r *modfile.Require, _, _ string) { m.unknown(f, r) })
+		importsStorageFamily.retarget(f, func(r *modfile.Require, _, _ string) { m.unknown(f, r) })
 		return nil
 	})
 	if err != nil {
@@ -149,8 +149,8 @@ func MigrateStorageVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-// storageMigration migrates the go.mod files of a project.
-type storageMigration struct {
+// importsStorageMigration migrates the go.mod files of a project.
+type importsStorageMigration struct {
 	cwd string
 }
 
@@ -159,7 +159,7 @@ type storageMigration struct {
 // that was published before the context methods landed does: such a release is
 // raised to the newest of its line. Without a proxy to ask, the requirement is
 // left alone and reported.
-func (m *storageMigration) unknown(f *gomod.File, r *modfile.Require) {
+func (m *importsStorageMigration) unknown(f *gomod.File, r *modfile.Require) {
 	if r.Indirect {
 		return
 	}
@@ -173,9 +173,9 @@ func (m *storageMigration) unknown(f *gomod.File, r *modfile.Require) {
 	case err != nil:
 		note("%s is not in the CLI's list of storage modules and the module proxy could not be asked (%v): make sure %s implements the *WithContext methods of fiber.Storage, `go get %s@latest` gets a release that does.",
 			r.Mod.Path, err, r.Mod.Path+" "+r.Mod.Version, r.Mod.Path)
-	case info.published.Before(storageWithContextRelease) && info.latest != "" && xsemver.Compare(info.latest, r.Mod.Version) > 0:
+	case info.published.Before(importsStorageContextRelease) && info.latest != "" && xsemver.Compare(info.latest, r.Mod.Version) > 0:
 		f.SetRequire(r, r.Mod.Path, info.latest)
-	case info.published.Before(storageWithContextRelease):
+	case info.published.Before(importsStorageContextRelease):
 		note("%s %s predates the *WithContext methods of fiber.Storage and the module has no newer release.", r.Mod.Path, r.Mod.Version)
 	}
 }

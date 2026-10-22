@@ -141,7 +141,7 @@ require github.com/valyala/fasthttp v1.10.0
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := writeTree(t, map[string]string{
+			dir := importsWriteTree(t, map[string]string{
 				"go.mod":    "module example\n\ngo " + tc.projectGo + "\n\nrequire (\n\tgithub.com/gofiber/fiber/v3 v3.7.0\n\tgithub.com/valyala/fasthttp v1.10.0\n)\n",
 				"fiber.mod": fiberMod,
 			})

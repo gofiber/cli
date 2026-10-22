@@ -31,9 +31,9 @@ const (
 	// contribModulePrefix is the module path of the contrib modules for Fiber v3:
 	// the /v3 is a directory of the repository, not a module major version.
 	contribModulePrefix = "github.com/gofiber/contrib/v3/"
-	// contribRepo is the GitHub repository that holds them, the one a commit
+	// importsContribRepo is the GitHub repository that holds them, the one a commit
 	// hash is looked up in.
-	contribRepo = "gofiber/contrib"
+	importsContribRepo = "gofiber/contrib"
 )
 
 func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
@@ -85,11 +85,11 @@ func refreshContrib(cmd *cobra.Command, cwd, hash string) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("parse version: %w", err)
 			}
-			pv, err := pseudoVersionFromHash(contribRepo, base, hash)
+			pv, err := pseudoVersionFromHash(importsContribRepo, base, hash)
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
-			versions[targetModule] = moduleVersion(pv)
+			versions[targetModule] = importsModuleVersion(pv)
 		}
 	}
 	if len(versions) == 0 {
@@ -202,9 +202,9 @@ func latestContribVersion(module string) string {
 	return data.Version
 }
 
-// moduleVersion returns v the way go.mod spells a version, with the leading
+// importsModuleVersion returns v the way go.mod spells a version, with the leading
 // "v". pseudoVersionFromHash returns it without, for semver.
-func moduleVersion(v string) string {
+func importsModuleVersion(v string) string {
 	if strings.HasPrefix(v, "v") {
 		return v
 	}
@@ -252,7 +252,7 @@ func refreshThirdParty(cmd *cobra.Command, cwd, hash, repo, label string, latest
 			if err != nil {
 				return false, fmt.Errorf("pseudo version: %w", err)
 			}
-			ver = moduleVersion(pv)
+			ver = importsModuleVersion(pv)
 		}
 		versions[mod] = ver
 	}

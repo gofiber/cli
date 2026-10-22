@@ -23,23 +23,23 @@ func TestRunGoModHelperProcess(t *testing.T) {
 	os.Exit(0) // helper process exits intentionally
 }
 
-type goModRun struct {
+type importsGoModRun struct {
 	cmd  *exec.Cmd
 	args []string
 }
 
-// stubGoMod replaces internal.ExecCommand with a command that does nothing and
+// importsStubGoMod replaces internal.ExecCommand with a command that does nothing and
 // records what it was asked to run.
-func stubGoMod(t *testing.T) *[]goModRun {
+func importsStubGoMod(t *testing.T) *[]importsGoModRun {
 	t.Helper()
 
-	var runs []goModRun
+	var runs []importsGoModRun
 	orig := internal.ExecCommand
 	t.Cleanup(func() { internal.ExecCommand = orig })
 	internal.ExecCommand = func(name string, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestRunGoModHelperProcess$") // #nosec G204 -- test helper
 		cmd.Env = []string{"GO_WANT_RUN_GO_MOD_HELPER=1"}
-		runs = append(runs, goModRun{cmd: cmd, args: append([]string{name}, args...)})
+		runs = append(runs, importsGoModRun{cmd: cmd, args: append([]string{name}, args...)})
 		return cmd
 	}
 	return &runs
@@ -47,7 +47,7 @@ func stubGoMod(t *testing.T) *[]goModRun {
 
 func Test_RunGoMod_VendorsOnlyWhereAVendorDirectoryExists(t *testing.T) {
 	// Not parallel: it replaces a package-level variable.
-	runs := stubGoMod(t)
+	runs := importsStubGoMod(t)
 
 	dir := t.TempDir()
 	write := func(name, content string) {

@@ -33,12 +33,12 @@ var templateTargets = map[string]templateTarget{
 	"slim":       {modulePath: "github.com/gofiber/template/slim/v3", version: "v3.0.0"},
 }
 
-var templateFamily = newImportsFamily("github.com/gofiber/template/", resolveTemplate)
+var importsTemplateFamily = newImportsFamily("github.com/gofiber/template/", importsResolveTemplate)
 
-// resolveTemplate says where the engine name on the major version line moves
+// importsResolveTemplate says where the engine name on the major version line moves
 // to. An engine that is already on a newer line than the one Fiber v3 started
 // with is left alone: the table only knows where to start.
-func resolveTemplate(name, major string) importsDestination {
+func importsResolveTemplate(name, major string) importsDestination {
 	target, ok := templateTargets[name]
 	if !ok {
 		return importsDestination{}
@@ -55,13 +55,13 @@ func resolveTemplate(name, major string) importsDestination {
 // to the minimum versions required for Fiber v3 core compatibility. A version
 // that is already higher is kept: the table only raises.
 func MigrateTemplateVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changedImports, err := internal.ChangeFileContentInfo(cwd, migrateTemplateImports)
+	changedImports, err := internal.ChangeFileContentInfo(cwd, importsMigrateTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to migrate template imports: %w", err)
 	}
 
 	modChanged, err := gomod.Edit(cwd, func(f *gomod.File) error {
-		templateFamily.retarget(f, nil)
+		importsTemplateFamily.retarget(f, nil)
 		return nil
 	})
 	if err != nil {
@@ -76,8 +76,8 @@ func MigrateTemplateVersions(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 	return nil
 }
 
-func migrateTemplateImports(content string, fi internal.FileInfo) string {
-	if !strings.Contains(content, templateFamily.prefix) {
+func importsMigrateTemplate(content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, importsTemplateFamily.prefix) {
 		return content
 	}
 	g, ok := parseFile(fi, content)
@@ -86,6 +86,6 @@ func migrateTemplateImports(content string, fi internal.FileInfo) string {
 	}
 
 	var edits editSet
-	templateFamily.moveImports(g, &edits)
+	importsTemplateFamily.moveImports(g, &edits)
 	return edits.apply(content)
 }

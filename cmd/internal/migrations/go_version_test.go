@@ -29,8 +29,8 @@ func newCmd(buf *bytes.Buffer) *cobra.Command {
 	return cmd
 }
 
-// writeTree writes files (path relative to the returned directory -> content).
-func writeTree(t *testing.T, files map[string]string) string {
+// importsWriteTree writes files (path relative to the returned directory -> content).
+func importsWriteTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -45,7 +45,7 @@ func writeTree(t *testing.T, files map[string]string) string {
 func Test_MigrateGoVersion(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod":              "module example\n\ngo 1.21\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
 		"vendor/go.mod":       "module vendor\n\ngo 1.10\n",
 		"tools/go.mod":        "module example/tools\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
@@ -82,7 +82,7 @@ func Test_MigrateGoVersion(t *testing.T) {
 func Test_MigrateGoVersion_PrintsOnlyWhenItChangedSomething(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod": "module example\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
 	})
 
@@ -95,7 +95,7 @@ func Test_MigrateGoVersion_PrintsOnlyWhenItChangedSomething(t *testing.T) {
 func Test_MigrateGoVersion_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod": "module example\n\ngo 1.21\n\nrequire github.com/gofiber/fiber/v3 v3.5.0\n",
 	})
 
@@ -132,7 +132,7 @@ func Test_MigrateGoVersion_FollowsTheTarget(t *testing.T) {
 		t.Run(tc.target, func(t *testing.T) {
 			t.Parallel()
 
-			dir := writeTree(t, map[string]string{
+			dir := importsWriteTree(t, map[string]string{
 				"go.mod": "module example\n\ngo 1.19\n\nrequire github.com/gofiber/fiber/v3 v3.0.0\n",
 			})
 			var buf bytes.Buffer
@@ -147,7 +147,7 @@ func Test_MigrateGoVersion_NotAFiberV3Target(t *testing.T) {
 	t.Parallel()
 
 	src := "module example\n\ngo 1.19\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"
-	dir := writeTree(t, map[string]string{"go.mod": src})
+	dir := importsWriteTree(t, map[string]string{"go.mod": src})
 
 	var buf bytes.Buffer
 	require.NoError(t, migrations.MigrateGoVersion(newCmd(&buf), dir, semver.MustParse("2.40.0"), semver.MustParse("2.52.15")))
@@ -158,7 +158,7 @@ func Test_MigrateGoVersion_NotAFiberV3Target(t *testing.T) {
 func Test_MigrateGoVersion_WorkspaceFollowsItsModules(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.work":       "go 1.24.0\n\nuse (\n\t./api\n\t./lib\n)\n",
 		"api/go.mod":    "module example/api\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
 		"lib/go.mod":    "module example/lib\n\ngo 1.25.0\n",

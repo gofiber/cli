@@ -30,7 +30,7 @@ func MigrateReplaceDirectives(_ *cobra.Command, cwd string, _, _ *semver.Version
 		}
 
 		for _, rep := range f.Replacements(importsIsFamilyModule) {
-			if required[rep.Old.Path] || reFiberModulePath.MatchString(rep.Old.Path) {
+			if required[rep.Old.Path] || importsReFiberModulePath.MatchString(rep.Old.Path) {
 				continue
 			}
 			internal.AddNote(cwd, internal.Note{

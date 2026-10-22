@@ -15,22 +15,22 @@ import (
 )
 
 const (
-	utilsModulePath       = "github.com/gofiber/utils/v2"
+	importsUtilsModule    = "github.com/gofiber/utils/v2"
 	importsTestifyRequire = "github.com/stretchr/testify/require"
 	importsSyncAtomic     = "sync/atomic"
 )
 
-// reFiberUtilsPath matches the import path of the utils package of the core
+// importsReFiberUtils matches the import path of the utils package of the core
 // fiber module at any major version. Fiber v2 shipped the helpers there, v3
 // moved them to a module of their own.
-var reFiberUtilsPath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/utils$`)
+var importsReFiberUtils = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/utils$`)
 
-// utilsRenames lists the helpers of the v2 utils package that
+// importsUtilsRenames lists the helpers of the v2 utils package that
 // github.com/gofiber/utils/v2 offers under another name. Every other helper
 // keeps its name and signature: Trim, TrimLeft, TrimRight and EqualFold take the
 // same arguments (they became generic over strings and byte slices), so the
 // calls stay as they are.
-var utilsRenames = map[string]string{
+var importsUtilsRenames = map[string]string{
 	"GetString":        "UnsafeString",
 	"GetBytes":         "UnsafeBytes",
 	"ImmutableString":  "CopyString",
@@ -46,7 +46,7 @@ var utilsRenames = map[string]string{
 // touches files that import the Fiber utils package, and only through the name
 // that file gives it.
 func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateUtilsContent)
+	changed, err := internal.ChangeFileContentInfo(cwd, importsMigrateUtils)
 	if err != nil {
 		return fmt.Errorf("failed to migrate utils imports: %w", err)
 	}
@@ -58,7 +58,7 @@ func MigrateUtilsImport(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	return nil
 }
 
-func migrateUtilsContent(content string, fi internal.FileInfo) string {
+func importsMigrateUtils(content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, "/utils") {
 		return content
 	}
@@ -66,14 +66,14 @@ func migrateUtilsContent(content string, fi internal.FileInfo) string {
 	if !ok {
 		return content
 	}
-	specs := importsOf(g, reFiberUtilsPath.MatchString)
+	specs := importsOf(g, importsReFiberUtils.MatchString)
 	if len(specs) == 0 {
 		return content
 	}
 
-	m := &utilsMigration{g: g, fi: fi, atomic: importsNameOf(g, importsSyncAtomic, "atomic")}
+	m := &importsUtilsMigration{g: g, fi: fi, atomic: importsNameOf(g, importsSyncAtomic, "atomic")}
 	for _, s := range specs {
-		importsRewritePath(g, &m.edits, s, utilsModulePath)
+		importsRewritePath(g, &m.edits, s, importsUtilsModule)
 		switch {
 		case s.blank():
 		case s.dot():
@@ -97,8 +97,8 @@ func migrateUtilsContent(content string, fi internal.FileInfo) string {
 	return out
 }
 
-// utilsMigration rewrites the uses of the Fiber utils package in one file.
-type utilsMigration struct {
+// importsUtilsMigration rewrites the uses of the Fiber utils package in one file.
+type importsUtilsMigration struct {
 	g  *goSource
 	fi internal.FileInfo
 	// atomic is the identifier of sync/atomic in the file, empty when it is not
@@ -117,7 +117,7 @@ type utilsMigration struct {
 	addRequire bool
 }
 
-func (m *utilsMigration) visit(n ast.Node, stack []ast.Node) bool {
+func (m *importsUtilsMigration) visit(n ast.Node, stack []ast.Node) bool {
 	switch x := n.(type) {
 	case *ast.SelectorExpr:
 		id, ok := x.X.(*ast.Ident)
@@ -129,16 +129,16 @@ func (m *utilsMigration) visit(n ast.Node, stack []ast.Node) bool {
 		// A dot import makes the helpers plain identifiers. Only call and
 		// atomic.LoadUint32(&Timestamp) positions are recognized: anywhere else
 		// the identifier may well be something else.
-		if m.dot && utilsCalled(x, stack) && !importsShadowed(x.Name, x.Pos(), stack) {
+		if m.dot && importsUtilsCalled(x, stack) && !importsShadowed(x.Name, x.Pos(), stack) {
 			m.member(x, x, "", stack)
 		}
 	}
 	return true
 }
 
-// utilsCalled reports whether id is the function of a call, or the operand of
+// importsUtilsCalled reports whether id is the function of a call, or the operand of
 // the address-of in the single argument of a call.
-func utilsCalled(id *ast.Ident, stack []ast.Node) bool {
+func importsUtilsCalled(id *ast.Ident, stack []ast.Node) bool {
 	if len(stack) == 0 {
 		return false
 	}
@@ -154,11 +154,11 @@ func utilsCalled(id *ast.Ident, stack []ast.Node) bool {
 // member rewrites one use of a helper. ref is the whole reference
 // (utils.Name or Name), ident the identifier that carries the helper's name and
 // qualifier the identifier of the package, empty for a dot import.
-func (m *utilsMigration) member(ref ast.Expr, ident *ast.Ident, qualifier string, stack []ast.Node) {
+func (m *importsUtilsMigration) member(ref ast.Expr, ident *ast.Ident, qualifier string, stack []ast.Node) {
 	name := ident.Name
 	switch {
-	case utilsRenames[name] != "":
-		m.edits.replaceNode(m.g, ident, utilsRenames[name])
+	case importsUtilsRenames[name] != "":
+		m.edits.replaceNode(m.g, ident, importsUtilsRenames[name])
 	case name == "AssertEqual":
 		// AssertEqual stopped the test on a failure, require does too.
 		m.edits.replaceNode(m.g, ref, m.requireName()+".Equal")
@@ -166,13 +166,13 @@ func (m *utilsMigration) member(ref ast.Expr, ident *ast.Ident, qualifier string
 		m.timestamp(ref, qualifier, stack)
 	case name == "MaxStringLen":
 		internal.Notef(m.fi, m.g.line(ref.Pos()),
-			"`utils.MaxStringLen` does not exist in %s (it only applied to Go before 1.20); remove the check.", utilsModulePath)
+			"`utils.MaxStringLen` does not exist in %s (it only applied to Go before 1.20); remove the check.", importsUtilsModule)
 	}
 }
 
 // timestamp rewrites the use of the utils.Timestamp variable, a function in
 // github.com/gofiber/utils/v2.
-func (m *utilsMigration) timestamp(ref ast.Expr, qualifier string, stack []ast.Node) {
+func (m *importsUtilsMigration) timestamp(ref ast.Expr, qualifier string, stack []ast.Node) {
 	call := qualifier + ".Timestamp()"
 	if qualifier == "" {
 		call = "Timestamp()"
@@ -206,18 +206,18 @@ func (m *utilsMigration) timestamp(ref ast.Expr, qualifier string, stack []ast.N
 	}
 
 	internal.Notef(m.fi, m.g.line(ref.Pos()),
-		"`utils.Timestamp` is the function `utils.Timestamp()` in %s and cannot be written or addressed; read it with `utils.Timestamp()`.", utilsModulePath)
+		"`utils.Timestamp` is the function `utils.Timestamp()` in %s and cannot be written or addressed; read it with `utils.Timestamp()`.", importsUtilsModule)
 }
 
 // isAtomicLoad reports whether call is sync/atomic's LoadUint32.
-func (m *utilsMigration) isAtomicLoad(call *ast.CallExpr) bool {
+func (m *importsUtilsMigration) isAtomicLoad(call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	return ok && m.atomic != "" && sel.Sel.Name == "LoadUint32" && isIdentNamed(sel.X, m.atomic)
 }
 
 // requireName returns the identifier of testify's require package, arranging
 // for the import when the file has none.
-func (m *utilsMigration) requireName() string {
+func (m *importsUtilsMigration) requireName() string {
 	if m.require != "" {
 		return m.require
 	}

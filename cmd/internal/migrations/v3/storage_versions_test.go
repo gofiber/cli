@@ -15,8 +15,8 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// storageTree writes files (path relative to the returned directory -> content).
-func storageTree(t *testing.T, files map[string]string) string {
+// importsStorageTree writes files (path relative to the returned directory -> content).
+func importsStorageTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -28,7 +28,7 @@ func storageTree(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-func storageRead(t *testing.T, dir, name string) string {
+func importsStorageRead(t *testing.T, dir, name string) string {
 	t.Helper()
 
 	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name))) // #nosec G304 -- the path is this test's own temp dir
@@ -36,8 +36,8 @@ func storageRead(t *testing.T, dir, name string) string {
 	return string(b)
 }
 
-// storageRun runs the migration and returns what it printed.
-func storageRun(t *testing.T, dir string) string {
+// importsStorageRun runs the migration and returns what it printed.
+func importsStorageRun(t *testing.T, dir string) string {
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -47,7 +47,7 @@ func storageRun(t *testing.T, dir string) string {
 	return buf.String()
 }
 
-func storageNotes(dir string) []string {
+func importsStorageNotes(dir string) []string {
 	var out []string
 	for _, n := range internal.DrainNotes(dir) {
 		out = append(out, n.String())
@@ -55,8 +55,8 @@ func storageNotes(dir string) []string {
 	return out
 }
 
-// storageNoProxy makes every lookup on the module proxy fail, as it does offline.
-func storageNoProxy(t *testing.T) {
+// importsStorageNoProxy makes every lookup on the module proxy fail, as it does offline.
+func importsStorageNoProxy(t *testing.T) {
 	t.Helper()
 
 	orig := importsLookupModule
@@ -66,9 +66,9 @@ func storageNoProxy(t *testing.T) {
 
 func Test_MigrateStorageVersions(t *testing.T) {
 	// Not parallel: the lookups on the module proxy are replaced.
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import (
@@ -87,9 +87,9 @@ func main() {
 `,
 	})
 
-	assert.Equal(t, "Migrated storage package versions\n", storageRun(t, dir))
+	assert.Equal(t, "Migrated storage package versions\n", importsStorageRun(t, dir))
 
-	result := storageRead(t, dir, "main.go")
+	result := importsStorageRead(t, dir, "main.go")
 	assert.Contains(t, result, `"github.com/gofiber/storage/sqlite3/v2"`)
 	assert.Contains(t, result, `"github.com/gofiber/storage/redis/v3"`)
 	assert.Contains(t, result, `"github.com/gofiber/storage/postgres/v3"`)
@@ -99,7 +99,7 @@ func main() {
 }
 
 func Test_MigrateStorageVersions_AlreadyOnTheLine(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
 	src := `package main
 
@@ -115,20 +115,20 @@ func main() {
 	_ = redis.New()
 }
 `
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": src,
 		"go.mod":  "module example\n\nrequire (\n\tgithub.com/gofiber/storage/redis/v3 v3.6.2\n\tgithub.com/gofiber/storage/sqlite3/v2 v2.3.1\n)\n",
 	})
 
-	assert.Empty(t, storageRun(t, dir))
-	assert.Equal(t, src, storageRead(t, dir, "main.go"))
-	assert.Equal(t, "module example\n\nrequire (\n\tgithub.com/gofiber/storage/redis/v3 v3.6.2\n\tgithub.com/gofiber/storage/sqlite3/v2 v2.3.1\n)\n", storageRead(t, dir, "go.mod"))
+	assert.Empty(t, importsStorageRun(t, dir))
+	assert.Equal(t, src, importsStorageRead(t, dir, "main.go"))
+	assert.Equal(t, "module example\n\nrequire (\n\tgithub.com/gofiber/storage/redis/v3 v3.6.2\n\tgithub.com/gofiber/storage/sqlite3/v2 v2.3.1\n)\n", importsStorageRead(t, dir, "go.mod"))
 }
 
 func Test_MigrateStorageVersions_MixedVersions(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import (
@@ -141,9 +141,9 @@ var _, _, _ = sqlite3.New, redis.New, postgres.New
 `,
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
-	result := storageRead(t, dir, "main.go")
+	result := importsStorageRead(t, dir, "main.go")
 	assert.Contains(t, result, `"github.com/gofiber/storage/sqlite3/v2"`)
 	assert.Contains(t, result, `"github.com/gofiber/storage/postgres/v3"`)
 	assert.Contains(t, result, `"github.com/gofiber/storage/redis/v3"`)
@@ -152,9 +152,9 @@ var _, _, _ = sqlite3.New, redis.New, postgres.New
 }
 
 func Test_MigrateStorageVersions_V2ToV3(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import (
@@ -168,17 +168,17 @@ var _, _, _ = redis.New, postgres.New, sqlite3.New
 		"go.mod": "module example\n\nrequire (\n\tgithub.com/gofiber/storage/redis/v2 v2.0.3\n\tgithub.com/gofiber/storage/postgres/v2 v2.0.3\n\tgithub.com/gofiber/storage/sqlite3/v2 v2.0.0\n)\n",
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
-	result := storageRead(t, dir, "main.go")
+	result := importsStorageRead(t, dir, "main.go")
 	assert.Contains(t, result, `"github.com/gofiber/storage/redis/v3"`)
 	assert.Contains(t, result, `"github.com/gofiber/storage/postgres/v3"`)
 	assert.Contains(t, result, `"github.com/gofiber/storage/sqlite3/v2"`, "sqlite3 stays at v2")
-	assert.Equal(t, "module example\n\nrequire (\n\tgithub.com/gofiber/storage/redis/v3 v3.4.1\n\tgithub.com/gofiber/storage/postgres/v3 v3.3.0\n\tgithub.com/gofiber/storage/sqlite3/v2 v2.2.0\n)\n", storageRead(t, dir, "go.mod"))
+	assert.Equal(t, "module example\n\nrequire (\n\tgithub.com/gofiber/storage/redis/v3 v3.4.1\n\tgithub.com/gofiber/storage/postgres/v3 v3.3.0\n\tgithub.com/gofiber/storage/sqlite3/v2 v2.2.0\n)\n", importsStorageRead(t, dir, "go.mod"))
 }
 
 func Test_MigrateStorageVersions_UnversionedModulesStayUnversioned(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
 	src := `package main
 
@@ -189,18 +189,18 @@ import (
 
 var _, _ = aerospike.New, nats.New
 `
-	dir := storageTree(t, map[string]string{"main.go": src})
+	dir := importsStorageTree(t, map[string]string{"main.go": src})
 
-	assert.Empty(t, storageRun(t, dir))
-	assert.Equal(t, src, storageRead(t, dir, "main.go"))
+	assert.Empty(t, importsStorageRun(t, dir))
+	assert.Equal(t, src, importsStorageRead(t, dir, "main.go"))
 }
 
 // Modules that were already on the line Fiber v3 uses in the v2 era, or that
 // the table used to skip, still did not implement fiber.Storage after the run.
 func Test_MigrateStorageVersions_RaisesReleasesWithoutTheContextMethods(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"go.mod": `module example
 
 go 1.25
@@ -220,7 +220,7 @@ require (
 `,
 	})
 
-	assert.Equal(t, "Migrated storage package versions\n", storageRun(t, dir))
+	assert.Equal(t, "Migrated storage package versions\n", importsStorageRun(t, dir))
 
 	assert.Equal(t, `module example
 
@@ -238,15 +238,15 @@ require (
 	github.com/gofiber/storage/s3/v2 v2.4.0
 	github.com/gofiber/storage/etcd/v2 v2.1.0
 )
-`, storageRead(t, dir, "go.mod"), "a newer or equal release is kept, a pre-release of the first release is raised")
+`, importsStorageRead(t, dir, "go.mod"), "a newer or equal release is kept, a pre-release of the first release is raised")
 
-	assert.Empty(t, storageRun(t, dir), "idempotent")
+	assert.Empty(t, importsStorageRun(t, dir), "idempotent")
 }
 
 func Test_MigrateStorageVersions_MovesTheRequirementToTheNewLine(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import (
@@ -272,7 +272,7 @@ replace (
 `,
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
 	assert.Equal(t, `module example
 
@@ -286,13 +286,13 @@ replace github.com/gofiber/storage/memory/v2 => ../memory
 replace (
 	github.com/gofiber/storage/redis/v3 v3.4.1 => ../redis
 )
-`, storageRead(t, dir, "go.mod"), "two requirements of one module collapse into one, replace directives follow")
+`, importsStorageRead(t, dir, "go.mod"), "two requirements of one module collapse into one, replace directives follow")
 }
 
 // mongodb has a v3 line now. Any major other than the table's was "changed",
 // which moved mongodb/v3 back to v2.
 func Test_MigrateStorageVersions_NeverMovesToAnOlderLine(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
 	src := `package main
 
@@ -304,40 +304,40 @@ import (
 var _, _ = mongodb.New, postgres.New
 `
 	mod := "module example\n\nrequire (\n\tgithub.com/gofiber/storage/mongodb/v3 v3.0.2\n\tgithub.com/gofiber/storage/postgres/v4 v4.0.0\n)\n"
-	dir := storageTree(t, map[string]string{"main.go": src, "go.mod": mod})
+	dir := importsStorageTree(t, map[string]string{"main.go": src, "go.mod": mod})
 
-	assert.Empty(t, storageRun(t, dir))
-	assert.Equal(t, src, storageRead(t, dir, "main.go"))
-	assert.Equal(t, mod, storageRead(t, dir, "go.mod"))
+	assert.Empty(t, importsStorageRun(t, dir))
+	assert.Equal(t, src, importsStorageRead(t, dir, "main.go"))
+	assert.Equal(t, mod, importsStorageRead(t, dir, "go.mod"))
 
 	// A newer line is still raised when the table knows its first release.
-	dir = storageTree(t, map[string]string{"go.mod": "module example\n\nrequire github.com/gofiber/storage/mongodb/v3 v3.0.0-rc.1\n"})
-	storageRun(t, dir)
-	assert.Equal(t, "module example\n\nrequire github.com/gofiber/storage/mongodb/v3 v3.0.0\n", storageRead(t, dir, "go.mod"))
+	dir = importsStorageTree(t, map[string]string{"go.mod": "module example\n\nrequire github.com/gofiber/storage/mongodb/v3 v3.0.0-rc.1\n"})
+	importsStorageRun(t, dir)
+	assert.Equal(t, "module example\n\nrequire github.com/gofiber/storage/mongodb/v3 v3.0.0\n", importsStorageRead(t, dir, "go.mod"))
 }
 
 func Test_MigrateStorageVersions_EveryModule(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"go.mod":        "module example\r\n\r\nrequire github.com/gofiber/storage/memory/v2 v2.0.0\r\n",
 		"svc/go.mod":    "module example/svc\n\nrequire github.com/gofiber/storage/nats v1.2.0\n",
 		"vendor/go.mod": "module vendor\n\nrequire github.com/gofiber/storage/nats v1.0.0\n",
 		"tools/go.mod":  "module example/tools\n\nrequire github.com/gofiber/storage/testhelpers/tck v1.0.0\n",
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
-	assert.Equal(t, "module example\r\n\r\nrequire github.com/gofiber/storage/memory/v2 v2.1.0\r\n", storageRead(t, dir, "go.mod"))
-	assert.Equal(t, "module example/svc\n\nrequire github.com/gofiber/storage/nats v1.3.0\n", storageRead(t, dir, "svc/go.mod"))
-	assert.Equal(t, "module vendor\n\nrequire github.com/gofiber/storage/nats v1.0.0\n", storageRead(t, dir, "vendor/go.mod"))
-	assert.Equal(t, "module example/tools\n\nrequire github.com/gofiber/storage/testhelpers/tck v1.0.0\n", storageRead(t, dir, "tools/go.mod"), "a package of a module is not a storage module")
+	assert.Equal(t, "module example\r\n\r\nrequire github.com/gofiber/storage/memory/v2 v2.1.0\r\n", importsStorageRead(t, dir, "go.mod"))
+	assert.Equal(t, "module example/svc\n\nrequire github.com/gofiber/storage/nats v1.3.0\n", importsStorageRead(t, dir, "svc/go.mod"))
+	assert.Equal(t, "module vendor\n\nrequire github.com/gofiber/storage/nats v1.0.0\n", importsStorageRead(t, dir, "vendor/go.mod"))
+	assert.Equal(t, "module example/tools\n\nrequire github.com/gofiber/storage/testhelpers/tck v1.0.0\n", importsStorageRead(t, dir, "tools/go.mod"), "a package of a module is not a storage module")
 }
 
 func Test_MigrateStorageVersions_OnlyImportDeclarationsAreRewritten(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import "github.com/gofiber/storage/redis"
@@ -349,7 +349,7 @@ var _ = redis.New
 `,
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
 	assert.Equal(t, `package main
 
@@ -359,10 +359,10 @@ import "github.com/gofiber/storage/redis/v3"
 const path = "github.com/gofiber/storage/redis"
 
 var _ = redis.New
-`, storageRead(t, dir, "main.go"))
+`, importsStorageRead(t, dir, "main.go"))
 }
 
-func Test_resolveStorage(t *testing.T) {
+func Test_importsResolveStorage(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -380,19 +380,19 @@ func Test_resolveStorage(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		assert.Equal(t, tc.want, resolveStorage(tc.name, tc.major), "%s %s", tc.name, tc.major)
+		assert.Equal(t, tc.want, importsResolveStorage(tc.name, tc.major), "%s %s", tc.name, tc.major)
 	}
 }
 
 // Every module the table moves has a first usable release for the line it moves
 // to, and nothing is listed twice.
-func Test_storageLines_Consistent(t *testing.T) {
+func Test_importsStorageLines_Consistent(t *testing.T) {
 	t.Parallel()
 
 	type key struct{ name, major string }
 	seen := map[key]bool{}
 	targets := map[string]string{}
-	for _, l := range storageLines {
+	for _, l := range importsStorageLines {
 		k := key{l.name, l.major}
 		assert.False(t, seen[k], "%s %s is listed twice", l.name, l.major)
 		seen[k] = true
@@ -405,16 +405,16 @@ func Test_storageLines_Consistent(t *testing.T) {
 	}
 
 	for name, major := range targets {
-		dest := resolveStorage(name, "")
+		dest := importsResolveStorage(name, "")
 		assert.True(t, dest.known, name)
-		assert.Equal(t, importsModulePath(storagePrefix, name, major), dest.path, name)
+		assert.Equal(t, importsModulePath(importsStoragePrefix, name, major), dest.path, name)
 		assert.NotEmpty(t, dest.minimum, name)
 	}
 }
 
 func Test_MigrateStorageVersions_ModulesTheTableDoesNotList(t *testing.T) {
 	// Not parallel: the lookups on the module proxy are replaced.
-	cutoff := storageWithContextRelease
+	cutoff := importsStorageContextRelease
 
 	tests := []struct {
 		name       string
@@ -473,12 +473,12 @@ func Test_MigrateStorageVersions_ModulesTheTableDoesNotList(t *testing.T) {
 			if tc.indirect {
 				line += " // indirect"
 			}
-			dir := storageTree(t, map[string]string{"go.mod": "module example\n\nrequire " + line + "\n"})
+			dir := importsStorageTree(t, map[string]string{"go.mod": "module example\n\nrequire " + line + "\n"})
 
-			storageRun(t, dir)
+			importsStorageRun(t, dir)
 
-			assert.Equal(t, "module example\n\nrequire "+tc.wantMod+"\n", storageRead(t, dir, "go.mod"))
-			assert.Equal(t, tc.wantNotes, storageNotes(dir))
+			assert.Equal(t, "module example\n\nrequire "+tc.wantMod+"\n", importsStorageRead(t, dir, "go.mod"))
+			assert.Equal(t, tc.wantNotes, importsStorageNotes(dir))
 			if tc.noLookupOK {
 				assert.Empty(t, lookups)
 			} else {
@@ -496,19 +496,19 @@ func Test_MigrateStorageVersions_ModulesTheTableListsNeedNoLookup(t *testing.T) 
 	}
 	t.Cleanup(func() { importsLookupModule = orig })
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"go.mod": "module example\n\nrequire (\n\tgithub.com/gofiber/storage/memory/v2 v2.0.0\n\tgithub.com/gofiber/storage/testhelpers/tck v1.0.0\n\tgithub.com/gofiber/storage v1.0.0\n)\n",
 	})
-	storageRun(t, dir)
-	assert.Empty(t, storageNotes(dir))
+	importsStorageRun(t, dir)
+	assert.Empty(t, importsStorageNotes(dir))
 }
 
 // postgres.Config lost the SslMode spelling when the module got its v2: the field
 // is SSLMode, the only field removed from the Config of any storage module.
 func Test_MigrateStorageVersions_RenamesPostgresSslMode(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import (
@@ -542,7 +542,7 @@ func shadowed(pg struct{ Config struct{ SslMode string } }) {
 `,
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
 	assert.Equal(t, `package main
 
@@ -574,13 +574,13 @@ func main() {
 func shadowed(pg struct{ Config struct{ SslMode string } }) {
 	_ = pg.Config.SslMode
 }
-`, storageRead(t, dir, "main.go"), "only the postgres Config changes; mssql still has SslMode")
+`, importsStorageRead(t, dir, "main.go"), "only the postgres Config changes; mssql still has SslMode")
 }
 
 func Test_MigrateStorageVersions_NotesConnThatChangedItsType(t *testing.T) {
-	storageNoProxy(t)
+	importsStorageNoProxy(t)
 
-	dir := storageTree(t, map[string]string{
+	dir := importsStorageTree(t, map[string]string{
 		"main.go": `package main
 
 import (
@@ -622,7 +622,7 @@ func already() {
 `,
 	})
 
-	storageRun(t, dir)
+	importsStorageRun(t, dir)
 
 	assert.Equal(t, []string{
 		"main.go:15: `Conn()` returns a *pgxpool.Pool in github.com/gofiber/storage/postgres/v3, it returned a *sql.DB in the module without a major version: adapt the code that uses the connection.",
@@ -630,5 +630,5 @@ func already() {
 		"main.go:22: `Conn()` returns a *pgxpool.Pool in github.com/gofiber/storage/postgres/v3, it returned a *sql.DB in the module without a major version: adapt the code that uses the connection.",
 		"main.go:23: `Conn()` returns a redis.UniversalClient in github.com/gofiber/storage/redis/v3, it returned a *redis.Client in the module without a major version: adapt the code that holds it.",
 		"main.go:26: `Conn()` returns a redis.UniversalClient in github.com/gofiber/storage/redis/v3, it returned a *redis.Client in the module without a major version: adapt the code that holds it.",
-	}, storageNotes(dir))
+	}, importsStorageNotes(dir))
 }

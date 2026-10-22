@@ -35,7 +35,7 @@ replace (
 
 replace github.com/gofiber/utils => ../utils
 `
-	dir := writeTree(t, map[string]string{"go.mod": gomod})
+	dir := importsWriteTree(t, map[string]string{"go.mod": gomod})
 
 	var buf bytes.Buffer
 	require.NoError(t, migrations.MigrateReplaceDirectives(newCmd(&buf), dir, nil, nil))
@@ -52,7 +52,7 @@ replace github.com/gofiber/utils => ../utils
 func Test_MigrateReplaceDirectives_EveryModuleOfARepository(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod":         "module a\r\n\r\nrequire github.com/gofiber/contrib/v3/jwt v1.2.6\r\n\r\nreplace github.com/gofiber/contrib/v3/jwt => ../jwt\r\n",
 		"svc/api/go.mod": "module a/svc/api\n\nrequire github.com/gofiber/contrib/v3/zap v1.1.1\n\nreplace github.com/gofiber/contrib/zap => ../zap\n",
 		"svc/bad/go.mod": "module {{ .Name }}\n",
@@ -70,7 +70,7 @@ func Test_MigrateReplaceDirectives_EveryModuleOfARepository(t *testing.T) {
 func Test_MigrateReplaceDirectives_NothingToReport(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod": "module a\n\nrequire (\n\tgithub.com/gofiber/fiber/v3 v3.6.1\n\tgithub.com/gofiber/utils/v2 v2.6.2 // indirect\n)\n\nreplace github.com/gofiber/utils/v2 => ../utils\n",
 	})
 

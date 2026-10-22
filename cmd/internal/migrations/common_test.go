@@ -85,7 +85,7 @@ require github.com/gofiber/fiber/v2 v2.0.0`
 func Test_MigrateGoPkgs_ImportForms(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod": "module example\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n",
 		"a_plain.go": `package main
 
@@ -169,7 +169,7 @@ var _ = fiber.New
 func Test_MigrateGoPkgs_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod":  "module example\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n",
 		"main.go": "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\nvar _ = fiber.New\n",
 	})
@@ -246,7 +246,7 @@ func Test_MigrateGoPkgs_GoModShapes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			dir := writeTree(t, map[string]string{"go.mod": tc.src})
+			dir := importsWriteTree(t, map[string]string{"go.mod": tc.src})
 			var buf bytes.Buffer
 			require.NoError(t, migrations.MigrateGoPkgs(newCmd(&buf), dir, nil, semver.MustParse("3.6.1")))
 
@@ -259,7 +259,7 @@ func Test_MigrateGoPkgs_GoModShapes(t *testing.T) {
 func Test_MigrateGoPkgs_EveryModuleOfARepository(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		// No go.mod at the root: a workspace with the modules below it.
 		"go.work":              "go 1.22\n\nuse (\n\t./svc/api\n\t./tools/gen\n)\n",
 		"svc/api/go.mod":       "module example.com/mono/svc/api\n\ngo 1.21\n\nrequire (\n\tgithub.com/gofiber/fiber/v2 v2.52.15\n)\n",
@@ -296,7 +296,7 @@ func Test_MigrateGoPkgs_EveryModuleOfARepository(t *testing.T) {
 func Test_MigrateGoPkgs_ReplaceOfTheOldModule(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod": "module a\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n\nreplace (\n\tgithub.com/gofiber/fiber/v2 => ../fiber-fork\n)\n",
 	})
 
@@ -312,7 +312,7 @@ func Test_MigrateGoPkgs_ReplaceOfTheOldModule(t *testing.T) {
 func Test_MigrateGoPkgs_NotesWhatItDoesNotRewrite(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod": "module a\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n",
 		"main.go": `package main
 
@@ -351,7 +351,7 @@ var _ = fiber.New
 func Test_MigrateGoPkgs_BrokenFileDoesNotStopTheOthers(t *testing.T) {
 	t.Parallel()
 
-	dir := writeTree(t, map[string]string{
+	dir := importsWriteTree(t, map[string]string{
 		"go.mod":        "module a\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n",
 		"a/a.go":        "package a\n\nimport \"github.com/gofiber/fiber/v2\"\n\nvar _ = fiber.New\n",
 		"testdata/b.go": "package {{ .Name }}\n\nimport \"github.com/gofiber/fiber/v2\"\n",

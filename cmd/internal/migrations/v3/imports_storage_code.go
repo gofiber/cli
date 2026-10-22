@@ -10,12 +10,12 @@ import (
 )
 
 var (
-	reStoragePostgres = regexp.MustCompile(`^github\.com/gofiber/storage/postgres(/v\d+)?$`)
-	reStorageRedis    = regexp.MustCompile(`^github\.com/gofiber/storage/redis(/v\d+)?$`)
+	importsRePostgres = regexp.MustCompile(`^github\.com/gofiber/storage/postgres(/v\d+)?$`)
+	importsReRedis    = regexp.MustCompile(`^github\.com/gofiber/storage/redis(/v\d+)?$`)
 )
 
-// storagePkg is a storage package as one file uses it.
-type storagePkg struct {
+// importsStoragePkg is a storage package as one file uses it.
+type importsStoragePkg struct {
 	// names are the identifiers the file binds to the package.
 	names []string
 	// fields are the struct fields declared in the file with the Storage type of
@@ -26,17 +26,17 @@ type storagePkg struct {
 	moved bool
 }
 
-// storageFile rewrites the Go code of one file that imports storage modules.
-type storageFile struct {
+// importsStorageFile rewrites the Go code of one file that imports storage modules.
+type importsStorageFile struct {
 	g        *goSource
 	fi       internal.FileInfo
 	edits    *editSet
-	postgres storagePkg
-	redis    storagePkg
+	postgres importsStoragePkg
+	redis    importsStoragePkg
 }
 
-func migrateStorageImports(content string, fi internal.FileInfo) string {
-	if !strings.Contains(content, storageFamily.prefix) {
+func importsMigrateStorage(content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, importsStorageFamily.prefix) {
 		return content
 	}
 	g, ok := parseFile(fi, content)
@@ -45,11 +45,11 @@ func migrateStorageImports(content string, fi internal.FileInfo) string {
 	}
 
 	var edits editSet
-	moves := storageFamily.moveImports(g, &edits)
+	moves := importsStorageFamily.moveImports(g, &edits)
 
-	s := &storageFile{g: g, fi: fi, edits: &edits}
-	s.postgres.names = storageNames(g, reStoragePostgres, "postgres")
-	s.redis.names = storageNames(g, reStorageRedis, "redis")
+	s := &importsStorageFile{g: g, fi: fi, edits: &edits}
+	s.postgres.names = importsStorageNames(g, importsRePostgres, "postgres")
+	s.redis.names = importsStorageNames(g, importsReRedis, "redis")
 	for _, mv := range moves {
 		s.postgres.moved = s.postgres.moved || (mv.name == "postgres" && mv.from == "")
 		s.redis.moved = s.redis.moved || (mv.name == "redis" && mv.from == "")
@@ -62,9 +62,9 @@ func migrateStorageImports(content string, fi internal.FileInfo) string {
 	return edits.apply(content)
 }
 
-// storageNames returns the identifiers the file binds to the imports that match
+// importsStorageNames returns the identifiers the file binds to the imports that match
 // re. pkg is the package name of the module.
-func storageNames(g *goSource, re *regexp.Regexp, pkg string) []string {
+func importsStorageNames(g *goSource, re *regexp.Regexp, pkg string) []string {
 	var names []string
 	for _, spec := range importsOf(g, re.MatchString) {
 		if !spec.blank() && !spec.dot() {
@@ -76,7 +76,7 @@ func storageNames(g *goSource, re *regexp.Regexp, pkg string) []string {
 
 // collectFields finds the struct fields of the file that hold a postgres or
 // redis storage, to recognize store.Conn() behind a field.
-func (s *storageFile) collectFields(n ast.Node, stack []ast.Node) bool {
+func (s *importsStorageFile) collectFields(n ast.Node, stack []ast.Node) bool {
 	field, ok := n.(*ast.Field)
 	if !ok {
 		return true
@@ -92,7 +92,7 @@ func (s *storageFile) collectFields(n ast.Node, stack []ast.Node) bool {
 	return true
 }
 
-func (s *storageFile) visit(n ast.Node, stack []ast.Node) bool {
+func (s *importsStorageFile) visit(n ast.Node, stack []ast.Node) bool {
 	switch x := n.(type) {
 	case *ast.CompositeLit:
 		// A literal of the postgres Config with the old field name.
@@ -116,14 +116,14 @@ func (s *storageFile) visit(n ast.Node, stack []ast.Node) bool {
 
 // pkgRef reports whether e is an identifier that refers to the package, not to
 // a variable of the same name.
-func (*storageFile) pkgRef(e ast.Expr, p *storagePkg, stack []ast.Node) bool {
+func (*importsStorageFile) pkgRef(e ast.Expr, p *importsStoragePkg, stack []ast.Node) bool {
 	id, ok := e.(*ast.Ident)
 	return ok && slices.Contains(p.names, id.Name) && !importsShadowed(id.Name, id.Pos(), stack)
 }
 
 // typeIs reports whether e names the type typeName of the package, possibly
 // behind pointers.
-func (s *storageFile) typeIs(e ast.Expr, p *storagePkg, typeName string, stack []ast.Node) bool {
+func (s *importsStorageFile) typeIs(e ast.Expr, p *importsStoragePkg, typeName string, stack []ast.Node) bool {
 	for {
 		star, ok := e.(*ast.StarExpr)
 		if !ok {
@@ -135,13 +135,13 @@ func (s *storageFile) typeIs(e ast.Expr, p *storagePkg, typeName string, stack [
 	return ok && sel.Sel.Name == typeName && s.pkgRef(sel.X, p, stack)
 }
 
-// maxStorageDepth bounds how far isConfig and isStorage follow variables.
-const maxStorageDepth = 3
+// importsMaxDepth bounds how far isConfig and isStorage follow variables.
+const importsMaxDepth = 3
 
 // isConfig reports whether e is a postgres.Config value: a variable declared as
 // one or initialized with a literal of the type.
-func (s *storageFile) isConfig(e ast.Expr, stack []ast.Node, depth int) bool {
-	if depth > maxStorageDepth {
+func (s *importsStorageFile) isConfig(e ast.Expr, stack []ast.Node, depth int) bool {
+	if depth > importsMaxDepth {
 		return false
 	}
 
@@ -168,8 +168,8 @@ func (s *storageFile) isConfig(e ast.Expr, stack []ast.Node, depth int) bool {
 // isStorage reports whether e is a storage of the package: the result of its
 // New, a variable declared as or initialized with one, or a struct field of the
 // file that holds one.
-func (s *storageFile) isStorage(e ast.Expr, p *storagePkg, stack []ast.Node, depth int) bool {
-	if depth > maxStorageDepth {
+func (s *importsStorageFile) isStorage(e ast.Expr, p *importsStoragePkg, stack []ast.Node, depth int) bool {
+	if depth > importsMaxDepth {
 		return false
 	}
 
@@ -199,7 +199,7 @@ func (s *storageFile) isStorage(e ast.Expr, p *storagePkg, stack []ast.Node, dep
 // noteConn reports a Conn() call on a postgres or redis storage whose import
 // came from the module without a major version: the connection it returns is
 // another type now, which cannot be converted by the CLI.
-func (s *storageFile) noteConn(call *ast.CallExpr, stack []ast.Node) {
+func (s *importsStorageFile) noteConn(call *ast.CallExpr, stack []ast.Node) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "Conn" || len(call.Args) != 0 {
 		return

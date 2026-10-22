@@ -15,8 +15,8 @@ import (
 // ExecCommand is used to run external commands. It can be replaced in tests.
 var ExecCommand = exec.Command
 
-// reFiberModule matches the module path of the core fiber module at any major.
-var reFiberModule = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
+// importsReFiberModule matches the module path of the core fiber module at any major.
+var importsReFiberModule = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
 
 // RunGoMod executes `go mod tidy` and `go mod download` inside every directory
 // under root that contains a go.mod file referencing github.com/gofiber/fiber,
@@ -82,7 +82,7 @@ func fiberModuleDirs(root string) ([]string, error) {
 				return nil //nolint:nilerr // reported by the migration that edits go.mod files
 			}
 			for _, r := range mf.Require {
-				if reFiberModule.MatchString(r.Mod.Path) {
+				if importsReFiberModule.MatchString(r.Mod.Path) {
 					dirs = append(dirs, filepath.Dir(path))
 					break
 				}
