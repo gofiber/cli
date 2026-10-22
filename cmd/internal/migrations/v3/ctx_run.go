@@ -25,7 +25,9 @@ type ctxRun struct {
 	// are the views of them for the environments (see ctxModule).
 	indexes moduleIndexes
 	modules map[*moduleIndex]*ctxModule
-	order   []string
+	// byDir is the module of each directory looked at, nil for one that is in none.
+	byDir map[string]*ctxModule
+	order []string
 }
 
 // ctxPackageFile is a parsed file of a directory.
@@ -44,21 +46,31 @@ type ctxKindNote struct {
 }
 
 func newCtxRun() *ctxRun {
-	return &ctxRun{kinds: map[string]*ctxKindNote{}, pkgs: map[string][]ctxPackageFile{}, modules: map[*moduleIndex]*ctxModule{}}
+	return &ctxRun{
+		kinds:   map[string]*ctxKindNote{},
+		pkgs:    map[string][]ctxPackageFile{},
+		modules: map[*moduleIndex]*ctxModule{},
+		byDir:   map[string]*ctxModule{},
+	}
 }
 
 // module returns the view of the packages of the module the file belongs to, nil
 // outside of one.
 func (r *ctxRun) module(fi internal.FileInfo) *ctxModule {
-	ix := r.indexes.of(fi)
-	if ix == nil {
-		return nil
+	dir := filepath.Dir(fi.Path)
+	if m, ok := r.byDir[dir]; ok {
+		return m
 	}
-	m, ok := r.modules[ix]
-	if !ok {
-		m = newCtxModule(ix)
-		r.modules[ix] = m
+
+	var m *ctxModule
+	if ix := r.indexes.of(fi); ix != nil {
+		var ok bool
+		if m, ok = r.modules[ix]; !ok {
+			m = newCtxModule(ix)
+			r.modules[ix] = m
+		}
 	}
+	r.byDir[dir] = m
 	return m
 }
 
