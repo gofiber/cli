@@ -281,10 +281,16 @@ func (f *clientFile) notef(line int, format string, args ...any) {
 	internal.Notef(f.fi, line, format, args...)
 }
 
-// isFiberName reports whether e is the identifier of the fiber package.
+// isFiberName reports whether e is the identifier of the fiber package: it has
+// the name the file imports the package under and no variable, parameter or
+// declaration of the file hides the package.
 func (f *clientFile) isFiberName(e ast.Expr) bool {
 	id, ok := e.(*ast.Ident)
-	return ok && slices.Contains(f.fiber, id.Name)
+	if !ok || !slices.Contains(f.fiber, id.Name) {
+		return false
+	}
+	_, hidden := f.resolve(id)
+	return !hidden
 }
 
 // fiberSel returns the selector if e is fiber.<name>.

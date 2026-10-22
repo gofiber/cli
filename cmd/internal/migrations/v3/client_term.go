@@ -104,45 +104,79 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		lines = append(lines, respName+", "+errName+" "+op+" "+call)
 	}
 
+	// The error of Parse and the errors of the terminal call are one error of
+	// Send. When the code that handled the first leaves the block and the code
+	// that handles the second is not the same code, Send's error only goes to
+	// the first when it is what Parse reported: a URL that is not valid.
+	var repeated *ast.IfStmt
 	if h := u.parseHandler(it); h != nil {
-		lines = append(lines, "if "+errName+" != nil "+e.handlerText(h, errName))
+		handler := e.handlerText(h, errName)
+		cond := errName + " != nil"
+		if f.blockEnds(h.handler) {
+			repeated = e.repeatedCheck(it, handler, mode, rewrites, errName)
+			if repeated == nil {
+				cond = f.use("errors", "errors") + ".Is(" + errName + ", " + f.use(clientPkgPath, "client") + ".ErrURLFormat)"
+			}
+		}
+		lines = append(lines, "if "+cond+" "+handler)
 	}
 
 	bodyType, bodyZero, bodyExpr := "[]byte", "nil", respName+".Body()"
 	if t.kind == clientTermString {
 		bodyType, bodyZero, bodyExpr = "string", `""`, "string("+respName+".Body())"
 	}
+	var assigns []clientTermAssign
 	if !status.blank {
-		lines = append(lines, clientDeclareOrReset(status, "int", "0"))
+		assigns = append(assigns, clientTermAssign{side: status, typ: "int", zero: "0", expr: respName + ".StatusCode()"})
 	}
 	if !body.blank {
-		lines = append(lines, clientDeclareOrReset(body, bodyType, bodyZero))
+		assigns = append(assigns, clientTermAssign{side: body, typ: bodyType, zero: bodyZero, expr: bodyExpr})
 	}
-	switch mode {
-	case clientErrsOwn:
-		lines = append(lines, "var "+errs.text+" []error")
-	case clientErrsExisting:
-		lines = append(lines, errs.text+" = nil")
-	case clientErrsNone, clientErrsRewrite:
-	}
+	isStruct := t.kind == clientTermStruct
 
-	var guard []string
-	if !status.blank {
-		guard = append(guard, status.text+" = "+respName+".StatusCode()")
-	}
-	if !body.blank {
-		guard = append(guard, body.text+" = "+bodyExpr)
-	}
-	if t.kind == clientTermStruct {
-		guard = append(guard, errName+" = "+respName+".JSON("+t.structArg+")")
-	}
-	if len(guard) > 0 {
-		lines = append(lines, "if "+errName+" == nil {")
-		lines = append(lines, guard...)
-		lines = append(lines, "}")
-	}
-	if mode == clientErrsOwn || mode == clientErrsExisting {
-		lines = append(lines, "if "+errName+" != nil {", errs.text+" = []error{"+errName+"}", "}")
+	switch check := e.followingCheck(it, assigns, mode, rewrites, errName); {
+	case repeated != nil:
+		// The handler of Parse leaves the block and does what the check behind
+		// it does: the error is nil from here on.
+		lines = append(lines, clientDirect(assigns)...)
+		if isStruct {
+			lines = append(lines, errName+" = "+respName+".JSON("+t.structArg+")")
+		}
+		lines = clientErrsSlice(lines, mode, errs.text, errName, isStruct)
+		f.deleteStmt(e.id, repeated)
+	case check != nil:
+		// The check that follows leaves the block: read the response behind it.
+		at := f.g.offset(check.End())
+		if _, end := f.trailingComment(at); end > at {
+			at = end
+		}
+		f.edits.replace(e.id, at, at, "\n"+strings.Join(clientDirect(assigns), "\n"))
+	default:
+		for _, a := range assigns {
+			lines = append(lines, clientDeclareOrReset(a.side, a.typ, a.zero))
+		}
+		switch mode {
+		case clientErrsOwn:
+			lines = append(lines, "var "+errs.text+" []error")
+		case clientErrsExisting:
+			lines = append(lines, errs.text+" = nil")
+		case clientErrsNone, clientErrsRewrite:
+		}
+		var guard []string
+		for _, a := range assigns {
+			guard = append(guard, a.side.text+" = "+a.expr)
+		}
+		if isStruct {
+			guard = append(guard, errName+" = "+respName+".JSON("+t.structArg+")")
+		}
+		if len(guard) > 0 {
+			lines = append(lines, "if "+errName+" == nil {")
+			lines = append(lines, guard...)
+			lines = append(lines, "}")
+		}
+		if mode == clientErrsOwn || mode == clientErrsExisting {
+			lines = append(lines, "if "+errName+" != nil {", errs.text+" = []error{"+errName+"}", "}")
+		}
 	}
 
 	block := strings.Join(lines, "\n")
@@ -163,6 +197,157 @@ func (e *clientEmit) term(it *clientItem, call, pre string) {
 		}
 		f.intro[l.owner][errName] = true
 	}
+}
+
+// clientTermAssign is one value of the response that the statement which sends
+// the request stored in a variable.
+type clientTermAssign struct {
+	typ  string
+	zero string
+	expr string
+	side clientTermSide
+}
+
+// clientDirect renders the assignments for a response that is known to be
+// there: the new variables are declared with their value.
+func clientDirect(assigns []clientTermAssign) []string {
+	var lines, names, exprs []string
+	for _, a := range assigns {
+		if a.side.isNew {
+			names = append(names, a.side.text)
+			exprs = append(exprs, a.expr)
+			continue
+		}
+		lines = append(lines, a.side.text+" = "+a.expr)
+	}
+	if len(names) > 0 {
+		lines = append(lines, strings.Join(names, ", ")+" := "+strings.Join(exprs, ", "))
+	}
+	return lines
+}
+
+// clientErrsSlice keeps the []error variable of a request whose error is nil
+// in the lines that follow. set says the error may still be set later.
+func clientErrsSlice(lines []string, mode clientErrsMode, errs, errName string, set bool) []string {
+	switch mode {
+	case clientErrsOwn:
+		lines = append(lines, "var "+errs+" []error")
+	case clientErrsExisting:
+		lines = append(lines, errs+" = nil")
+	case clientErrsNone, clientErrsRewrite:
+	}
+	if set && (mode == clientErrsOwn || mode == clientErrsExisting) {
+		lines = append(lines, "if "+errName+" != nil {", errs+" = []error{"+errName+"}", "}")
+	}
+	return lines
+}
+
+// followingCheck finds the if statement right behind the statement that sends
+// the request when it only handles the error and leaves the block: the values
+// of the response can then be read behind it, without a guard. It returns nil
+// when the statement is not that simple.
+func (e *clientEmit) followingCheck(it *clientItem, assigns []clientTermAssign, mode clientErrsMode, rewrites []clientEdit, errName string) *ast.IfStmt {
+	f := e.f
+	t := it.term
+	l := it.list
+	if t.ifStmt != nil || t.assign == nil || t.kind == clientTermStruct || mode != clientErrsRewrite ||
+		len(assigns) == 0 || it.idx+1 >= len(l.stmts) {
+		return nil
+	}
+	for _, a := range assigns {
+		if !a.side.isNew {
+			return nil
+		}
+	}
+	next, ok := l.stmts[it.idx+1].(*ast.IfStmt)
+	if !ok || next.Init != nil || next.Else != nil || next.Cond == nil || !f.blockEnds(next.Body) {
+		return nil
+	}
+	start, end := f.g.offset(next.Cond.Pos()), f.g.offset(next.Cond.End())
+	isCheck := slices.ContainsFunc(rewrites, func(r clientEdit) bool {
+		return r.start == start && r.end == end && r.text == errName+" != nil"
+	})
+	if !isCheck {
+		return nil
+	}
+	for _, a := range assigns {
+		if refs, _ := clientRefsIn(a.side.text, []ast.Stmt{next}); len(refs) > 0 {
+			return nil
+		}
+	}
+	return next
+}
+
+// repeatedCheck finds the if statement behind the statement that sends the
+// request that does what the handler of Parse, which runs right behind it, does
+// already: the same code under the same condition on the same error.
+func (e *clientEmit) repeatedCheck(it *clientItem, handler string, mode clientErrsMode, rewrites []clientEdit, errName string) *ast.IfStmt {
+	f := e.f
+	t := it.term
+	l := it.list
+	if t.ifStmt != nil || mode != clientErrsRewrite || it.idx+1 >= len(l.stmts) {
+		return nil
+	}
+	next, ok := l.stmts[it.idx+1].(*ast.IfStmt)
+	if !ok || next.Init != nil || next.Else != nil || next.Cond == nil {
+		return nil
+	}
+	start, end := f.g.offset(next.Cond.Pos()), f.g.offset(next.Cond.End())
+	isCheck := slices.ContainsFunc(rewrites, func(r clientEdit) bool {
+		return r.start == start && r.end == end && r.text == errName+" != nil"
+	})
+	if !isCheck || strings.Join(strings.Fields(f.text(next.Body)), " ") != strings.Join(strings.Fields(handler), " ") {
+		return nil
+	}
+	return next
+}
+
+// blockEnds reports whether the code after the block can only run when the
+// block was not entered: it ends with a return, a branch, a panic or a call
+// that stops the program.
+func (f *clientFile) blockEnds(b *ast.BlockStmt) bool {
+	if b == nil || len(b.List) == 0 {
+		return false
+	}
+	switch s := b.List[len(b.List)-1].(type) {
+	case *ast.ReturnStmt:
+		return true
+	case *ast.BranchStmt:
+		return s.Tok != token.FALLTHROUGH
+	case *ast.BlockStmt:
+		return f.blockEnds(s)
+	case *ast.IfStmt:
+		if s.Else == nil || !f.blockEnds(s.Body) {
+			return false
+		}
+		switch els := s.Else.(type) {
+		case *ast.BlockStmt:
+			return f.blockEnds(els)
+		case *ast.IfStmt:
+			return f.blockEnds(&ast.BlockStmt{List: []ast.Stmt{els}})
+		}
+	case *ast.ExprStmt:
+		call, ok := s.X.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		if isIdentNamed(call.Fun, "panic") {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		switch {
+		case !ok:
+		case slices.Contains(f.log, pkg.Name):
+			return strings.HasPrefix(sel.Sel.Name, "Fatal") || strings.HasPrefix(sel.Sel.Name, "Panic")
+		case pkg.Name == "os":
+			return sel.Sel.Name == "Exit"
+		}
+	}
+	return false
 }
 
 // hoist writes the statements that replace the init statement of an if before

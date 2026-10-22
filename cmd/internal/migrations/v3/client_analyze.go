@@ -135,7 +135,7 @@ func (f *clientFile) classify(u *clientUnit, g clientRefGroup, name string, isAl
 	case *ast.ReturnStmt:
 		consumed, reason = clientClassifyReturn(it, s, name)
 	default:
-		return clientErrUse
+		return f.useReason(g.stmt)
 	}
 	if reason == "" && consumed != len(g.refs) {
 		reason = clientErrUse
@@ -372,6 +372,30 @@ func (f *clientFile) classifyIf(it *clientItem, s *ast.IfStmt, name string, isAl
 	return 0, clientErrUse
 }
 
+// clientOverwritten reports whether the variable name is not read before the
+// statements stmts assign to it, or not used at all: its value at their start
+// does not matter.
+func clientOverwritten(name string, stmts []ast.Stmt) bool {
+	refs, end := clientRefsIn(name, stmts)
+	if len(refs) == 0 {
+		return true
+	}
+	// The first statement that mentions it has to assign it before anything
+	// else happens, without reading it.
+	for _, s := range stmts[:min(end+1, len(stmts))] {
+		found, _ := clientRefsIn(name, []ast.Stmt{s})
+		if len(found) == 0 {
+			continue
+		}
+		as, ok := s.(*ast.AssignStmt)
+		if !ok || as.Tok != token.ASSIGN || len(found) != 1 {
+			return false
+		}
+		return slices.ContainsFunc(as.Lhs, func(e ast.Expr) bool { return e == ast.Expr(found[0].id) })
+	}
+	return true
+}
+
 // clientIsNilCheck reports whether cond is name != nil.
 func clientIsNilCheck(cond ast.Expr, name string) bool {
 	bin, ok := cond.(*ast.BinaryExpr)
@@ -456,6 +480,9 @@ func clientValidate(u *clientUnit) clientUnsupported {
 			between := it.list.stmts[min(it.idx+2, firstTerm.idx):firstTerm.idx]
 			if refs, _ := clientRefsIn(it.parse.errVar, between); len(refs) > 0 {
 				return "the error of Parse() is used before the request is sent"
+			}
+			if !clientOverwritten(it.parse.errVar, firstTerm.list.stmts[firstTerm.idx+1:]) {
+				return "the error of Parse() is read after the request is sent, where it was nil in v2"
 			}
 		}
 	}

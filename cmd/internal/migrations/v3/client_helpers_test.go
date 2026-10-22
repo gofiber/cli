@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,4 +75,42 @@ func clientAssertSource(t *testing.T, want, got string) {
 	t.Helper()
 
 	assert.Equal(t, clientGofmtSource(t, want), clientGofmtSource(t, got))
+}
+
+// clientCase is a migration of a package: the v2 files, the v3 files that are
+// expected and the notes the migration prints.
+type clientCase struct {
+	files map[string]string
+	want  map[string]string
+	name  string
+	notes []string
+}
+
+// clientRunCases migrates every case in a directory of its own and compares the
+// files with the expected ones, and the notes with the expected ones in any
+// order: each expected text has to be part of one note, and no note may be left.
+func clientRunCases(t *testing.T, cases []clientCase) {
+	t.Helper()
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := clientRunMigration(t, tc.files)
+			for name, want := range tc.want {
+				clientAssertSource(t, want, run.files[name])
+			}
+
+			left := slices.Clone(run.notes)
+			for _, want := range tc.notes {
+				at := slices.IndexFunc(left, func(note string) bool { return strings.Contains(note, want) })
+				if at < 0 {
+					t.Errorf("missing note %q in %q", want, run.notes)
+					continue
+				}
+				left = slices.Delete(left, at, at+1)
+			}
+			assert.Empty(t, left, "unexpected notes")
+		})
+	}
 }

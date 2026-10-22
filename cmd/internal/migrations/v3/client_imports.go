@@ -97,6 +97,17 @@ func (f *clientFile) fixImports(src string) string {
 		return src
 	}
 
+	// A declaration of one import that had no parentheses keeps none.
+	var bare *ast.GenDecl
+	for _, d := range file.Decls {
+		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
+			if !gd.Lparen.IsValid() && len(gd.Specs) == 1 {
+				bare = gd
+			}
+			break
+		}
+	}
+
 	used := map[string]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok {
@@ -160,6 +171,11 @@ func (f *clientFile) fixImports(src string) string {
 	}
 	if !changed {
 		return src
+	}
+	if bare != nil && len(bare.Specs) == 1 {
+		if spec, ok := bare.Specs[0].(*ast.ImportSpec); ok && spec.Doc == nil && spec.Comment == nil {
+			bare.Lparen, bare.Rparen = token.NoPos, token.NoPos
+		}
 	}
 
 	var buf bytes.Buffer

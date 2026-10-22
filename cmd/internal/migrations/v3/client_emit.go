@@ -66,13 +66,15 @@ func (e *clientEmit) notes() {
 	}
 	e.headerConflicts(all)
 
+	hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
 	if u.kind == clientAcquire || u.kind == clientExternal {
-		hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
 		for _, op := range all {
 			if hasQuery && op.setsURL && clientHasQueryMark(op.urlArg) {
 				f.notef(op.line, "QueryString() replaced the query of this URL, but the v3 client adds the parameters to it")
 			}
 		}
+	} else if _, exact := f.withoutQuery(u.url); hasQuery && exact && clientHasQueryMark(u.url) {
+		f.notef(f.line(u.url), "QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both")
 	}
 }
 
@@ -148,8 +150,29 @@ func (f *clientFile) deleteStmt(id int, s ast.Node) {
 	repl := ""
 	if len(kept) > 0 {
 		repl = strings.Join(kept, "\n") + "\n"
+	} else {
+		le = skipBlankLine(src, ls, le)
 	}
 	f.edits.replace(id, ls, le, repl)
+}
+
+// skipBlankLine extends the end le of a deleted line, which started at ls, over
+// the blank line that follows when the lines around the deleted one would
+// leave the block with a blank line at its start or two in a row.
+func skipBlankLine(src string, ls, le int) int {
+	next := le
+	for next < len(src) && (src[next] == ' ' || src[next] == '\t' || src[next] == '\r') {
+		next++
+	}
+	if next >= len(src) || src[next] != '\n' {
+		return le
+	}
+	prevStart := strings.LastIndexByte(src[:max(ls-1, 0)], '\n') + 1
+	prev := strings.TrimSpace(src[prevStart:max(ls-1, 0)])
+	if ls == 0 || (prev != "" && !strings.HasSuffix(prev, "{")) {
+		return le
+	}
+	return next + 1
 }
 
 // trailingComment returns the line comment that follows offset end on the same
@@ -225,7 +248,7 @@ func (e *clientEmit) requestTerm(it *clientItem, recv string) {
 	pre := clientSetterLines(recv, it.ops)
 	call := recv + ".Send()"
 	if e.u.varName == "" {
-		call = e.requestChain() + ".Send()"
+		call = e.requestChain("Send()")
 		if stmts := clientStmtOps(e.u.ops); len(stmts) > 0 {
 			// Some settings need statements of their own: the request gets a
 			// variable to take them.
@@ -250,7 +273,7 @@ func clientStmtOps(ops []clientOp) []clientOp {
 
 // requestChain renders the creation of the request: the client it belongs to,
 // the client settings, the method and URL, and the settings chained to it.
-func (e *clientEmit) requestChain() string {
+func (e *clientEmit) requestChain(tail ...string) string {
 	f, u := e.f, e.u
 	pkg := f.use(clientPkgPath, "client")
 	var parts []string
@@ -276,8 +299,30 @@ func (e *clientEmit) requestChain() string {
 			parts = append(parts, op.req)
 		}
 	}
-	return strings.Join(parts, ".")
+	return clientJoinChain(append(parts, tail...))
 }
+
+// clientJoinChain joins the calls of a chain, one call per line when the chain
+// is long.
+func clientJoinChain(parts []string) string {
+	joined := strings.Join(parts, ".")
+	if len(parts) <= clientChainCalls && (len(parts) <= clientChainShort || len(joined) <= clientChainWidth) {
+		return joined
+	}
+	if len(parts) > 2 && parts[1] == "R()" {
+		parts = append([]string{parts[0] + ".R()"}, parts[2:]...)
+	}
+	return strings.Join(parts, ".\n")
+}
+
+// A chain with more calls, or that is longer, is written on several lines.
+const (
+	clientChainCalls = 5
+	clientChainWidth = 90
+	// clientChainShort is the number of parts up to which a chain stays on one
+	// line however long its arguments are.
+	clientChainShort = 3
+)
 
 // urlText renders the URL of the request. QueryString replaced the query of the
 // URL in v2, where the v3 client adds its parameters to it, so the query is
@@ -336,7 +381,7 @@ func clientSetterLines(recv string, ops []clientOp) string {
 	var lines, chain []string
 	flush := func() {
 		if len(chain) > 0 {
-			lines = append(lines, recv+"."+strings.Join(chain, "."))
+			lines = append(lines, clientJoinChain(append([]string{recv}, chain...)))
 			chain = nil
 		}
 	}
