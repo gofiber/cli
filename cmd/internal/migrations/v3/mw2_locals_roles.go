@@ -164,26 +164,29 @@ type mw2KeyResolver struct {
 	dir   string
 }
 
-// key resolves e; ok is false when e has no identity worth comparing.
-func (kr *mw2KeyResolver) key(e ast.Expr) (mw2Key, bool) {
+// key resolves e, whose ancestors are stack (nil when they are not known); ok is
+// false when e has no identity worth comparing.
+func (kr *mw2KeyResolver) key(e ast.Expr, stack []ast.Node) (mw2Key, bool) {
 	switch x := e.(type) {
 	case *ast.ParenExpr:
-		return kr.key(x.X)
+		return kr.key(x.X, stack)
 	case *ast.BasicLit, *ast.BinaryExpr:
-		if v, ok := kr.scope().str(e, 0); ok {
-			return mw2Key{val: v}, true
+		if !kr.local(e, stack) {
+			if v, ok := kr.scope().str(e, 0); ok {
+				return mw2Key{val: v}, true
+			}
 		}
 	case *ast.Ident:
-		return kr.ident(x), true
+		return kr.ident(x, stack), true
 	case *ast.CallExpr:
-		if k, ok := kr.conversion(x); ok {
+		if k, ok := kr.conversion(x, stack); ok {
 			return k, true
 		}
 	case *ast.SelectorExpr:
 		if k, ok := kr.middlewareDefault(x); ok {
 			return k, true
 		}
-		if k, ok := kr.qualified(x); ok {
+		if k, ok := kr.qualified(x, stack); ok {
 			return k, true
 		}
 		// pkg.Key means the same in every package that imports pkg.
@@ -192,15 +195,44 @@ func (kr *mw2KeyResolver) key(e ast.Expr) (mw2Key, bool) {
 	return mw2Key{val: kr.text(e), dir: kr.dir, expr: true}, true
 }
 
+// local reports whether e names a variable of a function: a parameter, a result, a
+// local, which a package level name of the same spelling does not stand for.
+func (kr *mw2KeyResolver) local(e ast.Expr, stack []ast.Node) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			// only what qualifies the selector can be a name here
+			if id, isIdent := sel.X.(*ast.Ident); isIdent && modDeclaredLocally(id.Name, id.Pos(), stack) {
+				found = true
+			}
+			return false
+		}
+		if id, ok := n.(*ast.Ident); ok && modDeclaredLocally(id.Name, id.Pos(), stack) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
 // text is the source text of e without its blanks.
 func (kr *mw2KeyResolver) text(e ast.Expr) string {
 	return strings.Join(strings.Fields(kr.g.text(e)), "")
 }
 
 // ident resolves a name: a constant string of the package, typed or not, a
-// variable of it that nothing assigns to, or otherwise the name itself.
-func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
+// variable of it that nothing assigns to, or otherwise the name itself. A name that
+// a function declares is its own key: it is not the package level name that is
+// spelled like it.
+func (kr *mw2KeyResolver) ident(id *ast.Ident, stack []ast.Node) mw2Key {
+	if modDeclaredLocally(id.Name, id.Pos(), stack) {
+		return mw2Key{val: id.Name, dir: kr.dir + mw2LocalMark, expr: true}
+	}
+
 	scope := kr.scope()
+	if kr.pkg.twice[id.Name] {
+		return mw2Key{val: id.Name, dir: kr.dir, expr: true}
+	}
 	if c, ok := kr.pkg.consts[id.Name]; ok && c.value != nil {
 		if v, known := (mw2ConstScope{pkgs: kr.pkgs, pkg: kr.pkg, imports: c.imports}).str(c.value, 1); known {
 			switch typ := mw2TypeText(c.typ); {
@@ -216,10 +248,15 @@ func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
 	return mw2Key{val: id.Name, dir: kr.dir, expr: true}
 }
 
+// mw2LocalMark is added to the directory of the key of a name that a function
+// declares, so that it is never taken for the package level name of the same
+// spelling.
+const mw2LocalMark = "\x00local"
+
 // conversion resolves T("constant") for a type T of the package.
-func (kr *mw2KeyResolver) conversion(call *ast.CallExpr) (mw2Key, bool) {
+func (kr *mw2KeyResolver) conversion(call *ast.CallExpr, stack []ast.Node) (mw2Key, bool) {
 	fn, ok := call.Fun.(*ast.Ident)
-	if !ok || len(call.Args) != 1 || !kr.pkg.types[fn.Name] {
+	if !ok || len(call.Args) != 1 || !kr.pkg.types[fn.Name] || modDeclaredLocally(fn.Name, fn.Pos(), stack) || kr.local(call.Args[0], stack) {
 		return mw2Key{}, false
 	}
 	v, ok := mw2ConstString(call.Args[0], kr.pkg.constValue, 0)

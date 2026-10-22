@@ -77,6 +77,9 @@ func (s mw2ConstScope) str(e ast.Expr, depth int) (string, bool) {
 // another type it is another key (see mw2Key.typ), which only a name of the
 // package itself can tell apart from the string.
 func (s mw2ConstScope) declared(pkg *mw2Package, name string, depth int, qualified bool) (string, bool) {
+	if pkg.twice[name] {
+		return "", false
+	}
 	c, isConst := pkg.consts[name]
 	if !isConst {
 		var ok bool
@@ -276,9 +279,9 @@ func (kr *mw2KeyResolver) scope() mw2ConstScope {
 // when it is a string known beforehand, otherwise the declaration itself, which
 // is the same key wherever it is named from (the config of one package and the
 // read of another).
-func (kr *mw2KeyResolver) qualified(sel *ast.SelectorExpr) (mw2Key, bool) {
+func (kr *mw2KeyResolver) qualified(sel *ast.SelectorExpr, stack []ast.Node) (mw2Key, bool) {
 	id, ok := sel.X.(*ast.Ident)
-	if !ok || kr.pkgs == nil {
+	if !ok || kr.pkgs == nil || modDeclaredLocally(id.Name, id.Pos(), stack) {
 		return mw2Key{}, false
 	}
 	scope := kr.scope()

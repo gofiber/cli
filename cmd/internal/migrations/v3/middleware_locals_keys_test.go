@@ -164,6 +164,26 @@ func Test_MigrateMiddlewareLocals_KeysThatAreNamesOfTheModule(t *testing.T) {
 			migrated: false,
 		},
 		{
+			name: "constant that two files declare under build constraints",
+			files: map[string]string{
+				"internal/auth/keys_a.go": "//go:build linux\n\npackage auth\n\nconst ContextKey = \"jwt\"\n",
+				"internal/auth/keys_b.go": "//go:build !linux\n\npackage auth\n\nconst ContextKey = \"token\"\n",
+			},
+			config:   "ContextKey",
+			read:     `"jwt"`,
+			migrated: false,
+		},
+		{
+			name: "constant that two files declare, read by name",
+			files: map[string]string{
+				"internal/auth/keys_a.go": "//go:build linux\n\npackage auth\n\nconst ContextKey = \"jwt\"\n",
+				"internal/auth/keys_b.go": "//go:build !linux\n\npackage auth\n\nconst ContextKey = \"token\"\n",
+			},
+			config:   "ContextKey",
+			read:     "auth.ContextKey",
+			migrated: true,
+		},
+		{
 			name:     "import with a name of its own",
 			files:    map[string]string{"internal/auth/keys.go": "package auth\n\nconst ContextKey = \"jwt\"\n"},
 			config:   "ContextKey",
@@ -459,4 +479,53 @@ func main() {
 		assert.Contains(t, run.notes[0].Message, "your own code stores a value under that key too")
 		assert.Contains(t, run.notes[0].Message, "sentry.GetHubFromContext(c)")
 	}
+}
+
+// A name that a function declares is not the package level name that is spelled
+// like it: the parameter key of a helper that reads any key of the locals is not
+// the variable key of the package.
+func Test_MigrateMiddlewareLocals_LocalNamesShadowTheKeys(t *testing.T) {
+	t.Parallel()
+
+	run := mw2Apply(t, v3.MigrateMiddlewareLocals, map[string]string{
+		"go.mod":  localsGoMod,
+		"main.go": localsSetup,
+		"keys.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+var key = "token"
+
+const rid = "requestid"
+
+func named(c *fiber.Ctx) any { return c.Locals(key) }
+
+func any2(c *fiber.Ctx, key string) any { return c.Locals(key) }
+
+func inLoop(c *fiber.Ctx) (out []any) {
+	for _, key := range []string{"a", "b"} {
+		out = append(out, c.Locals(key))
+	}
+	return out
+}
+
+func shadowedConstant(c *fiber.Ctx) any {
+	rid := "mine"
+	return c.Locals(rid)
+}
+
+func whoami(c *fiber.Ctx) error {
+	return c.SendString(c.Locals(rid).(string))
+}
+`,
+	})
+
+	keys := run.file(t, "keys.go")
+	// the package level names are the keys of the middleware
+	assert.Contains(t, keys, "func named(c *fiber.Ctx) any { return keyauth.TokenFromContext(c) }")
+	assert.Contains(t, keys, "return c.SendString(requestid.FromContext(c))")
+	// the names that a function declares are not
+	assert.Contains(t, keys, "func any2(c *fiber.Ctx, key string) any { return c.Locals(key) }")
+	assert.Contains(t, keys, "out = append(out, c.Locals(key))")
+	assert.Contains(t, keys, "return c.Locals(rid)")
 }

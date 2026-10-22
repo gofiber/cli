@@ -297,6 +297,9 @@ type mw2Package struct {
 	// decls holds every name declared at package level, types the ones that are types.
 	decls map[string]bool
 	types map[string]bool
+	// twice holds the names that more than one file declares, which build
+	// constraints allow: nothing says which one a build uses.
+	twice map[string]bool
 	// dir and name are where the package is and what its package clause calls it.
 	dir, name string
 }
@@ -339,7 +342,7 @@ func (p *mw2Packages) of(dir, name string) *mw2Package {
 	}
 
 	pkg := &mw2Package{
-		consts: map[string]mw2Const{}, vars: map[string]mw2Const{}, decls: map[string]bool{}, types: map[string]bool{},
+		consts: map[string]mw2Const{}, vars: map[string]mw2Const{}, decls: map[string]bool{}, types: map[string]bool{}, twice: map[string]bool{},
 		dir: filepath.Clean(dir), name: name,
 	}
 	p.cache[key] = pkg
@@ -383,6 +386,9 @@ func (p *mw2Package) addGen(decl *ast.GenDecl, imports []*ast.ImportSpec) {
 			p.types[s.Name.Name] = true
 		case *ast.ValueSpec:
 			for i, name := range s.Names {
+				if p.decls[name.Name] {
+					p.twice[name.Name] = true
+				}
 				p.decls[name.Name] = true
 				if decl.Tok != token.CONST && decl.Tok != token.VAR {
 					continue
