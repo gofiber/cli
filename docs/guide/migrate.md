@@ -65,16 +65,45 @@ is idempotent, so a second run changes nothing that the first one already migrat
   cookie or the query) becomes an `extractors.FromCustom` that takes the prefix off the
   way v2 did, and a session `KeyLookup` that is only known when the program runs becomes
   a function that reads it the way the v2 constructor did.
+- A type or a value that changed shape gets the conversion that hides it: the `Start`
+  and `End` of the ranges `c.Range` returns are `int64` in v3, so the code that reads
+  them gets `int(...)`; `session.Source` and its constants become `string` and the
+  strings `"cookie"`, `"header"` and `"query"`; `store.KeyLookup` and `store.CookieName`
+  are read from `store.Extractor`; `sess.Keys()` is converted to the `[]string` v2
+  returned; `c.ParamsInt` with a spread of defaults and `c.AllParams` used as a value
+  become function literals.
+- A healthcheck config that another file of the package declares is split where it
+  is declared: the liveness probe stays in the variable, the readiness probe moves to a
+  second one next to it, and the calls become one route for each probe.
 - A type that embeds `fiber.Ctx` and declares a method of the name a rewrite introduces
   (a `Redirect(to string)` or `Bind(v any)` of your own) is migrated through the embedded
   context: `c.Ctx.Redirect().Back("/")`.
 - Where an explicit v3 setting reproduces the v2 default, the migration writes it:
   `IdleTimeout: 24 * time.Hour` for sessions, `ByteRange: true` for `SendFile`,
   `FailOnTimeout: true` for `app.Test`, the v2 expiration and `Cache-Control` defaults
-  of the cache middleware.
-- One migration can add a file: a filesystem root that is an `http.FileSystem` (packr,
-  pkger, rice, statik, your own type) gets a small adapter, `fiber_migrate_httpfs.go`,
-  declared once per package. Delete it once you serve an `embed.FS` or `os.DirFS`.
+  of the cache middleware, `OnTimeout` returning `fiber.ErrRequestTimeout` for the
+  timeout middleware (408 instead of 503), `Status(fiber.StatusFound)` for a redirect
+  without a status (302 instead of 303).
+- A few migrations add a file to a package, declared once per package and named in the
+  note they leave:
+  - a filesystem root that is an `http.FileSystem` (packr, pkger, rice, statik, your own
+    type) gets a small adapter, `fiber_migrate_httpfs.go`. Delete it once you serve an
+    `embed.FS` or `os.DirFS`;
+  - the listener settings of `fiber.Config` (`Prefork`, `Network`,
+    `DisableStartupMessage`, `EnablePrintRoutes`) move to the `Listen` call. When the
+    config is built away from that call (a condition, a function, a field of another
+    struct), `fiber_migrate_listen.go` keeps the settings with their app and the `Listen`
+    call reads them back. Delete the file once you pass a `fiber.ListenConfig` to `Listen`
+    yourself. The settings of an app that nothing in the package starts are dropped, with
+    a note;
+  - a request that the client package of v3 cannot make the way the v2 agent did (a
+    `Host` that differs from the URL, `SetResponse`, `Dest`, `RetryIf`, a `FormFile` that
+    two requests send, `MultipartForm` without a file, `FileData` or `SendFile` without
+    `MultipartForm`, ...) keeps running on `fiber_migrate_agent.go`, a copy of the v2
+    agent (`fiber.Get`, `fiber.Agent`, `fiber.Client` and `fiber.FormFile` under names
+    that start with `fiberMigrate`). Every such request gets a note that says why, and
+    every other request moves to the client package. Delete the file once these
+    requests use `github.com/gofiber/fiber/v3/client`.
 
 ## What is left for you
 
@@ -98,8 +127,13 @@ The list has three kinds of entries:
 - v2 constructs that are still in the code and will not compile on v3, with the
   migration or the v3 API to use instead;
 - behavior changes of the middleware your project uses that no rewrite can reproduce
-  (proxy SSRF policy, timeout status, cache defaults, hashed basic auth passwords,
-  `SendFile` file names, ...). These are reported once per project, at the first import.
+  (proxy SSRF policy, a timed-out handler that keeps running, cache defaults, hashed
+  basic auth passwords, `SendFile` file names, the random token that replaces the UUID as
+  the default session ID, ...). These are reported once per project, at the first import.
+  A few rewrites report their own difference the same way: the error of `ParamsInt`
+  loses the `failed to convert: ` v2 put in front of it, the deprecated `timeout.New`
+  of v2 only logged the error of its handler, and `Redirect().Back` follows a `Referer`
+  of the same origin only.
 
 An empty list means the migrations found nothing left to report. It does not replace
 building the project and running its tests.

@@ -430,3 +430,23 @@ func c(c fiber.Ctx) error { return c.Redirect().To("/x") }
 	require.Len(t, notes, 1, "%v", notes)
 	assert.Contains(t, notes[0], "Redirect().Back only follows a Referer that comes from the same origin")
 }
+
+// The healthcheck middleware of v3 is mounted on a route of its own for each probe.
+func Test_Review_HealthcheckRoutes(t *testing.T) {
+	t.Parallel()
+
+	notes := reviewNotes(t, map[string]string{"a.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/healthcheck"
+)
+
+func routes(app *fiber.App) {
+	app.Get(healthcheck.LivenessEndpoint, healthcheck.New())
+}
+`})
+
+	require.Len(t, notes, 1, "%v", notes)
+	assert.Contains(t, notes[0], "a.go:5: healthcheck: each probe is a route of its own now")
+}

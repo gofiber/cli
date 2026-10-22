@@ -45,6 +45,10 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: "timeout: a timed-out handler now answers 503 instead of 408 (return fiber.ErrRequestTimeout from Config.OnTimeout to keep 408).",
 	},
 	{
+		pkg:     reviewMiddlewarePath("healthcheck"),
+		message: "healthcheck: each probe is a route of its own now, so HEAD requests are answered too, and another method on a probe path answers 405 where no other route takes it, instead of 404.",
+	},
+	{
 		pkg:     reviewMiddlewarePath("cache"),
 		message: "cache: Fiber v3 sends Cache-Control headers by default (set DisableCacheControl to stop that), raises the default Expiration from 1 to 5 minutes and builds its cache keys differently, so every cache starts cold after the upgrade.",
 	},
