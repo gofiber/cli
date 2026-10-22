@@ -71,6 +71,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateContribPackages,
 			v3migrations.MigrateWebsocketConfig,
 			v3migrations.MigrateZerologConfig,
+			v3migrations.MigrateI18nTranslator,
 			v3migrations.MigrateUtilsImport,
 			v3migrations.MigrateHealthcheckConfig,
 			v3migrations.MigrateProxyTLSConfig,
