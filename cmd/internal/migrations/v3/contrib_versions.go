@@ -67,13 +67,50 @@ func contribV3Version(module string) (string, error) {
 // proxy.golang.org does not, so a network that only reaches a private proxy
 // works too.
 func fetchContribV3Version(module string) (version string, err error) {
-	path := contribV3Prefix + module
+	found, err := fetchContribModule(contribV3Prefix+module, "latest")
+	return found.Version, err
+}
 
+// ContribModule is what the go command says about a version of a module.
+type ContribModule struct {
+	// Version is the version the query resolved to.
+	Version string
+	// GoMod is the go.mod file of that version in the module cache.
+	GoMod string
+}
+
+var contribModuleFetcher = fetchContribModule
+
+// SetContribModuleFetcher overrides the function that asks about a module
+// version (the module path and a query such as "latest" or "v1.47.0"), the one
+// the migration of the OpenTelemetry modules uses. It returns a restore function.
+func SetContribModuleFetcher(fn func(path, query string) (ContribModule, error)) func() {
+	contribV3VersionMu.Lock()
+	prev := contribModuleFetcher
+	contribModuleFetcher = fn
+	contribV3VersionMu.Unlock()
+	return func() {
+		contribV3VersionMu.Lock()
+		contribModuleFetcher = prev
+		contribV3VersionMu.Unlock()
+	}
+}
+
+// askContribModule runs the module fetcher.
+func askContribModule(path, query string) (ContribModule, error) {
+	contribV3VersionMu.Lock()
+	fetcher := contribModuleFetcher
+	contribV3VersionMu.Unlock()
+	return fetcher(path, query)
+}
+
+// fetchContribModule asks the go command about path@query.
+func fetchContribModule(path, query string) (found ContribModule, err error) {
 	// Outside of any module, so that the go.mod of the project (a go directive
 	// that asks for another toolchain, a vendor directory) cannot get in the way.
 	dir, err := os.MkdirTemp("", "fiber-migrate-contrib-")
 	if err != nil {
-		return "", fmt.Errorf("create lookup directory: %w", err)
+		return ContribModule{}, fmt.Errorf("create lookup directory: %w", err)
 	}
 	defer func() {
 		if rerr := os.RemoveAll(dir); rerr != nil && err == nil {
@@ -83,14 +120,14 @@ func fetchContribV3Version(module string) (version string, err error) {
 
 	// -mod=mod beats a GOFLAGS=-mod=vendor of the environment, which cannot
 	// query a module.
-	cmd := internal.ExecCommand("go", "list", "-mod=mod", "-m", "-json", path+"@latest") // #nosec G204 -- fixed command, module name from the CLI's own table
+	cmd := internal.ExecCommand("go", "list", "-mod=mod", "-m", "-json", path+"@"+query) // #nosec G204 -- fixed command, module name from the CLI's own table and the go.mod files of the project
 	cmd.Dir = dir
 	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GOWORK=") }), "GOWORK=off")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("run go list: %w", err)
+		return ContribModule{}, fmt.Errorf("run go list: %w", err)
 	}
 	timer := time.AfterFunc(contribLookupTimeout, func() {
 		_ = cmd.Process.Kill() //nolint:errcheck // the process may have exited already
@@ -100,22 +137,23 @@ func fetchContribV3Version(module string) (version string, err error) {
 	if runErr != nil {
 		// The go command names the module and says what is wrong.
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", fmt.Errorf("%s: %w", msg, runErr)
+			return ContribModule{}, fmt.Errorf("%s: %w", msg, runErr)
 		}
-		return "", fmt.Errorf("go list %s@latest: %w", path, runErr)
+		return ContribModule{}, fmt.Errorf("go list %s@%s: %w", path, query, runErr)
 	}
 
 	var data struct {
 		Version string `json:"Version"` //nolint:tagliatelle // field name defined by the go command
+		GoMod   string `json:"GoMod"`   //nolint:tagliatelle // field name defined by the go command
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &data); err != nil {
-		return "", fmt.Errorf("parse go list output for %s: %w", path, err)
+		return ContribModule{}, fmt.Errorf("parse go list output for %s: %w", path, err)
 	}
 	if data.Version == "" {
-		return "", fmt.Errorf("latest version of %s: %w", path, errContribNoVersion)
+		return ContribModule{}, fmt.Errorf("version of %s@%s: %w", path, query, errContribNoVersion)
 	}
 
-	return data.Version, nil
+	return ContribModule{Version: data.Version, GoMod: data.GoMod}, nil
 }
 
 // SetContribV3VersionFetcher overrides the function used to fetch contrib module versions.

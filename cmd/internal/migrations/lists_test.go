@@ -285,3 +285,29 @@ func Test_DoMigration_NotesFollowTheLinesOfTheRestoredFile(t *testing.T) {
 	}
 	assert.True(t, found, "a note about the byte ranges of Download: %s", buf.String())
 }
+
+// When go mod tidy fails, go.mod holds the edits of the migration and is not tidied: the report says so, and
+// names the cause the go command printed when the migration knows it.
+func Test_DoMigration_GoModFailureIsExplained(t *testing.T) {
+	dir := t.TempDir()
+	fiberGoMod := filepath.Join(dir, "fiber.mod")
+	require.NoError(t, os.WriteFile(fiberGoMod, []byte("module github.com/gofiber/fiber/v3\n\ngo 1.26.0\n"), 0o600))
+	t.Cleanup(stubFiberDownload(t, fiberGoMod))
+	t.Cleanup(stubFailingGoMod(t, "go: finding module for package go.opentelemetry.io/otel/exporters/otlp/internal/envconfig\n"+
+		"module go.opentelemetry.io/otel/exporters/otlp@latest found (v0.20.1), but does not contain package go.opentelemetry.io/otel/exporters/otlp/internal/envconfig"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	err := migrations.DoMigration(cmd, dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), false, false, nil, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the OpenTelemetry modules of go.mod are on different releases, and they have to be on one")
+	out := buf.String()
+	assert.Contains(t, out, "1 item to review by hand:", "the note is there once, although the go command failed twice")
+	assert.Contains(t, out, "go mod tidy failed (see its output above), so go.mod and go.sum hold the edits of the migration")
+}

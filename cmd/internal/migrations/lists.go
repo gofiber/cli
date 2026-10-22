@@ -240,12 +240,14 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	if !skipGoMod {
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
+			internal.AddNote(cwd, internal.Note{Message: goModFailedNote})
 		}
 		if err := MigrateDependencies(cmd, cwd, origDeps, target); err != nil {
 			errs = append(errs, fmt.Errorf("migrate dependencies: %w", err))
 		}
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
+			internal.AddNote(cwd, internal.Note{Message: goModFailedNote})
 		}
 	}
 	for _, review := range reviews {
@@ -261,6 +263,10 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 
 	return nil
 }
+
+// goModFailedNote says what state go.mod is in when the go command failed.
+const goModFailedNote = "go mod tidy failed (see its output above), so go.mod and go.sum hold the edits of the migration (the requirements moved to the v3 modules, " +
+	"the raised go directive and requirements) but are not tidied; fix the cause and run go mod tidy and go mod download"
 
 // followLines gives the notes the line numbers of the files as they are after the
 // formatting of the author was put back (see internal.FinishRun).

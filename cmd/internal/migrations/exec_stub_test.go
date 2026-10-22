@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gofiber/cli/cmd/internal"
 	"github.com/gofiber/cli/cmd/internal/migrations"
 )
 
@@ -29,6 +30,19 @@ func stubFiberDownload(t *testing.T, fiberGoMod string) func() {
 	return func() { migrations.ExecCommand = orig }
 }
 
+// stubFailingGoMod replaces internal.ExecCommand with a command that prints stderr and fails, as the go
+// command does when go mod tidy cannot finish. It returns a function to restore the original.
+func stubFailingGoMod(t *testing.T, stderr string) func() {
+	t.Helper()
+	orig := internal.ExecCommand
+	internal.ExecCommand = func(string, ...string) *exec.Cmd {
+		cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=TestHelperProcess", "--") // #nosec G204 -- test helper
+		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "GO_HELPER_STDERR=" + stderr}
+		return cmd
+	}
+	return func() { internal.ExecCommand = orig }
+}
+
 func TestHelperProcess(t *testing.T) {
 	t.Helper()
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
@@ -36,6 +50,10 @@ func TestHelperProcess(t *testing.T) {
 	}
 	if out := os.Getenv("GO_HELPER_STDOUT"); out != "" {
 		_, _ = fmt.Fprint(os.Stdout, out)
+	}
+	if out := os.Getenv("GO_HELPER_STDERR"); out != "" {
+		_, _ = fmt.Fprintln(os.Stderr, out)
+		os.Exit(1) // helper process exits intentionally
 	}
 	os.Exit(0) // helper process exits intentionally
 }
