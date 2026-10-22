@@ -66,6 +66,20 @@ func (e *clientEmit) notes() {
 	}
 	e.headerConflicts(all)
 
+	// SetRequestURI replaced the URI, and with it the query arguments that were
+	// added to the old one.
+	var touched *clientOp
+	for i := range all {
+		switch op := &all[i]; {
+		case op.setsURL && touched != nil:
+			f.notef(touched.line, "the query was added before SetRequestURI(), which discarded it in Fiber v2; the v3 client sends it")
+			touched = nil
+		case op.touchesURI || op.hasQuery:
+			if touched == nil {
+				touched = op
+			}
+		}
+	}
 	hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
 	if u.kind == clientAcquire || u.kind == clientExternal {
 		for _, op := range all {

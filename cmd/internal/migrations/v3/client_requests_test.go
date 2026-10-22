@@ -926,18 +926,15 @@ func notALiteral(base, qs string) ([]byte, error) {
 }
 
 func queryBeforeURL(url string) ([]byte, error) {
-	a := fiber.AcquireAgent()
-	req := a.Request()
-	req.Header.SetMethod(fiber.MethodGet)
-	req.URI().QueryArgs().Add("dropped", "1")
-	req.SetRequestURI(url)
-	if err := a.Parse(); err != nil {
+	a := client.C().R()
+	a.SetMethod(fiber.MethodGet)
+	a.AddParam("dropped", "1")
+	a.SetURL(url)
+	resp, err := a.Send()
+	if err != nil {
 		return nil, err
 	}
-	_, body, errs := a.Bytes()
-	if len(errs) > 0 {
-		return nil, errs[0]
-	}
+	body := resp.Body()
 	return body, nil
 }
 
@@ -959,7 +956,7 @@ func requestArgs(url string) ([]byte, error) {
 			notes: []string{
 				"main.go:28: QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both",
 				"main.go:38: left as Fiber v2 code: QueryString() with a value that is not a string literal (put the query in the URL instead)",
-				"main.go:48: left as Fiber v2 code: a query is added to the URL before SetRequestURI(), which discards it in Fiber v2",
+				"main.go:51: the query was added before SetRequestURI(), which discarded it in Fiber v2; the v3 client sends it",
 			},
 		},
 		{

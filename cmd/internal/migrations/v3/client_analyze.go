@@ -453,15 +453,7 @@ func clientValidate(u *clientUnit) clientUnsupported {
 	if reason := clientValidateForms(u); reason != "" {
 		return reason
 	}
-	touched := false
-	for _, op := range all {
-		switch {
-		case op.setsURL && touched:
-			return "a query is added to the URL before SetRequestURI(), which discards it in Fiber v2"
-		case op.touchesURI || op.hasQuery:
-			touched = true
-		}
-	}
+
 	if u.retExpr != nil && slices.ContainsFunc(u.ops, func(op clientOp) bool { return op.stmt != nil }) {
 		return clientUnsupported(u.ops[slices.IndexFunc(u.ops, func(op clientOp) bool { return op.stmt != nil })].method +
 			"() needs a statement of its own, which cannot be part of a returned expression")
