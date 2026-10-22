@@ -80,6 +80,7 @@ func migratePasetoContent(content string, fi internal.FileInfo) string {
 	for _, c := range f.findConfigs(names) {
 		f.pasetoConfig(c, names)
 	}
+	f.pasetoErrors(names)
 	return f.apply()
 }
 
@@ -114,6 +115,29 @@ func (f *contribFile) pasetoConfig(c *contribConfig, names []string) {
 	}
 
 	c.remove("ContextKey")
+}
+
+// pasetoErrors moves the references to pasetoware.ErrIncorrectTokenPrefix, which v3
+// removed: a token without the prefix is a missing token there, and the
+// ErrorHandler receives ErrMissingToken for it.
+func (f *contribFile) pasetoErrors(names []string) {
+	reported := false
+	f.g.walk(func(n ast.Node, _ []ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "ErrIncorrectTokenPrefix" {
+			return true
+		}
+		if id, isIdent := sel.X.(*ast.Ident); !isIdent || !slices.Contains(names, id.Name) {
+			return true
+		}
+
+		f.edits.replaceNode(f.g, sel.Sel, "ErrMissingToken")
+		if !reported {
+			reported = true
+			f.notef(sel.Pos(), "ErrIncorrectTokenPrefix does not exist in the v3 paseto module: a token without the prefix is reported as ErrMissingToken, which this refers to now")
+		}
+		return true
+	})
 }
 
 // pasetoLookup works out the extractor a v2 config stands for; reason says why

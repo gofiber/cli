@@ -98,6 +98,8 @@ func (f *contribFile) renderExtractors(parts []contribExtractor) string {
 	return f.extractorsName() + ".Chain(" + strings.Join(exprs, ", ") + ")"
 }
 
+// renderExtractor writes one extractor of the extractors package: a call of one of
+// its functions, or the function that takes a prefix off, written out.
 func (f *contribFile) renderExtractor(e contribExtractor) string {
 	pkg := f.extractorsName()
 	if e.strip == nil {

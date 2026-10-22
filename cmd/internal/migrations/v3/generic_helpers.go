@@ -93,7 +93,10 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 		generic := env.qual(helper.fn) + "[" + helper.typ + "]"
 		switch env.receiverKind(sel, stack, "Params") {
 		case ctxYes:
-			if call.Ellipsis.IsValid() || len(call.Args) == 0 {
+			// The getters that return one value take the same default values in v3, a
+			// slice spread included. ParamsInt does not: whether it returns an error
+			// depends on the number of defaults, which is only known when it runs.
+			if len(call.Args) == 0 || (call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt) {
 				noter.notef(sel.Pos(),
 					"%s was removed in Fiber v3 and takes its default values from a slice here: use %s(c, key, ...) by hand",
 					g.text(sel), generic)

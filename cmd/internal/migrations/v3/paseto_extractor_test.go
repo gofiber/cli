@@ -540,3 +540,37 @@ var _ = pasetoware.Config{
 	assert.Equal(t, original, readFile(t, file))
 	assert.Empty(t, out)
 }
+
+// v3 reports a token without the prefix as a missing one: the error that v2 had for
+// it is gone, and the references to it follow.
+func Test_MigratePasetoExtractor_ErrIncorrectTokenPrefix(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := writeTempFile(t, dir, pasetoConfigSource(`var _ = pasetoware.New(pasetoware.Config{
+	SymmetricKey: key,
+	ErrorHandler: func(c *fiber.Ctx, err error) error {
+		switch {
+		case err == pasetoware.ErrIncorrectTokenPrefix:
+			return c.SendStatus(fiber.StatusBadRequest)
+		case strings.Contains(err.Error(), "ErrIncorrectTokenPrefix"):
+			return c.SendStatus(fiber.StatusUnauthorized)
+		}
+		return err
+	},
+})
+
+var other = other.ErrIncorrectTokenPrefix`))
+
+	contribMigrate(t, dir, v3.MigratePasetoExtractor)
+
+	content := readFile(t, file)
+	contribRequireParses(t, content)
+	assert.Contains(t, content, "case err == pasetoware.ErrMissingToken:")
+	assert.Contains(t, content, `strings.Contains(err.Error(), "ErrIncorrectTokenPrefix")`, "a string is no reference")
+	assert.Contains(t, content, "var other = other.ErrIncorrectTokenPrefix", "another package is none of its business")
+
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "ErrIncorrectTokenPrefix does not exist in the v3 paseto module")
+}
