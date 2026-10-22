@@ -109,8 +109,11 @@ func handler(c fiber.Ctx) error {
 }
 `})
 
-	require.Len(t, notes, 1, "reported once per project: %v", notes)
-	assert.Contains(t, notes[0], "main.go:9: SendFile takes the file name literally in Fiber v3")
+	// The Download call also has the note of its Content-Disposition (review_behavior_http_test.go).
+	sendFile := reviewNotesWith(notes, "SendFile takes the file name literally in Fiber v3")
+	require.Len(t, sendFile, 1, "reported once per project: %v", notes)
+	assert.Contains(t, sendFile[0], "main.go:9: SendFile takes the file name literally in Fiber v3")
+	assert.Len(t, notes, 2, "%v", notes)
 }
 
 func Test_Review_LeavesValidV3Alone(t *testing.T) {
@@ -158,10 +161,11 @@ func main() {
 `})
 
 	// Valid v3 code leaves nothing over; the only entries are the behavior notes of the
-	// session and static middleware it uses.
-	require.Len(t, notes, 2, "%v", notes)
+	// client, session and static middleware it uses.
+	require.Len(t, notes, 3, "%v", notes)
 	assert.Contains(t, notes[0], "session: the default session ID is now a secure random token")
 	assert.Contains(t, notes[1], "static: a directory without an index file answers 404 instead of 403")
+	assert.Contains(t, notes[2], "client: errors of the transport are worded by the fasthttp that Fiber v3 requires")
 }
 
 func Test_Review_ClientCallsOnShadowedOrUnknownReceivers(t *testing.T) {
@@ -306,7 +310,8 @@ var _ = proxy.Config{}
 	require.Len(t, notes, 3, "a rule is reported once per project: %v", notes)
 	assert.Contains(t, notes, "b.go:4: limiter: SkipFailedRequests and SkipSuccessfulRequests now judge the status a request ends with, errors included; in v2 only the response status counted, which is still 200 when a handler returns an error, so such requests now count as failed.")
 	assert.Contains(t, notes, "a.go:5: logger: the default Format changed to \"[${time}] ${ip} ${status} - ${latency} ${method} ${path} ${error}\"; set Format to keep the v2 layout.")
-	assert.Contains(t, notes, "a.go:6: proxy: Fiber v3 refuses upstreams that resolve to loopback or private addresses (SSRF protection), so proxying to localhost or an internal host panics at startup or answers 500. Allow them with proxy.WithSecurityPolicy(proxy.SecurityPolicy{AllowPrivateIPs: true}) or Config.SecurityPolicy.")
+	proxyNotes := reviewNotesWith(notes, "a.go:6: proxy: Fiber v3 refuses upstreams that resolve to loopback or private addresses (SSRF protection), so proxying to localhost or an internal host panics at startup or answers 500. Allow them with proxy.WithSecurityPolicy(proxy.SecurityPolicy{AllowPrivateIPs: true}) or Config.SecurityPolicy.")
+	assert.Len(t, proxyNotes, 1, "%v", notes)
 }
 
 func Test_Review_StaticBehavior(t *testing.T) {

@@ -20,6 +20,11 @@ var ctxMimeRenames = map[string]string{
 	"MIMEApplicationJavaScript":            "MIMETextJavaScript",
 }
 
+// ctxMimeStaticHint is added to the note of the plain constant: the static handler
+// and c.Type("js") send the type with a charset, which no plain constant equals.
+const ctxMimeStaticHint = `; a .js file served by the static handler is "text/javascript; charset=utf-8", ` +
+	"which this constant does not equal: compare it with MIMETextJavaScriptCharsetUTF8"
+
 // MigrateMimeConstants renames the JavaScript media type constants of the fiber
 // package. Only the constants of the package are renamed, not strings, comments
 // or identifiers that merely contain the name.
@@ -67,9 +72,13 @@ func ctxMimeConstantsContent(content string, fi internal.FileInfo, run *ctxRun) 
 
 		if renamed, ok := ctxMimeRenames[sel.Sel.Name]; ok {
 			edits.replaceNode(g, sel.Sel, renamed)
+			hint := ""
+			if sel.Sel.Name == "MIMEApplicationJavaScript" {
+				hint = ctxMimeStaticHint
+			}
 			noter.oncef("mime-"+sel.Sel.Name, sel.Pos(),
-				"%s is now %s: the media type is text/javascript, it was application/javascript",
-				g.text(sel), renamed)
+				"%s is now %s: the media type is text/javascript, it was application/javascript%s",
+				g.text(sel), renamed, hint)
 		}
 		return true
 	})

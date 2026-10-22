@@ -141,8 +141,15 @@ func (rf *reviewFile) checkBehavior(content string) {
 			if err != nil || !rule.pkg.MatchString(importPath) {
 				continue
 			}
+			if rule.when != nil && !rule.when(rf) {
+				break
+			}
+			message := rule.message
+			if rule.tests {
+				message += rf.httptestNote()
+			}
 			rf.r.behaviorSeen[i] = true
-			rf.notef(spec.Pos(), "%s", rule.message)
+			rf.notef(spec.Pos(), "%s", message)
 			break
 		}
 	}
