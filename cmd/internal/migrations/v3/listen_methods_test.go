@@ -207,15 +207,29 @@ func main() {
 	apps[0].ListenTLS(":8443", "cert.pem", "key.pem")
 }
 `,
-		// not a file of the fiber API: ListenTLS is the name of some other method
+		// ListenTLS is the name of some other method, and of a function of another package
 		"other.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"sample/tlsutil"
+)
 
 type server struct{}
 
 func (server) ListenTLS(addr, cert, key string) {}
 
-func other(s server) { s.ListenTLS(":1", "c", "k") }
+func other(s server) {
+	s.ListenTLS(":1", "c", "k")
+	tlsutil.ListenTLS(":2", "c", "k")
+	_ = fiber.New
+}
 `,
+		"tlsutil/tlsutil.go": `package tlsutil
+
+func ListenTLS(addr, cert, key string) {}
+`,
+		"go.mod": "module sample\n",
 	})
 
 	appRun(t, dir, v3.MigrateListenMethods)
@@ -223,7 +237,9 @@ func other(s server) { s.ListenTLS(":1", "c", "k") }
 	main := appRead(t, dir, "main.go")
 	assert.Contains(t, main, `a.ListenTLS(":443", "cert.pem", "key.pem")`, "the receiver is a range variable: left alone")
 	assert.Contains(t, main, `apps[0].ListenTLS(":8443", "cert.pem", "key.pem")`, "an element of a slice is not followed either")
-	assert.Contains(t, appRead(t, dir, "other.go"), `s.ListenTLS(":1", "c", "k")`)
+	other := appRead(t, dir, "other.go")
+	assert.Contains(t, other, `s.ListenTLS(":1", "c", "k")`)
+	assert.Contains(t, other, `tlsutil.ListenTLS(":2", "c", "k")`)
 
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 2)

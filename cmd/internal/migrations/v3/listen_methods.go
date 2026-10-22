@@ -72,7 +72,7 @@ func appMigrateListenMethodsContent(ix *appIndex, content string, fi internal.Fi
 }
 
 // appNoteUnknownReceivers points at the calls of the removed methods whose
-// receiver is not known to be a fiber app, in a file that imports fiber: only
+// receiver has no type that can be told, in a file that imports fiber: only
 // fiber has these methods, so the call will not compile.
 func appNoteUnknownReceivers(f *appFile, known map[*ast.CallExpr]bool) {
 	if len(f.names) == 0 {
@@ -83,11 +83,19 @@ func appNoteUnknownReceivers(f *appFile, known map[*ast.CallExpr]bool) {
 		if !ok || known[call] {
 			return true
 		}
-		if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && slices.Contains(appTLSMethods, sel.Sel.Name) {
-			internal.Notef(f.fi, f.g.line(call.Pos()),
-				"%s was removed in v3 and the type of its receiver could not be determined: call Listen with a fiber.ListenConfig (CertFile, CertKeyFile, CertClientFile, TLSConfig)",
-				sel.Sel.Name)
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		if !isSel || !slices.Contains(appTLSMethods, sel.Sel.Name) {
+			return true
 		}
+		if id, isIdent := sel.X.(*ast.Ident); isIdent && f.importPathOf(id.Name) != "" {
+			return true // a function of some other package
+		}
+		if t, _ := f.valueType(sel.X, 0); t != nil {
+			return true // a value of a type that is known, and is not an app
+		}
+		internal.Notef(f.fi, f.g.line(call.Pos()),
+			"%s was removed in v3 and the type of its receiver could not be determined: call Listen with a fiber.ListenConfig (CertFile, CertKeyFile, CertClientFile, TLSConfig)",
+			sel.Sel.Name)
 		return true
 	})
 }
