@@ -236,6 +236,14 @@ func (b *ctxValueBuilder) allParams() ctxValue {
 	return ctxValue{results: "map[string]string", body: ctxAllParamsBody(b.recv.name, params, name)}
 }
 
+// download writes Download, which is a call of the Download of the module package
+// (shim is its name here): v3 sends the file without the byte ranges v2 served.
+func (b *ctxValueBuilder) download(shim string) ctxValue {
+	file, filename := b.name("file"), b.name("filename")
+	body := fmt.Sprintf("return %s.Download(%s, %s, %s...)", shim, b.recv.name, file, filename)
+	return ctxValue{params: []string{file + " " + ctxLitString, filename + " ..." + ctxLitString}, results: ctxLitError, body: body}
+}
+
 // sendFile writes SendFile: the compress flag moves into the config, which also
 // asks for the byte ranges v2 always served.
 func (b *ctxValueBuilder) sendFile() ctxValue {
