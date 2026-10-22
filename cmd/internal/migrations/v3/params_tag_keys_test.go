@@ -1,119 +1,165 @@
 package v3_test
 
 import (
-	"bytes"
-	"os"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
-func Test_MigrateParamsTagKeys_RewriteWithParserCalls(t *testing.T) {
+func Test_MigrateParamsTagKeys_Shapes(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mptagparser")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	ctxRunCases(t, v3.MigrateParamsTagKeys, []ctxCase{
+		{
+			name: "params becomes uri",
+			in: `package main
 
-	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
 
 type params struct {
-    ID string `+"`params:\"id\" json:\"id\"`"+`
+	ID   string §params:"id" json:"id"§
+	Slug string §json:"slug" params:"slug" validate:"required"§
 }
 
-func handler(c fiber.Ctx) error {
-    var p params
-    if err := c.ParamsParser(&p); err != nil {
-        return err
-    }
-    return nil
+func handler(c *fiber.Ctx) error {
+	var p params
+	return c.ParamsParser(&p)
 }
-`)
+`,
+			want: `package main
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateParamsTagKeys(cmd, dir, nil, nil))
+import "github.com/gofiber/fiber/v2"
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "c.ParamsParser(&p)")
-	assert.Contains(t, content, "`uri:\"id\" json:\"id\"`")
-	assert.NotContains(t, content, "`params:\"id\" json:\"id\"`")
-	assert.Contains(t, buf.String(), "Migrating params tag keys")
-}
-
-func Test_MigrateParamsTagKeys_RewriteForNonFiber(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("", "mptagnonfiber")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
-
-	file := writeTempFile(t, dir, `package main
 type params struct {
-    ID string `+"`params:\"id\"`"+`
+	ID   string §uri:"id" json:"id"§
+	Slug string §json:"slug" uri:"slug" validate:"required"§
 }
 
-type ctx struct{}
-func (ctx) ParamsParser(any) {}
-func handler(c ctx) {
-    var p params
-    c.ParamsParser(&p)
-}`)
+func handler(c *fiber.Ctx) error {
+	var p params
+	return c.ParamsParser(&p)
+}
+`,
+			msg: "Migrating struct tag keys of the parsers",
+		},
+		{
+			name: "reqHeader becomes header",
+			in: `package main
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateParamsTagKeys(cmd, dir, nil, nil))
+import "github.com/gofiber/fiber/v2"
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "c.ParamsParser(&p)")
-	assert.NotContains(t, content, "`params:\"id\"`")
-	assert.Contains(t, content, "`uri:\"id\"`")
-	assert.Contains(t, buf.String(), "Migrating params tag keys")
+type Headers struct {
+	Token string §reqHeader:"X-Token"§
+	ID    string §reqHeader:"X-Request-Id" json:"id"§
 }
 
-func Test_MigrateParamsTagKeys_RewriteWithoutParserCalls(t *testing.T) {
-	t.Parallel()
+func handler(c *fiber.Ctx) error {
+	var h Headers
+	return c.ReqHeaderParser(&h)
+}
+`,
+			want: `package main
 
-	dir, err := os.MkdirTemp("", "mptagonly")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+import "github.com/gofiber/fiber/v2"
 
-	file := writeTempFile(t, dir, `package main
-type params struct {
-    ID string `+"`params:\"id\" json:\"id\"`"+`
-}`)
-
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateParamsTagKeys(cmd, dir, nil, nil))
-
-	content := readFile(t, file)
-	assert.NotContains(t, content, "`params:\"id\" json:\"id\"`")
-	assert.Contains(t, content, "`uri:\"id\" json:\"id\"`")
-	assert.Contains(t, buf.String(), "Migrating params tag keys")
+type Headers struct {
+	Token string §header:"X-Token"§
+	ID    string §header:"X-Request-Id" json:"id"§
 }
 
-func Test_MigrateParamsTagKeys_NoChanges(t *testing.T) {
-	t.Parallel()
+func handler(c *fiber.Ctx) error {
+	var h Headers
+	return c.ReqHeaderParser(&h)
+}
+`,
+			msg: "Migrating struct tag keys of the parsers",
+		},
+		{
+			name: "interpreted string tags and nested structs",
+			in: `package main
 
-	dir, err := os.MkdirTemp("", "mptagnochange")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+type Input struct {
+	ID    string "params:\"id\""
+	Inner struct {
+		Agent string §reqHeader:"User-Agent"§
+	}
+	List []struct {
+		Name string §query:"name" params:"name"§
+	}
+}
+`,
+			want: `package main
 
-	file := writeTempFile(t, dir, `package main
-type params struct {
-    ID string `+"`uri:\"id\" json:\"id\"`"+`
-}`)
+type Input struct {
+	ID    string "uri:\"id\""
+	Inner struct {
+		Agent string §header:"User-Agent"§
+	}
+	List []struct {
+		Name string §query:"name" uri:"name"§
+	}
+}
+`,
+			msg: "Migrating struct tag keys of the parsers",
+		},
+		{
+			name: "only whole keys are renamed",
+			in: `package main
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateParamsTagKeys(cmd, dir, nil, nil))
+type Input struct {
+	A string §myparams:"a"§
+	B string §xreqHeader:"b"§
+	C string §json:"params:\"c\""§
+	D string §reqHeaderX:"d" params2:"d"§
+	E string §uri:"e" header:"E"§
+}
+`,
+		},
+		{
+			name: "a tag that has the new key already is reported",
+			in: `package main
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "`uri:\"id\" json:\"id\"`")
-	assert.NotContains(t, buf.String(), "Migrating params tag keys")
+type Input struct {
+	A string §params:"a" uri:"a"§
+	B string §reqHeader:"X-B" header:"X-C"§
+}
+`,
+			notes: []string{"main.go:4: the struct tag has a \"params\" and a \"uri\" key", "main.go:5: the struct tag has a \"reqHeader\" and a \"header\" key"},
+		},
+		{
+			name: "structs without any fiber import",
+			in: `package models
+
+type Params struct {
+	ID string §params:"id"§
+}
+
+type Headers struct {
+	Token string §reqHeader:"X-Token"§
+}
+`,
+			want: `package models
+
+type Params struct {
+	ID string §uri:"id"§
+}
+
+type Headers struct {
+	Token string §header:"X-Token"§
+}
+`,
+			msg: "Migrating struct tag keys of the parsers",
+		},
+		{
+			name: "nothing to rename",
+			in: `package main
+
+type Input struct {
+	ID    string §uri:"id" json:"id"§
+	Token string §header:"X-Token"§
+	Plain string
+}
+`,
+		},
+	})
 }

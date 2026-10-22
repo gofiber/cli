@@ -1,34 +1,86 @@
 package v3_test
 
 import (
-	"bytes"
-	"os"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
-func Test_MigrateMimeConstants(t *testing.T) {
+func Test_MigrateMimeConstants_Shapes(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mmimetest")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	ctxRunCases(t, v3.MigrateMimeConstants, []ctxCase{
+		{
+			name: "the JavaScript constants",
+			in: `package main
 
-	file := writeTempFile(t, dir, `package main
 import "github.com/gofiber/fiber/v2"
-const mime = fiber.MIMEApplicationJavaScript
-`)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateMimeConstants(cmd, dir, nil, nil))
+func handler(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJavaScriptCharsetUTF8)
+	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJavaScript)
+	return c.SendString("console.log(1)")
+}
+`,
+			want: `package main
 
-	content := readFile(t, file)
-	assert.NotContains(t, content, "MIMEApplicationJavaScript")
-	assert.Contains(t, content, "MIMETextJavaScript")
-	assert.Contains(t, buf.String(), "Migrating MIME constants")
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderContentType, fiber.MIMETextJavaScriptCharsetUTF8)
+	c.Set(fiber.HeaderContentType, fiber.MIMETextJavaScript)
+	return c.SendString("console.log(1)")
+}
+`,
+			msg:   "Migrating MIME constants",
+			notes: []string{"main.go:6: fiber.MIMEApplicationJavaScriptCharsetUTF8 is now MIMETextJavaScriptCharsetUTF8", "main.go:7: fiber.MIMEApplicationJavaScript is now MIMETextJavaScript"},
+		},
+		{
+			name: "aliased import and a note for each kind only once",
+			in: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+const a = f.MIMEApplicationJavaScript
+const b = f.MIMEApplicationJavaScript
+`,
+			want: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+const a = f.MIMETextJavaScript
+const b = f.MIMETextJavaScript
+`,
+			msg:   "Migrating MIME constants",
+			notes: []string{"main.go:5: f.MIMEApplicationJavaScript is now MIMETextJavaScript"},
+		},
+		{
+			name: "strings, comments and other names stay",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+// fiber.MIMEApplicationJavaScript is the old name
+const doc = "fiber.MIMEApplicationJavaScript"
+
+const MIMEApplicationJavaScriptLegacy = "application/javascript"
+
+var other = web.MIMEApplicationJavaScript
+
+func use(c *fiber.Ctx) { _ = MIMEApplicationJavaScriptLegacy }
+`,
+		},
+		{
+			name: "the other media types stay",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+const (
+	a = fiber.MIMEApplicationJSON
+	b = fiber.MIMETextJavaScript
+)
+`,
+		},
+	})
 }

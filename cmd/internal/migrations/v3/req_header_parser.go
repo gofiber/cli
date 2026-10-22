@@ -2,7 +2,6 @@ package v3
 
 import (
 	"fmt"
-	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -10,13 +9,12 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// MigrateReqHeaderParser turns c.ReqHeaderParser(&v) into c.Bind().Header(&v).
+// Only methods of a fiber context are rewritten. The reqHeader struct tag it
+// reads is renamed by MigrateParamsTagKeys.
 func MigrateReqHeaderParser(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	replacer := strings.NewReplacer(
-		".ReqHeaderParser(", ".Bind().Header(",
-	)
-
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		return replacer.Replace(content)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return ctxMigrateParserCalls(content, fi, []string{"ReqHeaderParser"})
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate ReqHeaderParser: %w", err)

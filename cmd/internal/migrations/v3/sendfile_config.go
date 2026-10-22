@@ -12,10 +12,14 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// ctxDownload is the Ctx method that sends a file as an attachment.
+const ctxDownload = "Download"
+
 // MigrateSendFileConfig turns the optional compress flag of Ctx.SendFile into
 // the SendFile config struct. v2 always served byte ranges, v3 only does with
 // ByteRange set, so the migrated calls set it to keep range requests (media
-// seeking, resumed downloads) working.
+// seeking, resumed downloads) working. Download has no config in v3 and so no
+// byte ranges either: it is reported.
 func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContentInfo(cwd, migrateSendFileContent)
 	if err != nil {
@@ -30,7 +34,7 @@ func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 }
 
 func migrateSendFileContent(content string, fi internal.FileInfo) string {
-	if !strings.Contains(content, "SendFile") {
+	if !strings.Contains(content, "SendFile") && !strings.Contains(content, ctxDownload) {
 		return content
 	}
 	names := fiberNames(content)
@@ -42,6 +46,8 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
+	env := newCtxEnv(g, names)
+	noter := newCtxNoter(fi, g)
 	var edits editSet
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -49,20 +55,34 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "SendFile" {
+		if !ok {
 			return true
 		}
 
-		if isFiberCtxExpr(sel.X, names, stack) {
-			rewriteSendFileCall(g, &edits, fi, call, names, stack)
-		} else if len(call.Args) == 2 && isBoolLiteral(call.Args[1]) {
-			internal.Notef(fi, g.line(call.Pos()),
-				"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s.SendFile{Compress: %s, ByteRange: true}",
-				g.text(call.Args[1]), names[0], g.text(call.Args[1]))
+		switch sel.Sel.Name {
+		case "SendFile":
+			switch env.ctxKindOf(sel.X, stack) {
+			case ctxYes:
+				rewriteSendFileCall(g, &edits, fi, call, names, stack)
+			case ctxUnknown:
+				if len(call.Args) == 2 && isBoolLiteral(call.Args[1]) {
+					internal.Notef(fi, g.line(call.Pos()),
+						"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s.SendFile{Compress: %s, ByteRange: true}",
+						g.text(call.Args[1]), names[0], g.text(call.Args[1]))
+				}
+			case ctxNo:
+			}
+		case ctxDownload:
+			if env.ctxKindOf(sel.X, stack) == ctxYes {
+				noter.oncef("download", sel.Pos(),
+					"%s no longer serves byte ranges (resumable downloads) in Fiber v3. Where that matters, call %s.Attachment(name), then %s.SendFile(path, %sSendFile{ByteRange: true})",
+					g.text(sel), g.text(sel.X), g.text(sel.X), env.qual(""))
+			}
 		}
 		return true
 	})
 
+	noter.flush()
 	return edits.apply(content)
 }
 
