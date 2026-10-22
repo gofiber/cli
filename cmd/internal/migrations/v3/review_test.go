@@ -157,9 +157,11 @@ func main() {
 }
 `})
 
-	// Valid v3 code leaves nothing over; the only entry is the behavior note of the static middleware.
-	require.Len(t, notes, 1, "%v", notes)
-	assert.Contains(t, notes[0], "static: a directory without an index file answers 404 instead of 403")
+	// Valid v3 code leaves nothing over; the only entries are the behavior notes of the
+	// session and static middleware it uses.
+	require.Len(t, notes, 2, "%v", notes)
+	assert.Contains(t, notes[0], "session: the default session ID is now a secure random token")
+	assert.Contains(t, notes[1], "static: a directory without an index file answers 404 instead of 403")
 }
 
 func Test_Review_ClientCallsOnShadowedOrUnknownReceivers(t *testing.T) {

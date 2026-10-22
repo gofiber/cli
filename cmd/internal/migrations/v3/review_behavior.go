@@ -65,6 +65,11 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: "requestid: the default ID is now a secure random token instead of a UUID; set Config.Generator to utils.UUIDv4 if something relies on the UUID format.",
 	},
 	{
+		pkg:     reviewMiddlewarePath("session"),
+		unless:  regexp.MustCompile(`\bKeyGenerator\b`),
+		message: "session: the default session ID is now a secure random token instead of a UUID; set Config.KeyGenerator to utils.UUIDv4 if something relies on the UUID format.",
+	},
+	{
 		pkg:     reviewMiddlewarePath("logger"),
 		unless:  regexp.MustCompile(`\bFormat:`),
 		message: `logger: the default Format changed to "[${time}] ${ip} ${status} - ${latency} ${method} ${path} ${error}"; set Format to keep the v2 layout.`,
