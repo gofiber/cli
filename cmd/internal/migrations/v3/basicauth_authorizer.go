@@ -36,7 +36,7 @@ const basicauthAuthorizerParams = 2
 // authorizerMigration is the state of the rewrite of one file.
 type authorizerMigration struct {
 	g          *goSource
-	fi         internal.FileInfo
+	rep        *mw1Reporter
 	fiber      string
 	edits      editSet
 	needsFiber bool
@@ -53,7 +53,7 @@ func migrateBasicauthAuthorizerContent(content string, fi internal.FileInfo) str
 		return content
 	}
 
-	m := &authorizerMigration{g: g, fi: fi}
+	m := &authorizerMigration{g: g, rep: newMW1Reporter(g, fi)}
 	m.fiber, m.needsFiber = mw1FiberName(content)
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		if lit, isConfig := mw1ConfigLit(n, names); isConfig {
@@ -66,10 +66,12 @@ func migrateBasicauthAuthorizerContent(content string, fi internal.FileInfo) str
 		return true
 	})
 
-	out := m.edits.apply(content)
+	applied := m.edits.apply(content)
+	out := applied
 	if m.usesFiber && m.needsFiber {
-		out = addImport(out, mw1FiberCoreImport)
+		out = mw1AddImport(out, mw1FiberCoreImport)
 	}
+	m.rep.flush(&m.edits, applied, out)
 	return out
 }
 
@@ -93,7 +95,7 @@ func (m *authorizerMigration) rewrite(e ast.Expr) {
 	case *ast.SelectorExpr:
 		m.wrap(e)
 	default:
-		internal.Notef(m.fi, m.g.line(e.Pos()),
+		m.rep.notef(e,
 			"the Authorizer of basicauth.Config takes the request context as a third argument in v3: wrap %s into a func(user, pass string, c %s.Ctx) bool",
 			m.g.text(e), m.fiber)
 	}

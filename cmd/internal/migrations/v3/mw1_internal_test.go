@@ -160,3 +160,100 @@ var _ = basicauth.Config{Users: map[string]string{"admin": "123456"}}
 	assert.NotContains(t, out, "crypto/sha256")
 	assert.NotContains(t, out, "encoding/base64")
 }
+
+func Test_migrateCSRFContent_AddsTheExtractorsImportNextToFiber(t *testing.T) {
+	t.Parallel()
+
+	out := migrateCSRFContent(`package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/csrf"
+)
+
+var _ fiber.Handler
+var _ = csrf.Config{KeyLookup: "header:X-Token", Expiration: time.Hour}
+`, mw1FileInfo(t))
+
+	assert.Contains(t, out, `"github.com/gofiber/fiber/v3/middleware/csrf"`+"\n\t"+`"github.com/gofiber/fiber/v3/extractors"`)
+}
+
+func Test_migrateCSRFContent_UsesTheAliasOfExtractors(t *testing.T) {
+	t.Parallel()
+
+	out := migrateCSRFContent(`package main
+
+import (
+	ex "github.com/gofiber/fiber/v3/extractors"
+	"github.com/gofiber/fiber/v3/middleware/csrf"
+)
+
+var _ = ex.FromHeader
+var _ = csrf.Config{KeyLookup: "header:X-Token"}
+`, mw1FileInfo(t))
+
+	assert.Contains(t, out, `Extractor: ex.FromHeader("X-Token")`)
+	assert.Equal(t, 1, strings.Count(out, "fiber/v3/extractors"))
+}
+
+func Test_migrateCSRFContent_NoImportWhenNothingUsesExtractors(t *testing.T) {
+	t.Parallel()
+
+	out := migrateCSRFContent(`package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3/middleware/csrf"
+)
+
+var _ = csrf.Config{Expiration: time.Hour}
+`, mw1FileInfo(t))
+
+	assert.NotContains(t, out, "extractors")
+}
+
+func Test_mw1AddImport(t *testing.T) {
+	t.Parallel()
+
+	const fiber = `"github.com/gofiber/fiber/v3"`
+	tests := []struct {
+		name string
+		src  string
+		path string
+		want string
+	}{
+		{
+			name: "next to the other Fiber imports",
+			src:  "package p\n\nimport (\n\t\"fmt\"\n\n\t" + fiber + " // core\n\t\"github.com/gofiber/utils/v2\"\n\n\t\"example.com/x\"\n)\n",
+			path: "github.com/gofiber/fiber/v3/extractors",
+			want: "package p\n\nimport (\n\t\"fmt\"\n\n\t" + fiber + " // core\n\t\"github.com/gofiber/utils/v2\"\n\t\"github.com/gofiber/fiber/v3/extractors\"\n\n\t\"example.com/x\"\n)\n",
+		},
+		{
+			name: "next to the standard library",
+			src:  "package p\n\nimport (\n\t\"fmt\"\n\n\t" + fiber + "\n)\n",
+			path: "strings",
+			want: "package p\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n\n\t" + fiber + "\n)\n",
+		},
+		{
+			name: "a group of its own for the standard library",
+			src:  "package p\n\nimport (\n\t" + fiber + "\n)\n",
+			path: "strings",
+			want: "package p\n\nimport (\n\t\"strings\"\n\n\t" + fiber + "\n)\n",
+		},
+		{
+			name: "a group of its own for Fiber",
+			src:  "package p\n\nimport (\n\t\"fmt\"\n)\n",
+			path: "github.com/gofiber/fiber/v3",
+			want: "package p\n\nimport (\n\t\"fmt\"\n\n\t" + fiber + "\n)\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, mw1AddImport(tt.src, tt.path))
+		})
+	}
+}

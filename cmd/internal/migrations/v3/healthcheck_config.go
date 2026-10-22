@@ -59,7 +59,7 @@ var hcRenamedMembers = map[string]string{
 type hcMigration struct {
 	g     *goSource
 	split map[*ast.CompositeLit]bool
-	fi    internal.FileInfo
+	rep   *mw1Reporter
 	fiber string
 	// renames holds the identifier edits. They are applied inside the text that
 	// is copied into a rewritten statement, and as edits of their own elsewhere.
@@ -82,7 +82,7 @@ func migrateHealthcheckContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	h := &hcMigration{g: g, fi: fi, names: names, split: map[*ast.CompositeLit]bool{}}
+	h := &hcMigration{g: g, rep: newMW1Reporter(g, fi), names: names, split: map[*ast.CompositeLit]bool{}}
 	h.fiber, h.needsFiber = mw1FiberName(content)
 	h.collectRenames()
 
@@ -97,15 +97,13 @@ func migrateHealthcheckContent(content string, fi internal.FileInfo) string {
 	})
 
 	h.reportLeftovers()
-
 	all := editSet{edits: append(slices.Clone(h.edits.edits), h.renames.edits...)}
-	if len(all.edits) == 0 {
-		return content
-	}
-	out := all.apply(content)
+	applied := all.apply(content)
+	out := applied
 	if h.needsFiber && h.usesFiberType() {
-		out = addImport(out, mw1FiberCoreImport)
+		out = mw1AddImport(out, mw1FiberCoreImport)
 	}
+	h.rep.flush(&all, applied, out)
 	return out
 }
 
@@ -274,7 +272,7 @@ func (h *hcMigration) variableHoldsNew(id *ast.Ident) bool {
 
 func (h *hcMigration) reportUnmigrated(at ast.Node, why string) {
 	pkg := h.names[0]
-	internal.Notef(h.fi, h.g.line(at.Pos()),
+	h.rep.notef(at,
 		"%s.New() was left as it is: %s. In v3 it answers every GET and HEAD request that reaches it, not only /livez and /readyz, "+
 			"so register one route per probe, app.Get(%s.LivenessEndpoint, %s.New(...)) and app.Get(%s.ReadinessEndpoint, %s.New(...))",
 		pkg, why, pkg, pkg, pkg, pkg)
@@ -759,7 +757,7 @@ func (h *hcMigration) reportLeftovers() {
 		if h.split[lit] {
 			continue
 		}
-		internal.Notef(h.fi, h.g.line(lit.Pos()),
+		h.rep.notef(lit,
 			"%s.Config has no LivenessProbe, ReadinessProbe, LivenessEndpoint or ReadinessEndpoint in v3, where each probe is a handler of its own with a single Probe: "+
 				"register app.Get(\"/live\", %s.New(%s.Config{Probe: ...})) for every probe (the literal was left as it is)",
 			pkg, pkg, pkg)

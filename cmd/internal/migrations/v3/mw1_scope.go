@@ -2,6 +2,7 @@ package v3
 
 import (
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"regexp"
 	"slices"
@@ -331,4 +332,83 @@ func mw1ImportName(src, path, name string) (ident string, add bool) {
 		}
 	}
 	return name, true
+}
+
+// mw1AddImport adds the import of path to src, next to the imports of the same
+// kind: the standard library, Fiber, other modules. goimports regroups what it
+// finds, but only after the migrations have run and without knowing about
+// packages that are not in the module cache yet.
+func mw1AddImport(src, path string) string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", src, parser.ImportsOnly)
+	if err != nil && file == nil {
+		return addImport(src, path)
+	}
+
+	var decl *ast.GenDecl
+	for _, d := range file.Decls {
+		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.IMPORT && gd.Lparen.IsValid() {
+			decl = gd
+			break
+		}
+	}
+	if decl == nil {
+		return addImport(src, path)
+	}
+
+	quoted := strconv.Quote(path)
+	kind := mw1ImportKind(path)
+	var neighbor *ast.ImportSpec
+	for _, spec := range decl.Specs {
+		imp, ok := spec.(*ast.ImportSpec)
+		if !ok {
+			continue
+		}
+		if p, err := strconv.Unquote(imp.Path.Value); err == nil && mw1ImportKind(p) == kind {
+			neighbor = imp
+		}
+	}
+
+	switch {
+	case neighbor != nil:
+		end := mw1LineEnd(src, fset.Position(neighbor.End()).Offset)
+		return src[:end] + "\n\t" + quoted + src[end:]
+	case len(decl.Specs) == 0:
+		open := fset.Position(decl.Lparen).Offset + 1
+		return src[:open] + "\n\t" + quoted + src[open:]
+	case kind == mw1StdImport:
+		// the standard library goes first, in a group of its own
+		first := fset.Position(decl.Specs[0].Pos()).Offset
+		return src[:first] + quoted + "\n\n\t" + src[first:]
+	}
+
+	// another group, after the others
+	end := mw1LineEnd(src, fset.Position(decl.Specs[len(decl.Specs)-1].End()).Offset)
+	return src[:end] + "\n\n\t" + quoted + src[end:]
+}
+
+// mw1LineEnd returns the offset of the end of the line that the offset is on.
+func mw1LineEnd(src string, offset int) int {
+	if nl := strings.IndexByte(src[offset:], '\n'); nl >= 0 {
+		return offset + nl
+	}
+	return len(src)
+}
+
+// The kinds of import, which goimports keeps in groups.
+const (
+	mw1StdImport = iota
+	mw1FiberImport
+	mw1OtherImport
+)
+
+func mw1ImportKind(path string) int {
+	first, _, _ := strings.Cut(path, "/")
+	switch {
+	case strings.HasPrefix(path, "github.com/gofiber/"):
+		return mw1FiberImport
+	case strings.Contains(first, "."):
+		return mw1OtherImport
+	}
+	return mw1StdImport
 }

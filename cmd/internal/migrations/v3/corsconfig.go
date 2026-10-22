@@ -72,7 +72,7 @@ func migrateCORSContent(content string, fi internal.FileInfo) string {
 
 	out := m.edits.apply(content)
 	if usedStrings && m.needsStrings {
-		out = addImport(out, "strings")
+		out = mw1AddImport(out, "strings")
 	}
 	return out
 }

@@ -51,7 +51,7 @@ const (
 // basicauthMigration is the state of the rewrite of one file.
 type basicauthMigration struct {
 	g           *goSource
-	fi          internal.FileInfo
+	rep         *mw1Reporter
 	consts      map[string]string
 	sha256Name  string
 	base64Name  string
@@ -71,7 +71,7 @@ func migrateBasicauthConfigContent(content string, fi internal.FileInfo) string 
 		return content
 	}
 
-	m := &basicauthMigration{g: g, fi: fi, consts: mw1StringConsts(g.file)}
+	m := &basicauthMigration{g: g, rep: newMW1Reporter(g, fi), consts: mw1StringConsts(g.file)}
 	m.sha256Name, m.needsSHA256 = mw1ImportName(content, "crypto/sha256", "sha256")
 	m.base64Name, m.needsBase64 = mw1ImportName(content, "encoding/base64", "base64")
 
@@ -84,15 +84,17 @@ func migrateBasicauthConfigContent(content string, fi internal.FileInfo) string 
 		return true
 	})
 
-	out := m.edits.apply(content)
+	applied := m.edits.apply(content)
+	out := applied
 	if m.usesSHA {
 		if m.needsSHA256 {
-			out = addImport(out, "crypto/sha256")
+			out = mw1AddImport(out, "crypto/sha256")
 		}
 		if m.needsBase64 {
-			out = addImport(out, "encoding/base64")
+			out = mw1AddImport(out, "encoding/base64")
 		}
 	}
+	m.rep.flush(&m.edits, applied, out)
 	return out
 }
 
@@ -145,7 +147,7 @@ func (m *basicauthMigration) assignment(as *ast.AssignStmt, field string, stack 
 			m.edits.replace(lineStart, end, "")
 			return
 		}
-		internal.Notef(m.fi, m.g.line(as.Pos()),
+		m.rep.notef(as,
 			"basicauth.Config has no %s in v3: remove this assignment (the username is read with basicauth.UsernameFromContext(c))", field)
 	}
 }
@@ -164,7 +166,7 @@ func (m *basicauthMigration) isLineStatement(as *ast.AssignStmt, stack []ast.Nod
 }
 
 func (m *basicauthMigration) reportPassword(at ast.Node) {
-	internal.Notef(m.fi, m.g.line(at.Pos()),
+	m.rep.notef(at,
 		"basicauth no longer stores the password in the request context, so ContextPassword was removed: "+
 			"if the application reads it back, keep it from the Authorizer(user, pass string, c fiber.Ctx)")
 }
