@@ -942,6 +942,196 @@ func main() {
 	assert.Empty(t, internal.DrainNotes(dir))
 }
 
+// The settings of an app that nothing can start are dropped, with a note.
+func Test_MigrateConfigListenerFields_DeadConstructors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		files map[string]string
+		// what the file lost or kept
+		gone  []string
+		kept  []string
+		notes int
+	}{
+		{
+			name: "an unexported function that nothing calls",
+			files: map[string]string{
+				"admin.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func newAdmin(port int) *fiber.App {
+	return fiber.New(fiber.Config{
+		AppName: "admin",
+		Network: fmt.Sprintf("tcp%d", 4),
+	})
+}
+`,
+				"main.go": "package main\n\nfunc main() {}\n",
+			},
+			gone: []string{"Network", "fmt"},
+			kept: []string{`AppName: "admin"`},
+		},
+		{
+			name: "an unexported method, a variable that is assigned in pieces",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type server struct{ debug bool }
+
+func (s *server) admin(port int) *fiber.App {
+	cfg := fiber.Config{AppName: "admin", Prefork: port > 1}
+	cfg.EnablePrintRoutes = s.debug
+	cfg.Network = "tcp4"
+	return fiber.New(cfg)
+}
+`,
+				"main.go": "package main\n\nfunc main() {}\n",
+			},
+			gone: []string{"Prefork", "EnablePrintRoutes", "Network"},
+			kept: []string{`cfg := fiber.Config{AppName: "admin"}`, "return fiber.New(cfg)"},
+		},
+		{
+			name: "a function that only calls itself",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newAdmin(depth int) *fiber.App {
+	if depth > 0 {
+		return newAdmin(depth - 1)
+	}
+	return fiber.New(fiber.Config{Prefork: true})
+}
+`,
+				"main.go": "package main\n\nfunc main() {}\n",
+			},
+			gone: []string{"Prefork"},
+			kept: []string{"fiber.New(fiber.Config{})"},
+		},
+		{
+			name: "a function the package calls",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newAdmin() *fiber.App {
+	return fiber.New(fiber.Config{Prefork: true})
+}
+`,
+				"main.go": "package main\n\nfunc main() { _ = newAdmin() }\n",
+			},
+			kept: []string{"Prefork: true"},
+		},
+		{
+			name: "a function a test of the package calls",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newAdmin() *fiber.App {
+	return fiber.New(fiber.Config{Prefork: true})
+}
+`,
+				"admin_test.go": "package main\n\nimport \"testing\"\n\nfunc TestAdmin(t *testing.T) { _ = newAdmin() }\n",
+				"main.go":       "package main\n\nfunc main() {}\n",
+			},
+			kept: []string{"Prefork: true"},
+		},
+		{
+			name: "an exported function",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func NewAdmin() *fiber.App {
+	return fiber.New(fiber.Config{Prefork: true})
+}
+`,
+				"main.go": "package main\n\nfunc main() {}\n",
+			},
+			kept: []string{"Prefork: true"},
+		},
+		{
+			name: "a value that needs a variable of the function",
+			files: map[string]string{
+				"admin.go": `package main
+
+import (
+	"os"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func newAdmin() *fiber.App {
+	network := os.Getenv("NETWORK")
+	return fiber.New(fiber.Config{Network: network, Prefork: true})
+}
+`,
+				"main.go": "package main\n\nfunc main() {}\n",
+			},
+			gone:  []string{"Prefork"},
+			kept:  []string{"Network: network"},
+			notes: 2, // the one that is dropped, the one that stays
+		},
+		{
+			name: "a package with a file that does not parse",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newAdmin() *fiber.App {
+	return fiber.New(fiber.Config{Prefork: true})
+}
+`,
+				"broken.go": "package main\n\nfunc broken( {\n",
+				"main.go":   "package main\n\nfunc main() {}\n",
+			},
+			kept: []string{"Prefork: true"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := appProject(t, tt.files)
+
+			_, notes := shimMigrate(t, dir)
+
+			content := appRead(t, dir, "admin.go")
+			for _, gone := range tt.gone {
+				assert.NotContains(t, content, gone)
+			}
+			for _, kept := range tt.kept {
+				assert.Contains(t, content, kept)
+			}
+			assert.NoFileExists(t, filepath.Join(dir, shimFile), "an app nothing starts needs no shim")
+			wantNotes := tt.notes
+			if wantNotes == 0 {
+				wantNotes = 1
+			}
+			assert.Len(t, notes, wantNotes, shimNotes(notes))
+			if len(tt.gone) > 0 {
+				assert.Contains(t, notes[0].Message, "dropped")
+				assert.Contains(t, notes[0].Message, "not started anywhere in the package")
+			}
+		})
+	}
+}
+
 // The edits of a literal that cannot be rebuilt stay out: nothing is changed.
 func Test_MigrateConfigListenerFields_Shim_LiteralThatCannotBeEdited(t *testing.T) {
 	t.Parallel()

@@ -810,6 +810,10 @@ func newApp() *fiber.App {
 	return fiber.New(fiber.Config{DisableStartupMessage: true})
 }
 `,
+		"main.go": `package main
+
+func main() { _ = newApp() }
+`,
 	})
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)

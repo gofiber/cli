@@ -238,14 +238,21 @@ func (src *appListenSource) hasLeftovers(ip appInPlace) bool {
 // returns why none could when it cannot.
 //
 // A setting moves to the call that starts the app. When that is not possible for
-// all of them, the settings stay with the app they belong to (see carry). Only when
-// that cannot be done either do the settings that can move move, and the others
-// stay with a note.
+// all of them, the settings stay with the app they belong to (see carry), or are
+// removed from an app that is never started (see dropDead). Only when neither can
+// be done do the settings that can move move, and the others stay with a note.
 func (pl *appPlanner) move(src *appListenSource) string {
 	ip := pl.moveInPlace(src)
 	if !src.hasLeftovers(ip) {
 		ip.apply()
 		return ip.reason
+	}
+
+	if ip.never {
+		if commit, _ := pl.dropDead(src); commit != nil {
+			commit()
+			return ip.reason
+		}
 	}
 
 	commit, refusal := pl.carry(src)
