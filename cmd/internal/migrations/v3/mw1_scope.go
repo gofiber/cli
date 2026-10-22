@@ -390,7 +390,8 @@ func mw1UsesName(root ast.Node, name string) bool {
 func mw1ImportName(src, path, name string) (ident string, add bool) {
 	re := regexp.MustCompile(`^` + regexp.QuoteMeta(path) + `$`)
 	for _, n := range importNames(src, re, name) {
-		if n != "." {
+		// a dot import and a blank import give the file no name to write
+		if n != "." && n != "_" {
 			return n, false
 		}
 	}

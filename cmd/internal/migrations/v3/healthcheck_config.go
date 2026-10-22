@@ -23,11 +23,18 @@ var mw1Healthcheck = newMW1Package("healthcheck")
 //	app.Use(healthcheck.New(healthcheck.Config{LivenessProbe: ..., ReadinessEndpoint: "/ready"}))
 //
 // which becomes one `Get` per probe, each with a config of its own. The rewrite
-// is limited to what the file imports from the healthcheck package; a config
-// that cannot be split safely is left as it is and reported.
+// is limited to what the file imports from the healthcheck package.
 //
 // A config that is declared in another file of the package than the Use call
 // that registers it is split where it is declared (see hcProject).
+//
+// A config that cannot be split (one that several routes share, that a function
+// returns or a struct keeps, that is a parameter, that another package declares or
+// exports, that the code completes after its declaration), a group, and a handler
+// that is kept in a variable or passed on keep the behavior of v2: the module
+// package holds the middleware of v2 (see healthcheck_shim.go), and the places of
+// the module that have such a value use it. Where the module cannot have the
+// package, the call stays as it is and is reported.
 func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	proj, err := planHealthcheck(cwd)
 	if err != nil {
@@ -35,6 +42,7 @@ func MigrateHealthcheckConfig(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	}
 
 	changed, err := internal.ChangeFileContentInfo(cwd, proj.migrate)
+	proj.reportShims()
 	if err != nil {
 		return fmt.Errorf("failed to migrate healthcheck configs: %w", err)
 	}
@@ -69,7 +77,9 @@ type hcMigration struct {
 	split map[*ast.CompositeLit]bool
 	rep   *mw1Reporter
 	// proj knows the other files of the package.
-	proj  *hcProject
+	proj *hcProject
+	// shim is set when the module package holds the middleware of v2 for this file.
+	shim  *hcShimFile
 	fiber string
 	// renames holds the identifier edits. They are applied inside the text that
 	// is copied into a rewritten statement, and as edits of their own elsewhere.
@@ -81,6 +91,8 @@ type hcMigration struct {
 	// split holds the ones that were taken apart.
 	v2Configs  []*ast.CompositeLit
 	needsFiber bool
+	// fiberUsed is set when a rename writes a type of the core package.
+	fiberUsed bool
 }
 
 // newHCMigration prepares the rewrite of a file that imports the healthcheck
@@ -89,6 +101,7 @@ func newHCMigration(proj *hcProject, g *goSource, fi internal.FileInfo, names []
 	h := &hcMigration{g: g, rep: newMW1Reporter(g, fi), proj: proj, fi: fi, names: names, split: map[*ast.CompositeLit]bool{}}
 	h.fiber, h.needsFiber = mw1FiberName(g.src)
 	h.collectRenames()
+	h.openShim()
 	return h
 }
 
@@ -122,6 +135,10 @@ func (p *hcProject) migrate(content string, fi internal.FileInfo) string {
 			h.strayNew(x, stack)
 		case *ast.CompositeLit:
 			h.collectV2Config(x)
+		case *ast.SelectorExpr:
+			if mw1IsMember(x, h.names, "New") && !hcIsCallee(x, stack) {
+				h.newAsValue(x, stack)
+			}
 		}
 		return true
 	})
@@ -130,24 +147,17 @@ func (p *hcProject) migrate(content string, fi internal.FileInfo) string {
 	all := editSet{edits: append(slices.Clone(h.edits.edits), h.renames.edits...)}
 	applied := all.apply(content)
 	out := applied
-	if h.needsFiber && h.usesFiberType() {
+	if h.needsFiber && h.fiberUsed {
 		out = mw1AddImport(out, mw1FiberCoreImport)
 	}
+	if h.shim != nil && h.shim.used && h.shim.add && hcUsesQualifier(applied, h.shim.name) {
+		out = mw1AddImport(out, h.shim.path)
+	}
+	out = h.dropOrphans(out)
 	if !p.planning {
 		h.rep.flush(&all, applied, out)
 	}
 	return out
-}
-
-// usesFiberType reports whether a rename introduced a reference to the core
-// fiber package.
-func (h *hcMigration) usesFiberType() bool {
-	for _, e := range h.renames.edits {
-		if strings.Contains(e.text, h.fiber+".") {
-			return true
-		}
-	}
-	return false
 }
 
 // collectRenames schedules the edits for the members of the package that were
@@ -170,12 +180,14 @@ func (h *hcMigration) collectRenames() {
 			h.renames.replaceNode(h.g, sel, h.probeType(stack, sel))
 		case "HealthCheckerHandler":
 			h.renames.replaceNode(h.g, sel, "func("+h.probeTypeText()+") "+h.fiber+".Handler")
+			h.fiberUsed = true
 		}
 		return true
 	})
 }
 
 func (h *hcMigration) probeTypeText() string {
+	h.fiberUsed = true
 	return "func(" + h.fiber + ".Ctx) bool"
 }
 
@@ -189,6 +201,34 @@ func (h *hcMigration) probeType(stack []ast.Node, sel *ast.SelectorExpr) string 
 		}
 	}
 	return text
+}
+
+// dropOrphans removes the import of the healthcheck package that the rewrite left
+// unused, as the code of the file only mentions the module package now. goimports
+// would do it after the migrations, but then the lines the notes carry would be
+// the lines of the text before the import went.
+func (h *hcMigration) dropOrphans(out string) string {
+	after, ok := parseSource(out)
+	if !ok {
+		return out
+	}
+	usedBefore, usedAfter := contribSelectorBases(h.g), contribSelectorBases(after)
+
+	var edits editSet
+	for _, spec := range after.file.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || !mw1Healthcheck.path.MatchString(importPath) {
+			continue
+		}
+		name := mw1Healthcheck.name
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		if name != "_" && name != "." && usedBefore[name] && !usedAfter[name] {
+			contribRemoveImport(after, &edits, spec)
+		}
+	}
+	return edits.apply(out)
 }
 
 // textOf returns the source text of n with the renames applied.
@@ -221,13 +261,13 @@ func (h *hcMigration) rewriteCall(call *ast.CallExpr, stack []ast.Node) bool {
 	}
 
 	idx := -1
+	var news []*ast.CallExpr
 	for i, arg := range call.Args {
-		if _, isNew := h.isNewCall(arg); isNew {
-			if idx >= 0 {
-				h.reportUnmigrated(call, "it registers several healthcheck handlers at once")
-				return true
+		if newCall, isNew := h.isNewCall(arg); isNew {
+			news = append(news, newCall)
+			if idx < 0 {
+				idx = i
 			}
-			idx = i
 		}
 	}
 	if idx < 0 {
@@ -235,8 +275,12 @@ func (h *hcMigration) rewriteCall(call *ast.CallExpr, stack []ast.Node) bool {
 		return false
 	}
 
-	if sel.Sel.Name == "Group" {
-		h.reportUnmigrated(call, "a group cannot hold the probes of v3")
+	switch {
+	case len(news) > 1:
+		h.refuseAll(call, news, stack, "it registers several healthcheck handlers at once")
+		return true
+	case sel.Sel.Name == appMethodGroup:
+		h.refuse(news[0], stack, "a group cannot hold the probes of v3")
 		return true
 	}
 	return h.rewriteUse(call, sel, idx, stack)
@@ -245,30 +289,44 @@ func (h *hcMigration) rewriteCall(call *ast.CallExpr, stack []ast.Node) bool {
 // routeMethods are the methods that register a handler on a path.
 var routeMethods = strings.Fields("Get Head Post Put Delete Patch Options Connect Trace All Add Query")
 
-// strayNew reports a healthcheck.New() that is neither registered on a route nor
-// kept in a variable, which Use reports where it registers it: the handler is
-// returned or passed on, and v3 will answer every GET it receives.
+// strayNew deals with a healthcheck.New() that is neither registered on a route nor
+// handed to Use or Group, which those deal with where they register it: the handler
+// is kept in a variable, returned or passed on, and v3 would answer every GET it
+// receives. It moves to the middleware of v2 in the module package, or is reported.
 func (h *hcMigration) strayNew(call *ast.CallExpr, stack []ast.Node) {
 	if _, isNew := h.isNewCall(call); !isNew || len(stack) == 0 {
 		return
 	}
 
-	switch parent := stack[len(stack)-1].(type) {
+	switch stack[len(stack)-1].(type) {
 	case *ast.AssignStmt, *ast.ValueSpec:
-		return
-	case *ast.CallExpr:
-		// app.Get(path, healthcheck.New()), the form of v3
-		if sel, ok := parent.Fun.(*ast.SelectorExpr); ok && slices.Contains(routeMethods, sel.Sel.Name) && len(parent.Args) > 1 && parent.Args[0] != ast.Expr(call) {
-			return
+		// a Use that registers the variable reports it; a module with the
+		// middleware of v2 has the handler of v2 in the variable
+		if !h.hasV3Config(call) {
+			h.useShim([]*ast.CallExpr{call}, stack, "the handler is kept in a variable")
 		}
+		return
 	}
-	h.reportUnmigrated(call, "it is not registered on a route here")
+
+	if h.inRoute(call, stack) {
+		// app.Get(path, healthcheck.New()), the form of v3, unless it is given the
+		// config of v2
+		if h.hasV2Config(call) {
+			h.useShim([]*ast.CallExpr{call}, stack, "its config has fields of v2")
+		}
+		return
+	}
+	if h.hasV3Config(call) {
+		h.reportUnmigrated(call, "it is not registered on a route here")
+		return
+	}
+	h.refuse(call, stack, "it is not registered on a route here")
 }
 
 // reportHandlerVariable reports a Use that registers a variable holding the
 // result of healthcheck.New.
 func (h *hcMigration) reportHandlerVariable(call *ast.CallExpr, sel *ast.SelectorExpr) {
-	if sel.Sel.Name != "Use" {
+	if sel.Sel.Name != nameUse || h.shim != nil || h.proj.planning {
 		return
 	}
 	for _, arg := range call.Args {
@@ -311,6 +369,23 @@ func (h *hcMigration) variableHoldsNew(id *ast.Ident) bool {
 		return !found
 	})
 	return found
+}
+
+// newAsValue deals with a reference to healthcheck.New that is not a call, such as
+// a function value: the calls that go through it cannot be found, so they cannot be
+// taken apart. A module with the middleware of v2 has already moved the reference.
+func (h *hcMigration) newAsValue(sel *ast.SelectorExpr, stack []ast.Node) {
+	if !h.useShim(nil, stack, "") {
+		h.reportUnmigrated(sel, "it is used as a value, so its calls cannot be found")
+	}
+}
+
+// refuseAll is refuse for the several calls of a statement; the note of a call that
+// stays belongs to the statement.
+func (h *hcMigration) refuseAll(at ast.Node, calls []*ast.CallExpr, stack []ast.Node, why string) {
+	if !h.useShim(calls, stack, why) {
+		h.reportUnmigrated(at, why)
+	}
 }
 
 func (h *hcMigration) reportUnmigrated(at ast.Node, why string) {
@@ -366,7 +441,7 @@ func (h *hcMigration) rewriteUse(call *ast.CallExpr, sel *ast.SelectorExpr, idx 
 
 	prefix, handlersFrom, ok := h.prefixOf(call, idx, stack)
 	if !ok {
-		h.reportUnmigrated(call, "its first argument may be a path or a handler")
+		h.refuseAll(call, []*ast.CallExpr{newCall}, stack, "its first argument may be a path or a handler")
 		return true
 	}
 
@@ -563,14 +638,14 @@ func (h *hcMigration) configOf(newCall *ast.CallExpr, stack []ast.Node) (cfg hcC
 		return cfg, split, true
 	case 1:
 	default:
-		h.reportUnmigrated(newCall, "it is called with more than one config")
+		h.refuse(newCall, stack, "it is called with more than one config")
 		return cfg, split, false
 	}
 
 	switch arg := newCall.Args[0].(type) {
 	case *ast.CompositeLit:
 		if _, isConfig := mw1ConfigLit(arg, h.names); !isConfig {
-			h.reportUnmigrated(newCall, "its config is not a healthcheck.Config literal")
+			h.refuse(newCall, stack, "its config is not a healthcheck.Config literal")
 			return cfg, split, false
 		}
 		cfg, ok = h.parseConfig(arg)
@@ -582,7 +657,7 @@ func (h *hcMigration) configOf(newCall *ast.CallExpr, stack []ast.Node) (cfg hcC
 		return h.variableConfig(newCall, arg, stack)
 	}
 
-	h.reportUnmigrated(newCall, "its config is not a literal")
+	h.refuse(newCall, stack, "its config is not a literal")
 	return cfg, split, false
 }
 
@@ -682,17 +757,21 @@ func hcConfigLiteral(pkg string, cfg hcConfig, probe hcProbe, override string) s
 func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack []ast.Node) (cfg hcConfig, split hcSplit, ok bool) {
 	d, found := resolveIdent(id.Name, id.Pos(), stack)
 	if !found {
-		dh, lit, why := h.packageDeclaration(id.Name)
-		if lit == nil {
-			h.reportUnmigrated(newCall, "its config "+id.Name+" "+why)
+		pd := h.packageDeclaration(id.Name)
+		if pd.lit == nil {
+			if pd.unreadable {
+				h.reportUnmigrated(newCall, "its config "+id.Name+" "+pd.why)
+			} else {
+				h.refuse(newCall, stack, "its config "+id.Name+" "+pd.why)
+			}
 			return cfg, split, false
 		}
-		return h.splitVariable(newCall, id, dh, lit, stack)
+		return h.splitVariable(newCall, id, pd.host, pd.lit, stack)
 	}
 
 	lit, isLit := d.init.(*ast.CompositeLit)
 	if !isLit {
-		h.reportUnmigrated(newCall, "its config "+id.Name+" is not declared next to it")
+		h.refuse(newCall, stack, "its config "+id.Name+" is not declared next to it")
 		return cfg, split, false
 	}
 	return h.splitVariable(newCall, id, h, lit, stack)
@@ -708,7 +787,14 @@ func (h *hcMigration) splitVariable(newCall *ast.CallExpr, id *ast.Ident, dh *hc
 	if dh != h {
 		subject += " (declared in " + h.relPath(dh.fi.Path) + ")"
 	}
+	// refuse moves the call to the middleware of v2 when the module has it; keep
+	// leaves the call, because the config is not one that the module package could
+	// take
 	refuse := func(why string) (hcConfig, hcSplit, bool) {
+		h.refuse(newCall, stack, subject+" "+why)
+		return hcConfig{}, hcSplit{}, false
+	}
+	keep := func(why string) (hcConfig, hcSplit, bool) {
 		h.reportUnmigrated(newCall, subject+" "+why)
 		return hcConfig{}, hcSplit{}, false
 	}
@@ -718,7 +804,7 @@ func (h *hcMigration) splitVariable(newCall *ast.CallExpr, id *ast.Ident, dh *hc
 	}
 	parsed, valid := dh.parseConfig(lit)
 	if !valid {
-		return refuse("has fields it does not know")
+		return keep("has fields it does not know")
 	}
 
 	// whoever else can mention the variable: a variable of the package is visible
@@ -730,7 +816,7 @@ func (h *hcMigration) splitVariable(newCall *ast.CallExpr, id *ast.Ident, dh *hc
 	}
 	for _, src := range sources {
 		if field := hcAssignedV2Field(src, name); field != "" {
-			return refuse("gets " + field + " assigned after its declaration and has to be split by hand")
+			return refuse("gets " + field + " assigned after its declaration" + hcByHand)
 		}
 	}
 	if !hasV2OnlyField(lit) {
@@ -744,13 +830,13 @@ func (h *hcMigration) splitVariable(newCall *ast.CallExpr, id *ast.Ident, dh *hc
 	}
 	switch {
 	case count != 2:
-		return refuse("is used in more places than this one and has to be split by hand")
+		return refuse("is used in more places than this one" + hcByHand)
 	case packageLevel && ast.IsExported(name) && h.g.file.Name.Name != "main":
-		return refuse("is exported and may be used by other packages, so it has to be split by hand")
+		return refuse("is exported and may be used by other packages" + hcByHand)
 	}
 	if dh != h {
 		if _, visited := h.proj.files[dh.fi.Path]; !visited {
-			return refuse("is in a file that is left out of the migration")
+			return keep("is in a file that is left out of the migration")
 		}
 	}
 
@@ -909,6 +995,9 @@ func (h *hcMigration) splitDeclaration(lit *ast.CompositeLit, cfg hcConfig, read
 		return func() {
 			h.split[lit] = true
 			h.edits.replaceNode(h.g, lit, liveText)
+			if p.Type != nil {
+				h.dropRename(p.Type)
+			}
 			if gd.Lparen.IsValid() {
 				end := h.g.offset(p.End())
 				h.edits.replace(end, end, "\n"+readiness+typ+" = "+readyText(p.Names[0].Name))
@@ -933,6 +1022,9 @@ func (h *hcMigration) collectV2Config(lit *ast.CompositeLit) {
 // apart. A literal that belongs to a rewritten Use call is not visited, its
 // children are skipped.
 func (h *hcMigration) reportLeftovers() {
+	if h.shim != nil {
+		return // the literals name the config of the module package
+	}
 	pkg := h.names[0]
 	for _, lit := range h.v2Configs {
 		if h.split[lit] {

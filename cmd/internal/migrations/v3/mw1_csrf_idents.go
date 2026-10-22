@@ -9,7 +9,7 @@ import (
 )
 
 // csrfExtractorHelpers are the helpers of v2 that moved to the extractors
-// package. CsrfFromCookie is not among them, see selector.
+// package. CsrfFromCookie is not among them, see cookieHelper.
 var csrfExtractorHelpers = map[string]string{
 	"CsrfFromHeader": nameFromHeader,
 	"CsrfFromForm":   nameFromForm,
@@ -46,18 +46,9 @@ func (m *csrfMigration) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 
 	switch {
 	case name == "CsrfFromCookie":
-		m.notef(sel, "csrf.CsrfFromCookie is gone in v3, which panics when the extractor reads the CSRF cookie: read the token from a header or from a form field (extractors.FromHeader, extractors.FromForm)")
+		m.cookieHelper(sel, stack)
 	case csrfExtractorHelpers[name] != "":
-		m.edits.replaceNode(m.g, sel, m.extractorsName+"."+csrfExtractorHelpers[name])
-		m.usesExtractors = true
-		// the helper of v2 returned a function that was called with the context
-		if len(stack) > 0 {
-			if call, isCall := stack[len(stack)-1].(*ast.CallExpr); isCall && call.Fun == ast.Expr(sel) && len(stack) > 1 {
-				if outer, outerCall := stack[len(stack)-2].(*ast.CallExpr); outerCall && outer.Fun == ast.Expr(call) {
-					m.edits.replace(m.g.offset(call.End()), m.g.offset(call.End()), ".Extract")
-				}
-			}
-		}
+		m.renameHelper(sel, csrfExtractorHelpers[name], stack)
 	case slices.Contains(csrfMissingTokenErrors, name):
 		if m.insideCustomExtractor(stack) {
 			m.edits.replaceNode(m.g, sel, m.extractorsName+".ErrNotFound")
@@ -72,6 +63,121 @@ func (m *csrfMigration) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	case name == nameCSRFHandler:
 		m.handlerType(sel, stack)
 	}
+}
+
+// renameHelper replaces a helper of v2 with the extractor of v3 that does the
+// same.
+func (m *csrfMigration) renameHelper(sel *ast.SelectorExpr, extractor string, stack []ast.Node) {
+	m.edits.replaceNode(m.g, sel, m.extractorsName+"."+extractor)
+	m.usesExtractors = true
+	// the helper of v2 returned a function that was called with the context
+	if len(stack) > 0 {
+		if call, isCall := stack[len(stack)-1].(*ast.CallExpr); isCall && call.Fun == ast.Expr(sel) && len(stack) > 1 {
+			if outer, outerCall := stack[len(stack)-2].(*ast.CallExpr); outerCall && outer.Fun == ast.Expr(call) {
+				m.edits.replace(m.g.offset(call.End()), m.g.offset(call.End()), ".Extract")
+			}
+		}
+	}
+}
+
+// csrfDefaultCookieName is the name v2 and v3 give the CSRF cookie.
+const csrfDefaultCookieName = "csrf_"
+
+// cookieHelper migrates csrf.CsrfFromCookie(name). v2 compared the token that an
+// extractor returned with the CSRF cookie (Config.CookieName), so a helper that
+// reads that very cookie compared it with itself, and v3 refuses to build such a
+// config. A helper that reads another cookie is extractors.FromCookie, which
+// compares the two cookies the way v2 did.
+func (m *csrfMigration) cookieHelper(sel *ast.SelectorExpr, stack []ast.Node) {
+	var call *ast.CallExpr
+	if len(stack) > 0 {
+		if c, isCall := stack[len(stack)-1].(*ast.CallExpr); isCall && c.Fun == ast.Expr(sel) {
+			call = c
+		}
+	}
+
+	if call != nil && len(call.Args) == 1 {
+		if arg, isLiteral := mw1StringLiteral(call.Args[0]); isLiteral {
+			if cookie, known := m.configCookieName(stack); known && arg == cookie {
+				m.notef(sel, "csrf.CsrfFromCookie(%q) reads the CSRF cookie itself, which v3 refuses (csrf.New panics): v2 compared the token with the cookie it came from, "+
+					"so the check could not reject a request that carried the cookie and browsers attach that cookie to cross-site requests on their own. "+
+					"Read the token from a header or a form field instead, with extractors.FromHeader(\"X-Csrf-Token\") or extractors.FromForm(\"_csrf\"), "+
+					"and put csrf.TokenFromContext(c) into it (or let the client copy the cookie into it) (left as it is)", arg)
+				return
+			}
+		}
+	}
+	m.renameHelper(sel, "FromCookie", stack)
+}
+
+// configCookieName returns the name that the csrf.Config literal around the
+// Extractor field being rewritten gives to the CSRF cookie. known is false when
+// the helper is not the value of an Extractor field, or the name is not a string
+// literal.
+func (m *csrfMigration) configCookieName(stack []ast.Node) (name string, known bool) {
+	// ... CompositeLit, KeyValueExpr(Extractor), CallExpr, [selector]
+	if len(stack) < 3 {
+		return "", false
+	}
+	kv, isKV := stack[len(stack)-2].(*ast.KeyValueExpr)
+	if !isKV || !isIdentNamed(kv.Key, csrfExtractor) {
+		return "", false
+	}
+	cfg, isLit := stack[len(stack)-3].(*ast.CompositeLit)
+	if !isLit {
+		return "", false
+	}
+	if _, isConfig := mw1ConfigLit(cfg, m.names); !isConfig {
+		return "", false
+	}
+	return csrfCookieName(cfg)
+}
+
+// csrfCookieName returns the name of the CSRF cookie of a csrf.Config literal as
+// v2 resolved it: the default, CookieName, and the Name of the deprecated Cookie
+// over both.
+func csrfCookieName(cfg *ast.CompositeLit) (name string, known bool) {
+	name = csrfDefaultCookieName
+	for _, elt := range cfg.Elts {
+		kv, isKV := elt.(*ast.KeyValueExpr)
+		if !isKV {
+			continue
+		}
+		switch {
+		case isIdentNamed(kv.Key, "CookieName"):
+			value, isLiteral := mw1StringLiteral(kv.Value)
+			if !isLiteral {
+				return "", false
+			}
+			if value != "" {
+				name = value
+			}
+		case isIdentNamed(kv.Key, csrfCookie):
+			// Cookie: &fiber.Cookie{Name: "..."}
+			value := kv.Value
+			if un, isUnary := value.(*ast.UnaryExpr); isUnary && un.Op == token.AND {
+				value = un.X
+			}
+			cookie, isLit := value.(*ast.CompositeLit)
+			if !isLit {
+				return "", false
+			}
+			for _, field := range cookie.Elts {
+				fkv, isFieldKV := field.(*ast.KeyValueExpr)
+				if !isFieldKV || !isIdentNamed(fkv.Key, "Name") {
+					continue
+				}
+				value, isLiteral := mw1StringLiteral(fkv.Value)
+				if !isLiteral {
+					return "", false
+				}
+				if value != "" {
+					name = value
+				}
+			}
+		}
+	}
+	return name, true
 }
 
 // insideCustomExtractor reports whether one of the ancestors is a function that

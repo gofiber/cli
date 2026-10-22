@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -63,6 +65,57 @@ func mw1RunFiles(t *testing.T, migrate mw1Migration, files map[string]string) mw
 	return res
 }
 
+// mw1Module is what a migration did to a project that has a go.mod.
+type mw1Module struct {
+	// added are the Go files the migration wrote that the project did not have, by
+	// path below the project.
+	added map[string]string
+	mw1Result
+}
+
+// mw1RunModule is mw1RunFiles for a project in the module example.com/app, which
+// the migrations that add a file to the module package need. The files may bring
+// their own go.mod.
+func mw1RunModule(t *testing.T, migrate mw1Migration, files map[string]string) mw1Module {
+	t.Helper()
+
+	withMod := map[string]string{"go.mod": "module example.com/app\n\ngo 1.25\n"}
+	maps.Copy(withMod, files)
+
+	dir := t.TempDir()
+	for name, content := range withMod {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, migrate(mw1Cmd(&buf), dir, nil, nil))
+
+	res := mw1Module{mw1Result: mw1Result{files: map[string]string{}, stdout: buf.String()}, added: map[string]string{}}
+	require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		require.NoError(t, relErr)
+		rel = filepath.ToSlash(rel)
+		data, readErr := os.ReadFile(path) // #nosec G304 -- a test fixture
+		require.NoError(t, readErr)
+		if _, given := files[rel]; given {
+			res.files[rel] = string(data)
+			assert.Empty(t, mw1MissingImports(string(data)), "%s uses a package that it does not import", rel)
+		} else if strings.HasSuffix(rel, ".go") {
+			res.added[rel] = string(data)
+		}
+		return nil
+	}))
+	for _, n := range internal.DrainNotes(dir) {
+		res.notes = append(res.notes, n.String())
+	}
+	return res
+}
+
 // mw1Run runs the migration over a single main.go.
 func mw1Run(t *testing.T, migrate mw1Migration, src string) mw1Result {
 	t.Helper()
@@ -91,7 +144,7 @@ func mw1LineOf(t *testing.T, src, needle string) int {
 
 // mw1Packages are the packages whose qualifiers the migrations write into the
 // code they produce.
-var mw1Packages = strings.Fields("extractors fiber strings time os fs sha256 base64 healthcheck csrf basicauth cors cache encryptcookie envvar favicon")
+var mw1Packages = strings.Fields("extractors fiber strings time os fs sha256 base64 healthcheck csrf basicauth cors cache encryptcookie envvar favicon fibermigrate")
 
 var mw1VersionElement = regexp.MustCompile(`^v[0-9]+$`)
 

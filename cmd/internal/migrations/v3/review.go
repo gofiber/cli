@@ -204,7 +204,12 @@ func (rf *reviewFile) checkLiteral(lit *ast.CompositeLit) {
 		if !ok || !slices.Contains(removed, key.Name) {
 			continue
 		}
-		rf.notef(key.Pos(), "%s.%s has no %s field in Fiber v3%s", alias, sel.Sel.Name, key.Name, reviewHint(importPath+"."+sel.Sel.Name+"."+key.Name))
+		hint := reviewHint(importPath + "." + sel.Sel.Name + "." + key.Name)
+		if importPath == reviewV3Prefix+"middleware/csrf" && csrfLookupSource(kv.Value) == csrfCookieSource {
+			// the extractors package has no equivalent that v3 accepts
+			hint = ": a lookup of a cookie is the CSRF cookie itself, which v3 refuses; send the token in a header or a form field"
+		}
+		rf.notef(key.Pos(), "%s.%s has no %s field in Fiber v3%s", alias, sel.Sel.Name, key.Name, hint)
 	}
 }
 
