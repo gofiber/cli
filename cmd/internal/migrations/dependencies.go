@@ -104,12 +104,19 @@ func MigrateDependencies(cmd *cobra.Command, cwd string, current map[string]map[
 	if err != nil {
 		return fmt.Errorf("update go.mod files: %w", err)
 	}
+	workChanged, err := gomod.SyncWork(cwd)
+	if err != nil {
+		return fmt.Errorf("update go.work files: %w", err)
+	}
 
 	if depsChanged {
 		cmd.Println("Updating dependency versions")
 	}
 	if goRaised {
 		cmd.Printf("Ensuring go version >= %s\n", fiberGo)
+	}
+	if workChanged {
+		cmd.Println(workVersionMessage)
 	}
 	return nil
 }

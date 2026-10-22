@@ -172,7 +172,7 @@ func (m *storageMigration) unknown(f *gomod.File, r *modfile.Require) {
 	switch {
 	case err != nil:
 		note("%s is not in the CLI's list of storage modules and the module proxy could not be asked (%v): make sure %s implements the *WithContext methods of fiber.Storage, `go get %s@latest` gets a release that does.",
-			r.Mod.Path, err, r.Mod.Version, r.Mod.Path)
+			r.Mod.Path, err, r.Mod.Path+" "+r.Mod.Version, r.Mod.Path)
 	case info.published.Before(storageWithContextRelease) && info.latest != "" && xsemver.Compare(info.latest, r.Mod.Version) > 0:
 		f.SetRequire(r, r.Mod.Path, info.latest)
 	case info.published.Before(storageWithContextRelease):

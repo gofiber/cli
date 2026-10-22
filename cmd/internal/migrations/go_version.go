@@ -26,6 +26,9 @@ var fiberGoVersions = []struct{ since, goVersion string }{
 	{since: "3.6.0", goVersion: "1.26.0"},
 }
 
+// workVersionMessage is printed when the go line of a workspace was raised.
+const workVersionMessage = "Ensuring the go version of go.work is not behind its modules"
+
 // reFiberCore matches the module path of the core fiber module at any major.
 var reFiberCore = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
 
@@ -44,7 +47,9 @@ func minimumGoVersion(target *semver.Version) string {
 }
 
 // MigrateGoVersion raises the go directive of every module that requires Fiber
-// to the Go version the target release needs. A newer directive is kept.
+// to the Go version the target release needs. A newer directive is kept. The go
+// line of a workspace that uses such a module follows, the go command refuses a
+// workspace that is behind one of its modules.
 func MigrateGoVersion(cmd *cobra.Command, cwd string, _, target *semver.Version) error {
 	minimum := minimumGoVersion(target)
 	if minimum == "" {
@@ -60,8 +65,15 @@ func MigrateGoVersion(cmd *cobra.Command, cwd string, _, target *semver.Version)
 	if err != nil {
 		return fmt.Errorf("raise go version: %w", err)
 	}
+	workChanged, err := gomod.SyncWork(cwd)
+	if err != nil {
+		return fmt.Errorf("raise go version of the workspace: %w", err)
+	}
 	if changed {
 		cmd.Printf("Ensuring go version >= %s\n", minimum)
+	}
+	if workChanged {
+		cmd.Println(workVersionMessage)
 	}
 	return nil
 }

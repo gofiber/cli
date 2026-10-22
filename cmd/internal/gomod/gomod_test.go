@@ -405,3 +405,33 @@ func Test_File_RaiseGo_CRLFInsertion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "module a\r\n\r\ngo 1.26.0\r\n\r\nrequire github.com/google/uuid v1.6.0\r\n", read(t, path))
 }
+
+func Test_SyncWork(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	write(t, dir, "svc/a/go.mod", "module example.com/mono/svc/a\n\ngo 1.26.0\n")
+	write(t, dir, "svc/b/go.mod", "module example.com/mono/svc/b\n\ngo 1.24\n")
+	write(t, dir, "tools/go.mod", "module example.com/mono/tools\n\ngo 1.21\n")
+	work := write(t, dir, "go.work", "go 1.25.0\n\ntoolchain go1.25.4\n\nuse (\n\t./svc/a // the api\n\t./svc/b\n\t./missing\n)\n")
+	older := write(t, dir, "tools/go.work", "go 1.20\n\nuse ./\n")
+	same := write(t, dir, "svc/b/go.work", "go 1.30.0\n\nuse ./\n")
+	broken := write(t, dir, "testdata/go.work", "go 1.20 1.21 1.22\n")
+
+	changed, err := gomod.SyncWork(dir)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	assert.Equal(t, "go 1.26.0\n\nuse (\n\t./svc/a // the api\n\t./svc/b\n\t./missing\n)\n", read(t, work), "the workspace follows its highest module; the older toolchain line goes")
+	assert.Equal(t, "go 1.21\n\nuse ./\n", read(t, older))
+	assert.Equal(t, "go 1.30.0\n\nuse ./\n", read(t, same), "a newer workspace is kept")
+	assert.Equal(t, "go 1.20 1.21 1.22\n", read(t, broken))
+
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Equal(t, "testdata/go.work", notes[0].File)
+
+	again, err := gomod.SyncWork(dir)
+	require.NoError(t, err)
+	assert.False(t, again, "idempotent")
+}

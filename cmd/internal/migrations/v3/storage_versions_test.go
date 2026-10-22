@@ -448,7 +448,7 @@ func Test_MigrateStorageVersions_ModulesTheTableDoesNotList(t *testing.T) {
 			err:     errImportsNoProxy,
 			wantMod: "github.com/gofiber/storage/newdb v1.1.0",
 			wantNotes: []string{
-				"go.mod:3: github.com/gofiber/storage/newdb is not in the CLI's list of storage modules and the module proxy could not be asked (no module proxy is configured (GOPROXY is off)): make sure v1.1.0 implements the *WithContext methods of fiber.Storage, `go get github.com/gofiber/storage/newdb@latest` gets a release that does.",
+				"go.mod:3: github.com/gofiber/storage/newdb is not in the CLI's list of storage modules and the module proxy could not be asked (no module proxy is configured (GOPROXY is off)): make sure github.com/gofiber/storage/newdb v1.1.0 implements the *WithContext methods of fiber.Storage, `go get github.com/gofiber/storage/newdb@latest` gets a release that does.",
 			},
 		},
 		{

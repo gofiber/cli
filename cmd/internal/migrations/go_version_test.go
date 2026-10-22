@@ -154,3 +154,24 @@ func Test_MigrateGoVersion_NotAFiberV3Target(t *testing.T) {
 	assert.Empty(t, buf.String())
 	assert.Equal(t, src, readFile(t, filepath.Join(dir, "go.mod")))
 }
+
+func Test_MigrateGoVersion_WorkspaceFollowsItsModules(t *testing.T) {
+	t.Parallel()
+
+	dir := writeTree(t, map[string]string{
+		"go.work":       "go 1.24.0\n\nuse (\n\t./api\n\t./lib\n)\n",
+		"api/go.mod":    "module example/api\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
+		"lib/go.mod":    "module example/lib\n\ngo 1.25.0\n",
+		"other/go.work": "go 1.19\n\nuse ./\n",
+		"other/go.mod":  "module example/other\n\ngo 1.19\n",
+	})
+
+	var buf bytes.Buffer
+	require.NoError(t, migrations.MigrateGoVersion(newCmd(&buf), dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1")))
+
+	assert.Equal(t, "Ensuring go version >= 1.26.0\nEnsuring the go version of go.work is not behind its modules\n", buf.String())
+	assert.Equal(t, "module example/api\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n", importsRead(t, dir, "api/go.mod"))
+	assert.Equal(t, "module example/lib\n\ngo 1.25.0\n", importsRead(t, dir, "lib/go.mod"), "lib does not use Fiber")
+	assert.Equal(t, "go 1.26.0\n\nuse (\n\t./api\n\t./lib\n)\n", importsRead(t, dir, "go.work"))
+	assert.Equal(t, "go 1.19\n\nuse ./\n", importsRead(t, dir, "other/go.work"), "a workspace that is not behind is left alone")
+}

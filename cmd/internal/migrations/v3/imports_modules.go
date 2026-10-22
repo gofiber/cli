@@ -122,6 +122,8 @@ func (fam importsFamily) retarget(f *gomod.File, unknown func(r *modfile.Require
 		}
 	}
 
+	f.DedupeRequires()
+
 	for _, rep := range f.Replacements(fam.module.MatchString) {
 		m := fam.module.FindStringSubmatch(rep.Old.Path)
 		dest := fam.resolve(m[1], m[2])
@@ -129,15 +131,17 @@ func (fam importsFamily) retarget(f *gomod.File, unknown func(r *modfile.Require
 			continue
 		}
 
-		// A replace for one version follows the requirement to its new version.
+		// A replace for one version follows the requirement to the version it ended
+		// up at.
 		vers := ""
 		if rep.Old.Version != "" {
 			vers = dest.minimum
+			if r := f.Requires(dest.path); r != nil {
+				vers = r.Mod.Version
+			}
 		}
 		f.SetReplaceOld(rep, dest.path, vers)
 	}
-
-	f.DedupeRequires()
 }
 
 // importsMajorRank orders the major version path elements of a module: no

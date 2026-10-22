@@ -37,7 +37,14 @@ type File struct {
 	Path string
 	// Rel is Path relative to the walked directory, with forward slashes. It is
 	// what notes refer to.
-	Rel   string
+	Rel string
+	source
+}
+
+// source is the text of a file together with the edits scheduled for it. The
+// edits are made to the original bytes, so the offsets that modfile reports for
+// its syntax stay valid while a migration schedules them.
+type source struct {
 	data  []byte
 	edits []edit
 }
@@ -51,6 +58,11 @@ type edit struct {
 // Paths returns the go.mod files below root in walk order. Directories named
 // vendor, node_modules and .git are not entered.
 func Paths(root string) ([]string, error) {
+	return findFiles(root, FileName)
+}
+
+// findFiles returns the files called name below root.
+func findFiles(root, name string) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -63,7 +75,7 @@ func Paths(root string) ([]string, error) {
 			}
 			return nil
 		}
-		if d.Name() == FileName {
+		if d.Name() == name {
 			paths = append(paths, path)
 		}
 		return nil
@@ -113,7 +125,7 @@ func editFile(root, path string, fn func(f *File) error) (bool, error) {
 		return false, nil
 	}
 
-	f := &File{File: mf, Path: path, Rel: rel, data: data}
+	f := &File{File: mf, Path: path, Rel: rel, source: source{data: data}}
 	if err := fn(f); err != nil {
 		return false, err
 	}
@@ -164,39 +176,39 @@ func parse(path string, data []byte) (*modfile.File, error) {
 
 // apply returns the file with the edits made. An edit that overlaps an earlier
 // one (the outer edit wins) is dropped.
-func (f *File) apply() []byte {
-	slices.SortStableFunc(f.edits, func(a, b edit) int {
+func (s *source) apply() []byte {
+	slices.SortStableFunc(s.edits, func(a, b edit) int {
 		return cmp.Or(cmp.Compare(a.start, b.start), cmp.Compare(b.end, a.end))
 	})
 
-	out := make([]byte, 0, len(f.data))
+	out := make([]byte, 0, len(s.data))
 	pos := 0
-	for _, e := range f.edits {
-		if e.start < pos || e.end < e.start || e.end > len(f.data) {
+	for _, e := range s.edits {
+		if e.start < pos || e.end < e.start || e.end > len(s.data) {
 			continue
 		}
-		out = append(out, f.data[pos:e.start]...)
+		out = append(out, s.data[pos:e.start]...)
 		out = append(out, e.text...)
 		pos = e.end
 	}
-	return append(out, f.data[pos:]...)
+	return append(out, s.data[pos:]...)
 }
 
 // replace schedules the replacement of data[start:end]. An edit of exactly the
 // same range as an earlier one takes its place.
-func (f *File) replace(start, end int, text string) {
-	for i, e := range f.edits {
+func (s *source) replace(start, end int, text string) {
+	for i, e := range s.edits {
 		if e.start == start && e.end == end {
-			f.edits[i].text = text
+			s.edits[i].text = text
 			return
 		}
 	}
-	f.edits = append(f.edits, edit{start: start, end: end, text: text})
+	s.edits = append(s.edits, edit{start: start, end: end, text: text})
 }
 
 // newline is the line ending the file uses.
-func (f *File) newline() string {
-	if bytes.Contains(f.data, []byte("\r\n")) {
+func (s *source) newline() string {
+	if bytes.Contains(s.data, []byte("\r\n")) {
 		return "\r\n"
 	}
 	return "\n"
@@ -205,25 +217,25 @@ func (f *File) newline() string {
 // tokens returns the byte range of each token of line in the file, nil when
 // the text does not hold as many tokens as the parsed line. A quoted token is
 // found with its quotes, line.Token has them removed.
-func (f *File) tokens(line *modfile.Line) [][2]int {
+func (s *source) tokens(line *modfile.Line) [][2]int {
 	var ranges [][2]int
 	pos, end := line.Start.Byte, line.End.Byte
 	for pos < end {
-		if c := f.data[pos]; c == ' ' || c == '\t' || c == '\r' {
+		if c := s.data[pos]; c == ' ' || c == '\t' || c == '\r' {
 			pos++
 			continue
 		}
 
 		start := pos
-		if quote := f.data[pos]; quote == '"' || quote == '`' {
-			for pos++; pos < end && f.data[pos] != quote; pos++ {
-				if quote == '"' && f.data[pos] == '\\' {
+		if quote := s.data[pos]; quote == '"' || quote == '`' {
+			for pos++; pos < end && s.data[pos] != quote; pos++ {
+				if quote == '"' && s.data[pos] == '\\' {
 					pos++
 				}
 			}
 			pos++
 		} else {
-			for pos < end && f.data[pos] != ' ' && f.data[pos] != '\t' && f.data[pos] != '\r' {
+			for pos < end && s.data[pos] != ' ' && s.data[pos] != '\t' && s.data[pos] != '\r' {
 				pos++
 			}
 		}
@@ -237,44 +249,44 @@ func (f *File) tokens(line *modfile.Line) [][2]int {
 }
 
 // setToken schedules the replacement of token i of line.
-func (f *File) setToken(line *modfile.Line, i int, text string) {
-	if ranges := f.tokens(line); i < len(ranges) {
-		f.replace(ranges[i][0], ranges[i][1], text)
+func (s *source) setToken(line *modfile.Line, i int, text string) {
+	if ranges := s.tokens(line); i < len(ranges) {
+		s.replace(ranges[i][0], ranges[i][1], text)
 	}
 }
 
 // deleteLine schedules the removal of the physical line that line is on,
 // including its comment. A blank line that would be left doubled, or dangling
 // at the end of the file, goes with it.
-func (f *File) deleteLine(line *modfile.Line) {
-	start := bytes.LastIndexByte(f.data[:line.Start.Byte], '\n') + 1
-	end := len(f.data)
-	if nl := bytes.IndexByte(f.data[line.End.Byte:], '\n'); nl >= 0 {
+func (s *source) deleteLine(line *modfile.Line) {
+	start := bytes.LastIndexByte(s.data[:line.Start.Byte], '\n') + 1
+	end := len(s.data)
+	if nl := bytes.IndexByte(s.data[line.End.Byte:], '\n'); nl >= 0 {
 		end = line.End.Byte + nl + 1
 	}
 
 	prevStart, prevBlank := 0, true
 	if start > 0 {
-		prevStart = bytes.LastIndexByte(f.data[:start-1], '\n') + 1
-		prevBlank = len(bytes.TrimSpace(f.data[prevStart:start])) == 0
+		prevStart = bytes.LastIndexByte(s.data[:start-1], '\n') + 1
+		prevBlank = len(bytes.TrimSpace(s.data[prevStart:start])) == 0
 	}
 	if prevBlank {
 		nextEnd, nextBlank := end, false
-		if end < len(f.data) {
-			nextEnd = len(f.data)
-			if nl := bytes.IndexByte(f.data[end:], '\n'); nl >= 0 {
+		if end < len(s.data) {
+			nextEnd = len(s.data)
+			if nl := bytes.IndexByte(s.data[end:], '\n'); nl >= 0 {
 				nextEnd = end + nl + 1
 			}
-			nextBlank = len(bytes.TrimSpace(f.data[end:nextEnd])) == 0
+			nextBlank = len(bytes.TrimSpace(s.data[end:nextEnd])) == 0
 		}
 		switch {
-		case end == len(f.data) && start > 0:
+		case end == len(s.data) && start > 0:
 			start = prevStart
 		case nextBlank:
 			end = nextEnd
 		}
 	}
-	f.replace(start, end, "")
+	s.replace(start, end, "")
 }
 
 // SetRequire points the requirement r at module path at version vers.
@@ -362,31 +374,43 @@ func (f *File) DedupeRequires() {
 // older than the raised go directive is dropped, as `go get go@version` does.
 // It reports whether the file changed.
 func (f *File) RaiseGo(minimum string) bool {
+	return f.raiseGo(f.Go, f.Toolchain, minimum, func() (at int, text string, ok bool) {
+		if f.Module == nil || f.Module.Syntax == nil {
+			return 0, "", false
+		}
+
+		// Put the go line after the module line, with a blank line before it.
+		eol := f.newline()
+		if nl := bytes.IndexByte(f.data[f.Module.Syntax.End.Byte:], '\n'); nl >= 0 {
+			return f.Module.Syntax.End.Byte + nl + 1, eol + "go " + minimum + eol, true
+		}
+		return len(f.data), eol + eol + "go " + minimum + eol, true
+	})
+}
+
+// raiseGo is RaiseGo for the go and toolchain statements of a go.mod or go.work
+// file. insert says where a file without a go statement gets one.
+func (s *source) raiseGo(goStmt *modfile.Go, toolchain *modfile.Toolchain, minimum string, insert func() (int, string, bool)) bool {
 	want := "go" + minimum
 	if !version.IsValid(want) {
 		return false
 	}
-	if f.Go != nil && version.Compare("go"+f.Go.Version, want) >= 0 {
+	if goStmt != nil && version.Compare("go"+goStmt.Version, want) >= 0 {
 		return false
 	}
 
-	switch {
-	case f.Go != nil:
-		f.setToken(f.Go.Syntax, 1, minimum)
-	case f.Module != nil && f.Module.Syntax != nil:
-		// Put the go line after the module line, with a blank line before it.
-		eol := f.newline()
-		at, text := len(f.data), eol+eol+"go "+minimum+eol
-		if nl := bytes.IndexByte(f.data[f.Module.Syntax.End.Byte:], '\n'); nl >= 0 {
-			at, text = f.Module.Syntax.End.Byte+nl+1, eol+"go "+minimum+eol
+	if goStmt != nil {
+		s.setToken(goStmt.Syntax, 1, minimum)
+	} else {
+		at, text, ok := insert()
+		if !ok {
+			return false
 		}
-		f.replace(at, at, text)
-	default:
-		return false
+		s.replace(at, at, text)
 	}
 
-	if f.Toolchain != nil && version.Compare(f.Toolchain.Name, want) < 0 {
-		f.deleteLine(f.Toolchain.Syntax)
+	if toolchain != nil && version.Compare(toolchain.Name, want) < 0 {
+		s.deleteLine(toolchain.Syntax)
 	}
 	return true
 }

@@ -264,3 +264,30 @@ const path = "github.com/gofiber/template/html/v2"
 var _ = html.New
 `, importsRead(t, dir, "main.go"))
 }
+
+func Test_MigrateTemplateVersions_ReplaceForAVersionFollowsTheRequirement(t *testing.T) {
+	t.Parallel()
+
+	dir := importsTree(t, map[string]string{
+		"go.mod": `module example
+
+require (
+	github.com/gofiber/template/html/v2 v2.1.3
+	github.com/gofiber/template/html/v3 v3.0.11
+)
+
+replace github.com/gofiber/template/html/v2 v2.1.3 => ../html
+`,
+	})
+
+	require.NoError(t, v3.MigrateTemplateVersions(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	assert.Equal(t, `module example
+
+require (
+	github.com/gofiber/template/html/v3 v3.0.11
+)
+
+replace github.com/gofiber/template/html/v3 v3.0.11 => ../html
+`, importsRead(t, dir, "go.mod"), "the replace applies to the version that is required, not to the table's minimum")
+}
