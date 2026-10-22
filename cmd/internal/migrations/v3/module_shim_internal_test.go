@@ -106,7 +106,7 @@ func Test_EnsureModuleShim(t *testing.T) {
 		assert.Equal(t, "example.com/app/internal/fibermigrate", importPath)
 
 		file := filepath.Join(dir, "internal", "fibermigrate", "agent.go")
-		got, err := os.ReadFile(file)
+		got, err := os.ReadFile(file) // #nosec G304 -- a file of the temp project of this test
 		require.NoError(t, err)
 		assert.Equal(t, f.source, string(got))
 
@@ -116,7 +116,7 @@ func Test_EnsureModuleShim(t *testing.T) {
 		again, ok := ensureModuleShim(fi, f)
 		require.True(t, ok)
 		assert.Equal(t, importPath, again)
-		got, err = os.ReadFile(file)
+		got, err = os.ReadFile(file) // #nosec G304 -- a file of the temp project of this test
 		require.NoError(t, err)
 		assert.Equal(t, edited, string(got))
 	})
