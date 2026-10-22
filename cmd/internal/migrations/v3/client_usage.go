@@ -153,6 +153,7 @@ func (f *clientFile) run() {
 		f.walkDecl(decl, clientNewFunc(decl))
 	}
 	f.leftovers()
+	f.noteExports()
 	if f.dry {
 		f.scanReferences()
 	}

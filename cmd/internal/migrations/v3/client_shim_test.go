@@ -616,6 +616,209 @@ func newAPI(url string) api {
 	})
 }
 
+func Test_MigrateClientUsage_ExportedAgentsAndClients(t *testing.T) {
+	t.Parallel()
+
+	const exportNote = " is exported and is now a *"
+	const otherPackages = ": code in other packages that calls the methods of the Fiber v2 agent or client on it " +
+		"(Set, Bytes, String, Get(url).Bytes(), ...) was not migrated, because the migration reads one package at a time"
+
+	clientRunCases(t, []clientCase{
+		{
+			name: "an_exported_helper_and_client_of_a_package_others_import",
+			files: map[string]string{
+				"httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// New builds the request.
+func New(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Project", "sample")
+}
+
+// Client is the client of the project.
+var Client = &fiber.Client{UserAgent: "sample/1.0"}
+
+// API holds a client.
+type API struct {
+	Client *fiber.Client
+	hidden *fiber.Client
+}
+
+// NewClient makes a client.
+func NewClient() *fiber.Client { return &fiber.Client{} }
+
+// Shared is a method of an exported type.
+func (a *API) Shared() *fiber.Client { return a.Client }
+
+func (a *API) private() *fiber.Client { return a.hidden }
+
+func (a api) Hidden() *fiber.Client { return nil }
+
+type api struct{}
+
+var unexported = &fiber.Client{}
+
+func lower(url string) *fiber.Agent { return fiber.Get(url) }
+`,
+			},
+			want: map[string]string{
+				"httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v3/client"
+
+// New builds the request.
+func New(url string) *client.Request {
+	return client.C().R().SetMethod("GET").SetURL(url).SetHeader("X-Project", "sample")
+}
+
+// Client is the client of the project.
+var Client = client.New().SetUserAgent("sample/1.0")
+
+// API holds a client.
+type API struct {
+	Client *client.Client
+	hidden *client.Client
+}
+
+// NewClient makes a client.
+func NewClient() *client.Client { return client.New() }
+
+// Shared is a method of an exported type.
+func (a *API) Shared() *client.Client { return a.Client }
+
+func (a *API) private() *client.Client { return a.hidden }
+
+func (a api) Hidden() *client.Client { return nil }
+
+type api struct{}
+
+var unexported = client.New()
+
+func lower(url string) *client.Request { return client.C().R().SetMethod("GET").SetURL(url) }
+`,
+			},
+			notes: []string{
+				"httpx.go:6: New" + exportNote + "client.Request" + otherPackages,
+				"httpx.go:11: Client" + exportNote + "client.Client" + otherPackages,
+				"httpx.go:15: API.Client" + exportNote + "client.Client" + otherPackages,
+				"httpx.go:20: NewClient" + exportNote + "client.Client" + otherPackages,
+				"httpx.go:23: Shared" + exportNote + "client.Client" + otherPackages,
+			},
+		},
+		{
+			name: "a_main_package_is_not_imported",
+			files: map[string]string{
+				"main.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func New(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Project", "sample")
+}
+
+var Client = &fiber.Client{UserAgent: "sample/1.0"}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import "github.com/gofiber/fiber/v3/client"
+
+func New(url string) *client.Request {
+	return client.C().R().SetMethod("GET").SetURL(url).SetHeader("X-Project", "sample")
+}
+
+var Client = client.New().SetUserAgent("sample/1.0")
+`,
+			},
+		},
+		{
+			name: "an_external_test_package_is_not_imported",
+			files: map[string]string{
+				"httpx_test.go": `package httpx_test
+
+import "github.com/gofiber/fiber/v2"
+
+func New(url string) *fiber.Agent {
+	return fiber.Get(url)
+}
+
+var Client = &fiber.Client{}
+`,
+			},
+			want: map[string]string{
+				"httpx_test.go": `package httpx_test
+
+import "github.com/gofiber/fiber/v3/client"
+
+func New(url string) *client.Request {
+	return client.C().R().SetMethod("GET").SetURL(url)
+}
+
+var Client = client.New()
+`,
+			},
+		},
+		{
+			name: "a_package_on_the_copy_keeps_the_methods_its_users_call",
+			files: map[string]string{
+				"httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// New builds the request.
+func New(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Project", "sample")
+}
+
+// Virtual builds a request with a Host that the client package cannot send.
+func Virtual(url string) *fiber.Agent {
+	a := fiber.Get(url)
+	a.Host("virtual.example.com")
+	return a
+}
+
+// Client is the client of the project.
+var Client = &fiber.Client{UserAgent: "sample/1.0"}
+
+func use(url string) {
+	_, _, _ = Client.Get(url).Host("virtual.example.com").Bytes()
+}
+`,
+			},
+			want: map[string]string{
+				"httpx.go": `package httpx
+
+// New builds the request.
+func New(url string) *fiberMigrateAgent {
+	return fiberMigrateGet(url).Set("X-Project", "sample")
+}
+
+// Virtual builds a request with a Host that the client package cannot send.
+func Virtual(url string) *fiberMigrateAgent {
+	a := fiberMigrateGet(url)
+	a.Host("virtual.example.com")
+	return a
+}
+
+// Client is the client of the project.
+var Client = &fiberMigrateClient{UserAgent: "sample/1.0"}
+
+func use(url string) {
+	_, _, _ = Client.Get(url).Host("virtual.example.com").Bytes()
+}
+`,
+			},
+			notes: []string{
+				"httpx.go:7: " + clientShareNote,
+				"httpx.go:12: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+				"httpx.go:21: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+			},
+		},
+	})
+}
+
 // clientShimRead returns the file the migration added to the directory.
 func clientShimRead(t *testing.T, dir string) string {
 	t.Helper()
