@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,11 +17,11 @@ import (
 )
 
 // stubDepsGoList replaces the go command with this test binary, which prints the output given in the
-// environment (TestDepsGoListProcess), and returns the arguments it was asked with and the directory it ran in.
-func stubDepsGoList(t *testing.T, stdout, stderr string, exitCode int) (asked *[]string, dirs *[]string) {
+// environment (TestDepsGoListProcess), and returns the arguments it was asked with.
+func stubDepsGoList(t *testing.T, stdout, stderr string, exitCode int) (asked *[]string) {
 	t.Helper()
 
-	asked, dirs = new([]string), new([]string)
+	asked = new([]string)
 	orig := internal.ExecCommand
 	internal.ExecCommand = func(name string, args ...string) *exec.Cmd {
 		*asked = append(*asked, append([]string{name}, args...)...)
@@ -33,7 +34,7 @@ func stubDepsGoList(t *testing.T, stdout, stderr string, exitCode int) (asked *[
 	t.Setenv("GO_DEPS_GOLIST_STDOUT", stdout)
 	t.Setenv("GO_DEPS_GOLIST_STDERR", stderr)
 	t.Setenv("GO_DEPS_GOLIST_EXIT", strconv.Itoa(exitCode))
-	return asked, dirs
+	return asked
 }
 
 // TestDepsGoListProcess is the helper process of stubDepsGoList, not a test.
@@ -76,14 +77,7 @@ func depsNotes(t *testing.T, dir string, skipGoMod bool) []string {
 
 // goListLine is a line of the output of the go list the review asks for.
 func goListLine(path, module, version string, main bool, imports ...string) string {
-	line := path + "\t" + module + "\t" + version + "\t" + strconv.FormatBool(main) + "\t"
-	for i, imp := range imports {
-		if i > 0 {
-			line += "|"
-		}
-		line += imp
-	}
-	return line + "\n"
+	return path + "\t" + module + "\t" + version + "\t" + strconv.FormatBool(main) + "\t" + strings.Join(imports, "|") + "\n"
 }
 
 const depsGoMod = `module example.com/app
@@ -129,7 +123,7 @@ import "github.com/gofiber/session/v2"
 var _ = session.New
 `)
 	// the go command prints the packages in dependency order, the test variants carry a suffix
-	asked, _ := stubDepsGoList(t,
+	asked := stubDepsGoList(t,
 		goListLine("github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v2", "v2.52.15", false, "github.com/valyala/fasthttp")+
 			goListLine("github.com/valyala/fasthttp", "github.com/valyala/fasthttp", "v1.75.0", false)+
 			goListLine("github.com/ansrivas/fiberprometheus/v2", "github.com/ansrivas/fiberprometheus/v2", "v2.6.1", false, "github.com/gofiber/fiber/v2", "github.com/valyala/fasthttp")+
@@ -193,7 +187,7 @@ func Test_ReviewDependencies_NothingToDoWithoutFiberV2InGoMod(t *testing.T) {
 	dir := t.TempDir()
 	depsWrite(t, dir, "go.mod", "module example.com/app\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n")
 	depsWrite(t, dir, "main.go", "package main\n")
-	asked, _ := stubDepsGoList(t, "", "", 0)
+	asked := stubDepsGoList(t, "", "", 0)
 
 	assert.Empty(t, depsNotes(t, dir, false))
 	assert.Empty(t, *asked, "the go command is not asked when go.mod does not keep Fiber v2")
@@ -264,7 +258,7 @@ var _ = session.New
 		"github.com/gofiber/fiber/v3/@v/v3.6.1.mod":            "module github.com/gofiber/fiber/v3\n\nrequire github.com/valyala/fasthttp v1.75.0\n",
 		"github.com/gofiber/storage/azureblob/@v/v1.3.6.mod":   "module github.com/gofiber/storage/azureblob\n\nrequire github.com/gofiber/fiber/v2 v2.52.0 // indirect\n",
 	})
-	asked, _ := stubDepsGoList(t, "", "", 0)
+	asked := stubDepsGoList(t, "", "", 0)
 
 	notes := depsNotes(t, dir, true)
 

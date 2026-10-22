@@ -7,7 +7,10 @@ import (
 
 // reviewBinders are the methods of c.Bind() that replace the parsers of the v2
 // context and whose errors read differently.
-var reviewBinders = []string{"Body", "Query", "Header", "Cookie", "URI"}
+var reviewBinders = []string{"Body", ctxFnQuery, clientFieldHeader, clientFieldCookie, "URI"}
+
+// reviewBind is the method of the context that returns the binder.
+const reviewBind = "Bind"
 
 // reviewBindNote tells how the text of the errors of the binders changed. v2's
 // QueryParser, CookieParser, ParamsParser, ReqHeaderParser and the form side of
@@ -32,7 +35,7 @@ func (rf *reviewFile) checkBindErrors(call *ast.CallExpr, stack []ast.Node) {
 		return
 	}
 	inner, ok := bind.Fun.(*ast.SelectorExpr)
-	if !ok || inner.Sel.Name != "Bind" || !rf.isCtxMethod(inner, stack) {
+	if !ok || inner.Sel.Name != reviewBind || !rf.isCtxMethod(inner, stack) {
 		return
 	}
 

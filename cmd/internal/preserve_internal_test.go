@@ -29,13 +29,23 @@ func Test_lineEndingsRoundTrip(t *testing.T) {
 	assert.Equal(t, src, toCRLF(toLF(src)))
 }
 
+// letters are the lines of the test texts: few of them, so that many repeat, and those of the changed text are upper case.
+const letters = "abcdefABCDEF"
+
 // randomLines returns n lines chosen from a small alphabet, so that many of them repeat.
 func randomLines(rng *rand.Rand, n int) []string {
 	lines := make([]string, n)
 	for i := range lines {
-		lines[i] = string(rune('a' + rng.IntN(6)))
+		pick := rng.IntN(6)
+		lines[i] = letters[pick : pick+1]
 	}
 	return lines
+}
+
+// changedLine returns a line that no randomLines produces.
+func changedLine(rng *rand.Rand) string {
+	pick := 6 + rng.IntN(6)
+	return letters[pick : pick+1]
 }
 
 // mutate returns a copy of lines with a few lines changed, added or removed.
@@ -44,14 +54,14 @@ func mutate(rng *rand.Rand, lines []string) []string {
 	for range rng.IntN(5) {
 		switch pos := rng.IntN(len(out) + 1); rng.IntN(3) {
 		case 0:
-			out = append(out[:pos], append([]string{string(rune('A' + rng.IntN(6)))}, out[pos:]...)...)
+			out = append(out[:pos], append([]string{changedLine(rng)}, out[pos:]...)...)
 		case 1:
 			if pos < len(out) {
 				out = append(out[:pos], out[pos+1:]...)
 			}
 		default:
 			if pos < len(out) {
-				out[pos] = string(rune('A' + rng.IntN(6)))
+				out[pos] = changedLine(rng)
 			}
 		}
 	}
@@ -61,7 +71,7 @@ func mutate(rng *rand.Rand, lines []string) []string {
 func Test_diffLines_HunksTurnAIntoB(t *testing.T) {
 	t.Parallel()
 
-	rng := rand.New(rand.NewPCG(1, 2))
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // a seeded generator of test data
 	for range 3000 {
 		a := randomLines(rng, rng.IntN(25))
 		b := mutate(rng, a)
@@ -98,7 +108,7 @@ func Test_diffLines_TooManyEdits(t *testing.T) {
 func Test_merge3_Properties(t *testing.T) {
 	t.Parallel()
 
-	rng := rand.New(rand.NewPCG(3, 4))
+	rng := rand.New(rand.NewPCG(3, 4)) //nolint:gosec // a seeded generator of test data
 	for range 3000 {
 		base := randomLines(rng, rng.IntN(25))
 		changed := mutate(rng, base)
@@ -126,7 +136,7 @@ func Test_merge3_Properties(t *testing.T) {
 func Test_merge3_ChangesInSeparateHalvesAreBothKept(t *testing.T) {
 	t.Parallel()
 
-	rng := rand.New(rand.NewPCG(5, 6))
+	rng := rand.New(rand.NewPCG(5, 6)) //nolint:gosec // a seeded generator of test data
 	for range 3000 {
 		// the halves are apart by a line that nobody changes
 		left, right := randomLines(rng, 1+rng.IntN(12)), randomLines(rng, 1+rng.IntN(12))
@@ -223,7 +233,7 @@ func Bye(c *fiber.Ctx) error {
 }
 `
 	// the migration changes the handler signatures only
-	processed := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(original, "*fiber.Ctx", "fiber.Ctx"), "fiber/v2", "fiber/v3"), "x := map[string]int{", "x := map[string]int{")
+	processed := strings.ReplaceAll(strings.ReplaceAll(original, "*fiber.Ctx", "fiber.Ctx"), "fiber/v2", "fiber/v3")
 	formatted, err := tidyFor(t)(processed)
 	require.NoError(t, err)
 	require.Contains(t, formatted, "// Hello says hello.", "the formatter fixes the comments")

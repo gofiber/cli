@@ -272,7 +272,7 @@ func Test_DoMigration_NotesFollowTheLinesOfTheRestoredFile(t *testing.T) {
 	assert.Contains(t, string(content), "\n\n\n\nfunc Handler(c fiber.Ctx) error {", "the blank lines of the author are back")
 	lines := strings.Split(string(content), "\n")
 	found := false
-	for _, line := range strings.Split(buf.String(), "\n") {
+	for line := range strings.SplitSeq(buf.String(), "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "main.go:") || !strings.Contains(line, "no longer serves byte ranges") {
 			continue
 		}

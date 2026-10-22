@@ -257,8 +257,7 @@ func myers(a, b []string) (hunks []hunk, ok bool) {
 func backtrack(trace [][]int, n, m int) []hunk {
 	var edits []hunk
 	x, y := n, m
-	for d := len(trace) - 1; d >= 0; d-- {
-		window := trace[d]
+	for d, window := range slices.Backward(trace) {
 		at := func(k int) int { return window[k+d+1] }
 
 		k := x - y
@@ -329,11 +328,11 @@ func merge3(base, ours, theirs []string) (merged []string, ok bool) {
 
 		start, end := regionBounds(hunksA[i0:i], hunksB[j0:j])
 		merged = append(merged, base[pos:start]...)
-		if i == i0 {
-			merged = append(merged, applyHunks(base, theirs, hunksB[j0:j], start, end)...)
-		} else if j == j0 {
+		if j == j0 {
+			// only the author changed these lines
 			merged = append(merged, applyHunks(base, ours, hunksA[i0:i], start, end)...)
 		} else {
+			// the migration did, with the author or alone
 			merged = append(merged, applyHunks(base, theirs, hunksB[j0:j], start, end)...)
 		}
 		pos = end

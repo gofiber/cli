@@ -134,7 +134,7 @@ func moduleImports(root, dir string) []projectImport {
 	var out []projectImport
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // a directory that cannot be read has no imports to report
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // an entry that cannot be read has no imports to report
 		}
 		if d.IsDir() {
 			name := d.Name()
@@ -267,7 +267,7 @@ func goListPackages(dir string) (map[string]depsPackage, error) {
 		}
 		path := trimVariant(fields[0])
 		pkg := packages[path]
-		pkg.module, pkg.version, pkg.main = fields[1], fields[2], fields[3] == "true"
+		pkg.module, pkg.version, pkg.main = fields[1], fields[2], fields[3] == appLitTrue
 		for imp := range strings.SplitSeq(fields[4], "|") {
 			if imp = trimVariant(imp); imp != "" && !slices.Contains(pkg.imports, imp) {
 				pkg.imports = append(pkg.imports, imp)
@@ -280,10 +280,8 @@ func goListPackages(dir string) (map[string]depsPackage, error) {
 
 // trimVariant drops the suffix the go command adds to a package it compiles for a test: "p [p.test]".
 func trimVariant(path string) string {
-	if i := strings.Index(path, " ["); i >= 0 {
-		return path[:i]
-	}
-	return path
+	base, _, _ := strings.Cut(path, " [")
+	return base
 }
 
 // depsState is what depsFinder knows about a package.
