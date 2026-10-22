@@ -68,6 +68,7 @@ type reviewFile struct {
 
 func (r *reviewer) scan(content string, fi internal.FileInfo) {
 	if !strings.Contains(content, "github.com/gofiber/") {
+		r.scanModuleContexts(content, fi)
 		return
 	}
 	g, ok := parseFile(fi, content)
@@ -246,7 +247,7 @@ func (rf *reviewFile) isCtxMethod(sel *ast.SelectorExpr, stack []ast.Node) bool 
 		return true
 	}
 	if rf.env == nil {
-		rf.env = newCtxEnv(rf.g, rf.core, rf.r.run.siblings(rf.fi, rf.g)...)
+		rf.env = rf.r.run.newEnv(rf.fi, rf.g, rf.core)
 	}
 	return rf.env.receiverKind(sel, stack) == ctxYes
 }
@@ -256,7 +257,7 @@ func (rf *reviewFile) isCtxMethod(sel *ast.SelectorExpr, stack []ast.Node) bool 
 // be called on the embedded context when the type declares a method of its name
 // (a wrapper with a Redirect(to string) of its own hides the Redirect() of v3).
 func (rf *reviewFile) wrapperHint(sel *ast.SelectorExpr, stack []ast.Node) string {
-	if isFiberCtxExpr(sel.X, rf.core, stack) {
+	if isFiberCtxExpr(sel.X, rf.core, stack) || rf.env.isCtxAlias(ctxDerefType(rf.env.typeOf(sel.X, stack)), nil) {
 		return ""
 	}
 	recv := rf.g.text(sel.X)
