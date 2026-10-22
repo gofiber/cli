@@ -69,12 +69,19 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 // mw3SessionExtractorPass is the rewrite of one file by MigrateSessionExtractor.
 type mw3SessionExtractorPass struct {
-	f          *mw3SessionFile
-	fi         internal.FileInfo
-	extractors string
-	imports    mw3ImportEdits
-	strs       mw3Strings
-	edits      editSet
+	f       *mw3SessionFile
+	fi      internal.FileInfo
+	imports mw3ImportEdits
+	strs    mw3Strings
+	edits   editSet
+}
+
+// mw3Site is a place of the file: the position of a node and its ancestors (see
+// goSource.walk). What is written there may only use the names that are free
+// there.
+type mw3Site struct {
+	stack []ast.Node
+	pos   token.Pos
 }
 
 func mw3SessionExtractorContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
@@ -105,25 +112,24 @@ func mw3SessionExtractorContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs)
 	return p.imports.apply(out)
 }
 
-// extractorsName returns the identifier the file uses for the extractors
-// package, importing the package when the file does not yet.
-func (p *mw3SessionExtractorPass) extractorsName() string {
-	if p.extractors == "" {
-		p.extractors = mw3NeedImport(p.f.g, &p.imports, mw3ExtractorsPath, "extractors", "fiberextractors")
-	}
-	return p.extractors
+// extractorsAt returns the identifier that code written at the site uses for the
+// extractors package, importing the package when the file does not yet, or
+// importing it a second time where the name the file gives it is hidden.
+// reserved are the names the code declares itself.
+func (p *mw3SessionExtractorPass) extractorsAt(at mw3Site, reserved ...string) string {
+	return p.f.importAt(&p.imports, mw3ExtractorsPath, at.pos, at.stack, reserved, "extractors", "fiberextractors")
 }
 
 // extractor returns the v3 extractor that reads a session ID where the v2
 // lookup did, and whether it is the query lookup, which v3 treats differently.
 // ok is false for a lookup that v2 itself would have refused.
-func (p *mw3SessionExtractorPass) extractor(lookup string) (expr string, query, ok bool) {
+func (p *mw3SessionExtractorPass) extractor(lookup string, at mw3Site) (expr string, query, ok bool) {
 	source, name, found := strings.Cut(lookup, ":")
 	if !found || name == "" || strings.Contains(name, ":") {
 		return "", false, false
 	}
 
-	pkg := p.extractorsName()
+	pkg := p.extractorsAt(at)
 	quoted := strconv.Quote(name)
 	switch source {
 	case mw3SourceCookie:
@@ -158,6 +164,7 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 	if mw3Field(lit, mw3ExtractorField) != nil {
 		return
 	}
+	at := mw3Site{pos: lit.Pos(), stack: stack}
 	lookup := mw3Field(lit, mw3KeyLookup)
 	cookie := mw3Field(lit, mw3CookieName)
 
@@ -166,13 +173,13 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 		name, ok := p.strs.value(cookie.Value, stack)
 		switch {
 		case !ok && lookup == nil:
-			p.computed(cookie, mw3CookieName)
+			p.computed(cookie, mw3CookieName, at)
 			return
 		case !ok:
 			p.unresolved(cookie, mw3CookieName)
 			return
 		case name != "":
-			p.edits.replaceNode(g, cookie, "Extractor: "+p.extractorsName()+".FromCookie("+strconv.Quote(name)+")")
+			p.edits.replaceNode(g, cookie, "Extractor: "+p.extractorsAt(at)+".FromCookie("+strconv.Quote(name)+")")
 			p.imports.releaseIn(g, cookie)
 			if lookup != nil {
 				mw3RemoveElement(g, &p.edits, lookup)
@@ -190,7 +197,7 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 	value, ok := p.strs.value(lookup.Value, stack)
 	if !ok {
 		if cookie == nil {
-			p.computed(lookup, mw3KeyLookup)
+			p.computed(lookup, mw3KeyLookup, at)
 		} else {
 			p.unresolved(lookup, mw3KeyLookup)
 		}
@@ -201,7 +208,7 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 		p.imports.releaseIn(g, lookup)
 		return
 	}
-	expr, query, ok := p.extractor(value)
+	expr, query, ok := p.extractor(value, at)
 	if !ok {
 		internal.Notef(p.fi, g.line(lookup.Pos()),
 			"KeyLookup %q is not a \"cookie:name\", \"header:name\" or \"query:name\" lookup, which is all v2 accepted, so it was left as it is. Set Config.Extractor instead.", value)
@@ -215,15 +222,10 @@ func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.N
 }
 
 // computed migrates the lookup of a literal whose value is only known when the
-// program runs, or reports it when the function that reads it cannot be written.
-func (p *mw3SessionExtractorPass) computed(kv *ast.KeyValueExpr, field string) {
+// program runs.
+func (p *mw3SessionExtractorPass) computed(kv *ast.KeyValueExpr, field string, at mw3Site) {
 	g := p.f.g
-	fn, ok := p.lookupFunc(field, g.text(kv.Value))
-	if !ok {
-		p.unresolved(kv, field)
-		return
-	}
-	p.edits.replaceNode(g, kv, "Extractor: "+fn)
+	p.edits.replaceNode(g, kv, "Extractor: "+p.lookupFunc(field, g.text(kv.Value), at))
 	p.noteComputed(field, g.line(kv.Pos()))
 }
 
@@ -235,13 +237,22 @@ func (p *mw3SessionExtractorPass) noteComputed(field string, line int) {
 	internal.Notef(p.fi, line, "KeyLookup is computed, so it is read by a function when the program starts, as the v2 constructor did; %s", mw3QueryLookupNote)
 }
 
-// lookupFunc writes the function that turns the value of a computed field,
-// given as the source text arg, into the extractor v2 built from it. ok is false
-// when the file uses a name the function needs for something else.
-func (p *mw3SessionExtractorPass) lookupFunc(field, arg string) (fn string, ok bool) {
-	pkg := p.extractorsName()
+// The names that the functions of lookupFunc declare: a package they use must
+// not be called one of them.
+var (
+	mw3CookieFuncNames = []string{mw3NameVar}
+	mw3LookupFuncNames = []string{"lookup", "source", mw3NameVar, "found"}
+)
 
+// mw3NameVar is the variable of the generated functions that holds the name of
+// a lookup.
+const mw3NameVar = "name"
+
+// lookupFunc writes the function that turns the value of a computed field,
+// given as the source text arg, into the extractor v2 built from it.
+func (p *mw3SessionExtractorPass) lookupFunc(field, arg string, at mw3Site) string {
 	if field == mw3CookieName {
+		pkg := p.extractorsAt(at, mw3CookieFuncNames...)
 		// v2 took an empty CookieName for no CookieName, that is the default cookie.
 		return strings.Join([]string{
 			"func(name string) " + pkg + ".Extractor {",
@@ -250,18 +261,11 @@ func (p *mw3SessionExtractorPass) lookupFunc(field, arg string) (fn string, ok b
 			"}",
 			"return " + pkg + ".FromCookie(name)",
 			"}(" + arg + ")",
-		}, "\n"), true
+		}, "\n")
 	}
 
-	str := mw3ImportName(p.f.g.src, mw3StringsPkg)
-	if str == "" {
-		if _, taken := mw3DeclaredNames(p.f.g.file)[mw3StringsPkg]; taken {
-			return "", false
-		}
-		str = mw3StringsPkg
-		p.imports.require(mw3StringsPkg, "")
-	}
-
+	pkg := p.extractorsAt(at, mw3LookupFuncNames...)
+	str := p.f.importAt(&p.imports, mw3StringsPkg, at.pos, at.stack, mw3LookupFuncNames, "strings", "stdstrings")
 	return strings.Join([]string{
 		"func(lookup string) " + pkg + ".Extractor {",
 		"if lookup == \"\" {",
@@ -281,7 +285,7 @@ func (p *mw3SessionExtractorPass) lookupFunc(field, arg string) (fn string, ok b
 		"}",
 		"panic(\"[session] source is not supported\")",
 		"}(" + arg + ")",
-	}, "\n"), true
+	}, "\n")
 }
 
 // unresolved reports a lookup whose value is not known at migration time.
@@ -308,9 +312,10 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 		return // a store: selector reports the read
 	}
 
+	at := mw3Site{pos: as.Pos(), stack: stack}
 	value, ok := p.strs.value(as.Rhs[0], stack)
 	if ok && sel.Sel.Name == mw3KeyLookup {
-		if expr, query, valid := p.extractor(value); valid {
+		if expr, query, valid := p.extractor(value, at); valid {
 			p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
 			p.edits.replaceNode(g, as.Rhs[0], expr)
 			p.imports.releaseIn(g, as.Rhs[0])
@@ -322,18 +327,16 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 	}
 	if ok && sel.Sel.Name == mw3CookieName && value != "" {
 		p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
-		p.edits.replaceNode(g, as.Rhs[0], p.extractorsName()+".FromCookie("+strconv.Quote(value)+")")
+		p.edits.replaceNode(g, as.Rhs[0], p.extractorsAt(at)+".FromCookie("+strconv.Quote(value)+")")
 		p.imports.releaseIn(g, as.Rhs[0])
 		return
 	}
 	if !ok {
 		// The function reads the field the assignment sets, and nothing else of the config.
-		if fn, written := p.lookupFunc(sel.Sel.Name, g.text(as.Rhs[0])); written {
-			p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
-			p.edits.replaceNode(g, as.Rhs[0], fn)
-			p.noteComputed(sel.Sel.Name, g.line(as.Pos()))
-			return
-		}
+		p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
+		p.edits.replaceNode(g, as.Rhs[0], p.lookupFunc(sel.Sel.Name, g.text(as.Rhs[0]), at))
+		p.noteComputed(sel.Sel.Name, g.line(as.Pos()))
+		return
 	}
 
 	internal.Notef(p.fi, g.line(as.Pos()),

@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -414,5 +415,46 @@ var cookie = lookup(SourceCookie)
 
 var cookie = lookup(SourceCookie)
 `, res.files["use.go"])
+	assert.Empty(t, res.notes)
+}
+
+// A variable called like the session package hides it wherever it is declared:
+// by a range clause, a type switch or a select case as well as by a var.
+func Test_MigrateSessionSource_NamesHiddenByVariablesThatSayNothingOfTheirType(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+type item struct{ Source string }
+
+func use(items []item, v any, ch chan item) []string {
+	var out []string
+	for _, session := range items {
+		out = append(out, session.Source)
+	}
+	switch session := v.(type) {
+	case item:
+		out = append(out, session.Source)
+	}
+	select {
+	case session := <-ch:
+		out = append(out, session.Source)
+	}
+	type session struct{ Source string }
+	out = append(out, session{}.Source)
+	return out
+}
+
+var _ session.Source = session.SourceCookie
+`
+	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
+	assert.Contains(t, got, "out = append(out, session.Source)")
+	assert.Equal(t, 3, strings.Count(got, "out = append(out, session.Source)"))
+	assert.Contains(t, got, `out = append(out, session{}.Source)`)
+	assert.Contains(t, got, `var _ string = "cookie"`)
 	assert.Empty(t, res.notes)
 }

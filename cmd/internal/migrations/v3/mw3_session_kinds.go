@@ -433,11 +433,7 @@ func (r *mw3KindReader) element(k mw3Kind) mw3Kind {
 // isPackage reports whether the identifier names the session package here and
 // not a variable that has the same name.
 func (r *mw3KindReader) isPackage(id *ast.Ident, stack []ast.Node) bool {
-	if !slices.Contains(r.names, id.Name) {
-		return false
-	}
-	_, shadowed := resolveIdent(id.Name, id.Pos(), stack)
-	return !shadowed
+	return slices.Contains(r.names, id.Name) && !mw3Shadowed(id.Name, id.Pos(), stack)
 }
 
 func (r *mw3KindReader) ofIdent(id *ast.Ident, stack []ast.Node) mw3Kind {

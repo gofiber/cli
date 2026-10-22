@@ -398,12 +398,105 @@ func lookup() string {
 	_ = extractors
 	return store.KeyLookup
 }
+
+func plain() string {
+	return store.KeyLookup
+}
 `
 	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
-	assert.Equal(t, src, got)
-	msgs := mw3Messages(res.notes)
-	require.Len(t, msgs, 1)
-	assert.Contains(t, msgs[0], "store.KeyLookup no longer exists")
+	assert.Equal(t, `package main
+
+import (
+	"github.com/gofiber/fiber/v3/extractors"
+	fiberextractors "github.com/gofiber/fiber/v3/extractors"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New(session.Config{Extractor: extractors.FromCookie("sid")})
+
+func lookup() string {
+	extractors := []string{"unrelated"}
+	_ = extractors
+	return func(e fiberextractors.Extractor) string {
+		if n := len(e.Chain); n > 0 {
+			e = e.Chain[n-1]
+		}
+		switch e.Source {
+		case fiberextractors.SourceHeader:
+			return "header:" + e.Key
+		case fiberextractors.SourceQuery:
+			return "query:" + e.Key
+		}
+		return "cookie:" + e.Key
+	}(store.Extractor)
+}
+
+func plain() string {
+	return func(e extractors.Extractor) string {
+		if n := len(e.Chain); n > 0 {
+			e = e.Chain[n-1]
+		}
+		switch e.Source {
+		case extractors.SourceHeader:
+			return "header:" + e.Key
+		case extractors.SourceQuery:
+			return "query:" + e.Key
+		}
+		return "cookie:" + e.Key
+	}(store.Extractor)
+}
+`, got)
+	assert.Len(t, res.notes, 2)
+
+	again, second := mw3RunOne(t, got, v3.MigrateSessionExtractor)
+	assert.Equal(t, got, again)
+	assert.Empty(t, second.out)
+}
+
+// The name for the second import is free in the whole package, and the names
+// the function literals declare themselves are not used for a package.
+func Test_MigrateSessionReads_AliasOfTheSecondImportIsFree(t *testing.T) {
+	t.Parallel()
+
+	res := mw3Run(t, map[string]string{
+		"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3/extractors"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New(session.Config{Extractor: extractors.FromCookie("sid")})
+
+func lookup() string {
+	extractors := []string{"unrelated"}
+	_ = extractors
+	return store.KeyLookup
+}
+`,
+		"other.go": `package main
+
+var fiberextractors = "a package level name of another file"
+`,
+		"e.go": `package main
+
+import (
+	e "github.com/gofiber/fiber/v3/extractors"
+)
+
+func name() string {
+	return store.CookieName
+}
+`,
+	}, v3.MigrateSessionExtractor)
+	assert.Contains(t, res.files["main.go"], "\tfiberextractors2 \"github.com/gofiber/fiber/v3/extractors\"\n")
+	assert.Contains(t, res.files["main.go"], "return func(e fiberextractors2.Extractor) string {")
+	// The file that names the package e keeps a literal whose parameter is e.
+	assert.Contains(t, res.files["e.go"], "\textractors \"github.com/gofiber/fiber/v3/extractors\"\n")
+	assert.Contains(t, res.files["e.go"], "func(e extractors.Extractor) string {")
+	assert.Contains(t, res.files["e.go"], "if e.Source == extractors.SourceCookie {")
 }
 
 func Test_MigrateSessionReads_Idempotent(t *testing.T) {

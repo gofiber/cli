@@ -42,11 +42,10 @@ var mw3SessionV3Fields = []string{"IdleTimeout", "AbsoluteTimeout", "Extractor",
 
 // mw3SessionConfigPass is the rewrite of one file by MigrateSessionConfig.
 type mw3SessionConfigPass struct {
-	f        *mw3SessionFile
-	fi       internal.FileInfo
-	timeName string
-	imports  mw3ImportEdits
-	edits    editSet
+	f       *mw3SessionFile
+	fi      internal.FileInfo
+	imports mw3ImportEdits
+	edits   editSet
 }
 
 func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
@@ -99,25 +98,15 @@ func (p *mw3SessionConfigPass) isV3Config(stack []ast.Node) bool {
 	return p.f.isMember(call.Fun, mw3SessionNew, outer) && mw3IsUseArgument(call, outer)
 }
 
-// idleTimeout is the field that keeps the v2 lifetime.
-func (p *mw3SessionConfigPass) idleTimeout() string {
-	return "IdleTimeout: " + p.v2Lifetime()
+// idleTimeout is the field that keeps the v2 lifetime, written at the node whose
+// position and ancestors are given.
+func (p *mw3SessionConfigPass) idleTimeout(at mw3Site) string {
+	return "IdleTimeout: " + p.v2Lifetime(at)
 }
 
 // v2Lifetime is the expression for the lifetime v2 sessions had by default.
-func (p *mw3SessionConfigPass) v2Lifetime() string {
-	if p.timeName == "" {
-		p.timeName = mw3ImportName(p.f.g.src, "time")
-		if p.timeName == "" {
-			declared := mw3DeclaredNames(p.f.g.file)
-			p.timeName = mw3FreeName(func(name string) bool {
-				_, taken := declared[name]
-				return taken
-			}, "time", "stdtime")
-			p.imports.require("time", p.timeName)
-		}
-	}
-	return "24 * " + p.timeName + ".Hour"
+func (p *mw3SessionConfigPass) v2Lifetime(at mw3Site) string {
+	return "24 * " + p.f.importAt(&p.imports, "time", at.pos, at.stack, nil, "time", "stdtime") + ".Hour"
 }
 
 // configLit migrates a session.Config literal.
@@ -140,7 +129,7 @@ func (p *mw3SessionConfigPass) configLit(lit *ast.CompositeLit, stack []ast.Node
 			return
 		}
 	}
-	mw3AddElement(g, &p.edits, lit, p.idleTimeout())
+	mw3AddElement(g, &p.edits, lit, p.idleTimeout(mw3Site{pos: lit.Pos(), stack: stack}))
 }
 
 // sameSite keeps the cookie v2 sent for a "disabled" SameSite. v2 knew only
@@ -175,7 +164,7 @@ func (p *mw3SessionConfigPass) newCall(call *ast.CallExpr, stack []ast.Node) {
 		return
 	}
 	pkgName := g.text(sel.X)
-	config := pkgName + ".Config{" + p.idleTimeout() + "}"
+	config := pkgName + ".Config{" + p.idleTimeout(mw3Site{pos: call.Pos(), stack: stack}) + "}"
 
 	if len(call.Args) == 0 {
 		p.edits.replace(g.offset(call.Lparen)+1, g.offset(call.Rparen), config)
@@ -295,7 +284,7 @@ func (p *mw3SessionConfigPass) keepLifetimeAfter(name string, stack []ast.Node) 
 	}
 	if !mw3AssignsField(list, stmt, name, "Expiration", "IdleTimeout") {
 		end := g.offset(stmt.End())
-		p.edits.replace(end, end, "\n"+mw3Indent(g.src, g.offset(stmt.Pos()))+name+".IdleTimeout = "+p.v2Lifetime())
+		p.edits.replace(end, end, "\n"+mw3Indent(g.src, g.offset(stmt.Pos()))+name+".IdleTimeout = "+p.v2Lifetime(mw3Site{pos: stmt.End(), stack: stack}))
 	}
 	return true
 }

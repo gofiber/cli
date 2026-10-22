@@ -105,11 +105,11 @@ func (p *mw3SessionReadsPass) read(sel *ast.SelectorExpr, stack []ast.Node) {
 	}
 	unset, ok := p.owner(sel.X, stack)
 	g := p.f.g
-	if !ok || mw3IsWritten(sel, stack) || mw3ImportHidden(g, mw3ExtractorsPath, sel.Pos(), stack) {
+	if !ok || mw3IsWritten(sel, stack) {
 		return
 	}
 
-	pkg := mw3NeedImport(g, &p.imports, mw3ExtractorsPath, "extractors", "fiberextractors")
+	pkg := p.f.importAt(&p.imports, mw3ExtractorsPath, sel.Pos(), stack, mw3LookupReaderNames, "extractors", "fiberextractors")
 	start, end := g.offset(sel.Pos()), g.offset(sel.End())
 	p.edits.replace(start, start, mw3LookupReader(field, pkg, unset))
 	p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
@@ -177,6 +177,10 @@ func (p *mw3SessionReadsPass) copiedInAssignment(as *ast.AssignStmt, stack []ast
 	p.edits.replaceNode(g, value.Sel, mw3ExtractorField)
 	p.handled[value] = struct{}{}
 }
+
+// mw3LookupReaderNames are the names the function literal of mw3LookupReader
+// declares: the package it uses must not be called one of them.
+var mw3LookupReaderNames = []string{"e", "n"}
 
 // mw3LookupReader returns the beginning of a call of a function literal that
 // turns the Extractor of a v3 config into the string v2 had in the field, which

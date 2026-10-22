@@ -43,11 +43,10 @@ func MigrateSessionMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 // mw3SessionMethodsPass is the rewrite of one file by MigrateSessionMethods.
 type mw3SessionMethodsPass struct {
-	f           *mw3SessionFile
-	fi          internal.FileInfo
-	contextName string
-	imports     mw3ImportEdits
-	edits       editSet
+	f       *mw3SessionFile
+	fi      internal.FileInfo
+	imports mw3ImportEdits
+	edits   editSet
 }
 
 func mw3SessionMethodsContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
@@ -92,10 +91,10 @@ func (p *mw3SessionMethodsPass) call(call *ast.CallExpr, stack []ast.Node) {
 				"if %s is a session, SetExpiry is called SetIdleTimeout in v3.", g.text(sel.X))
 		}
 	case sel.Sel.Name == "Reset" && len(call.Args) == 0 && p.f.isStore(sel.X, stack):
-		p.edits.replace(g.offset(call.Lparen)+1, g.offset(call.Rparen), p.context(stack))
+		p.edits.replace(g.offset(call.Lparen)+1, g.offset(call.Rparen), p.context(call, stack))
 	case sel.Sel.Name == nameDelete && len(call.Args) == 1 && p.f.isStore(sel.X, stack):
 		start := g.offset(call.Args[0].Pos())
-		p.edits.replace(start, start, p.context(stack)+", ")
+		p.edits.replace(start, start, p.context(call, stack)+", ")
 	case sel.Sel.Name == "Keys" && len(call.Args) == 0 && p.f.isSession(sel.X, stack):
 		p.keys(call, stack)
 	}
@@ -115,13 +114,7 @@ func (p *mw3SessionMethodsPass) keys(call *ast.CallExpr, stack []ast.Node) {
 	if mw3KeysNeedNoStrings(call, stack) {
 		return
 	}
-	if mw3ImportHidden(g, "fmt", call.Pos(), stack) {
-		internal.Notef(p.fi, g.line(call.Pos()),
-			"%s returns []any in v3 (v2: []string): convert the keys where you need strings, for instance with fmt.Sprint(key) or key.(string).", g.text(call))
-		return
-	}
-
-	pkg := mw3NeedImport(g, &p.imports, "fmt", "fmt", "stdfmt")
+	pkg := p.f.importAt(&p.imports, "fmt", call.Pos(), stack, mw3KeysFuncNames, "fmt", "stdfmt")
 	start, end := g.offset(call.Pos()), g.offset(call.End())
 	p.edits.replace(start, start, strings.Join([]string{
 		"func(keys []any) []string {",
@@ -134,6 +127,13 @@ func (p *mw3SessionMethodsPass) keys(call *ast.CallExpr, stack []ast.Node) {
 	}, "\n"))
 	p.edits.replace(end, end, ")")
 }
+
+// mw3KeysFuncNames are the names the function literal of keys declares: fmt must
+// not be called one of them.
+var mw3KeysFuncNames = []string{"keys", "names", "i", mw3KeyVar}
+
+// mw3KeyVar is the variable of the generated function that holds one key.
+const mw3KeyVar = "key"
 
 // mw3KeysNeedNoStrings reports whether the call of Keys, whose ancestors are
 // stack, is used in a way that does not care what the keys are: len(sess.Keys()),
@@ -184,9 +184,9 @@ func mw3IsSliceOfAny(t ast.Expr) bool {
 	return isIdentNamed(arr.Elt, "any")
 }
 
-// context returns the expression for the context a store call takes: the
+// context returns the expression for the context the store call takes: the
 // request context of the handler the call is in, or context.Background().
-func (p *mw3SessionMethodsPass) context(stack []ast.Node) string {
+func (p *mw3SessionMethodsPass) context(call *ast.CallExpr, stack []ast.Node) string {
 	for _, node := range slices.Backward(stack) {
 		var ft *ast.FuncType
 		switch n := node.(type) {
@@ -212,18 +212,7 @@ func (p *mw3SessionMethodsPass) context(stack []ast.Node) string {
 		break
 	}
 
-	if p.contextName == "" {
-		p.contextName = mw3ImportName(p.f.g.src, "context")
-		if p.contextName == "" {
-			declared := mw3DeclaredNames(p.f.g.file)
-			p.contextName = mw3FreeName(func(name string) bool {
-				_, taken := declared[name]
-				return taken
-			}, "context", "stdcontext")
-			p.imports.require("context", p.contextName)
-		}
-	}
-	return p.contextName + ".Background()"
+	return p.f.importAt(&p.imports, "context", call.Pos(), stack, nil, "context", "stdcontext") + ".Background()"
 }
 
 // mw3TypeIsShown reports whether the file shows what type the expression is
