@@ -428,9 +428,9 @@ func (src *appListenSource) followCall(pf *appFile, call *ast.CallExpr) {
 	fn := src.retFn
 	callee, found := pf.calleeOf(call, 0)
 	switch {
-	case found && callee.decl != fn:
+	case found && callee.decl != fn && !callee.isInterfaceMethod():
 		return // another function of the same name
-	case !found:
+	case !found || callee.isInterfaceMethod():
 		// a method of another type, or of a type the project does not declare, is
 		// not it; a receiver that cannot be traced may be
 		if fn.Recv != nil && !pf.foreignReceiver(call) && pf.feedsNew(call) {
@@ -589,7 +589,7 @@ func (f *appFile) referencesFunc(n ast.Node, fn *ast.FuncDecl) bool {
 		return fn.Recv == nil && pkg != nil && pkg.funcs[name] != nil && pkg.funcs[name].decl == fn
 	case *ast.SelectorExpr:
 		call := &ast.CallExpr{Fun: x}
-		if callee, found := f.calleeOf(call, 0); found {
+		if callee, found := f.calleeOf(call, 0); found && !callee.isInterfaceMethod() {
 			return callee.decl == fn
 		}
 		if t, tf := f.valueType(x.X, 0); t != nil {
