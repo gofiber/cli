@@ -65,16 +65,38 @@ is idempotent, so a second run changes nothing that the first one already migrat
   cookie or the query) becomes an `extractors.FromCustom` that takes the prefix off the
   way v2 did, and a session `KeyLookup` that is only known when the program runs becomes
   a function that reads it the way the v2 constructor did.
-- A type or a value that changed shape gets the conversion that hides it: the `Start`
-  and `End` of the ranges `c.Range` returns are `int64` in v3, so the code that reads
-  them gets `int(...)`; `session.Source` and its constants become `string` and the
-  strings `"cookie"`, `"header"` and `"query"`; `store.KeyLookup` and `store.CookieName`
-  are read from `store.Extractor`; `sess.Keys()` is converted to the `[]string` v2
-  returned; `c.ParamsInt` with a spread of defaults and `c.AllParams` used as a value
-  become function literals.
+- A type or a value that changed shape gets the conversion that hides it, wherever the
+  value travels in the module (variables, parameters, results, fields, maps, channels,
+  generics): the `Start` and `End` of the ranges `c.Range` returns are `int64` in v3, so
+  the code that reads them gets `int(...)` and the code that writes them `int64(...)`;
+  `session.Source` and its constants become `string` and the strings `"cookie"`,
+  `"header"` and `"query"`, or the type `fibermigrate.SessionSource` where the program
+  tells a `Source` from a string; `store.KeyLookup` and `store.CookieName` are read from
+  `store.Extractor` (a write to them is dropped, v2 never changed where the store looks
+  with it); `sess.Keys()` is converted to the `[]string` v2 returned. A removed method of
+  the context that code uses as a value (`h := c.RedirectBack`, `f := c.ParamsInt`,
+  `g := c.Range`) becomes a function literal with the v2 signature, bound to the receiver
+  the way Go binds a method value; `c.ParamsInt` with a spread of defaults and
+  `c.AllParams` become function literals as well.
+- Stores, apps and clients are followed across the packages of the module, also into
+  files that do not import Fiber: a session store that an `auth` package exports gets its
+  `defer sess.Release()` where handlers use it, and `server.New().Listen(":3000")` in a
+  `main` package that never imports Fiber gets the listener settings of the app.
+- The sentry-go API that versions 0.46 to 0.50 removed is rewritten to what the
+  changelog recommends: `scope.SetExtra` becomes `SetContext`, `SetExtras` becomes
+  `SetContexts`, `RemoveExtra` becomes `RemoveContext`, `event.Extra` becomes
+  `Contexts`, `sentry.Logger` becomes `DebugLogger`, and a nil check of a client
+  (`hub.Client() == nil`) becomes `!hub.Client().IsEnabled()`. What has no equivalent
+  (the old metrics API, reserved context names) is reported.
+- `Conn()` of the postgres storage returned a `*sql.DB`; in the v3 line it is a
+  `*pgxpool.Pool`. The calls the migration can follow are wrapped in
+  `fibermigrate.PostgresDB(...)`, which hands out one `*sql.DB` for each pool.
 - A healthcheck config that another file of the package declares is split where it
   is declared: the liveness probe stays in the variable, the readiness probe moves to a
-  second one next to it, and the calls become one route for each probe.
+  second one next to it, and the calls become one route for each probe. A config that
+  cannot be split (shared by several routes, returned by a function, kept in a struct
+  field or a parameter, declared in another package, assigned field by field) keeps the
+  v2 middleware, see `health.go` below.
 - A type that embeds `fiber.Ctx` and declares a method of the name a rewrite introduces
   (a `Redirect(to string)` or `Bind(v any)` of your own) is migrated through the embedded
   context: `c.Ctx.Redirect().Back("/")`.
@@ -84,26 +106,50 @@ is idempotent, so a second run changes nothing that the first one already migrat
   of the cache middleware, `OnTimeout` returning `fiber.ErrRequestTimeout` for the
   timeout middleware (408 instead of 503), `Status(fiber.StatusFound)` for a redirect
   without a status (302 instead of 303).
-- A few migrations add a file to a package, declared once per package and named in the
-  note they leave:
-  - a filesystem root that is an `http.FileSystem` (packr, pkger, rice, statik, your own
-    type) gets a small adapter, `fiber_migrate_httpfs.go`. Delete it once you serve an
-    `embed.FS` or `os.DirFS`;
-  - the listener settings of `fiber.Config` (`Prefork`, `Network`,
-    `DisableStartupMessage`, `EnablePrintRoutes`) move to the `Listen` call. When the
-    config is built away from that call (a condition, a function, a field of another
-    struct), `fiber_migrate_listen.go` keeps the settings with their app and the `Listen`
-    call reads them back. Delete the file once you pass a `fiber.ListenConfig` to `Listen`
-    yourself. The settings of an app that nothing in the package starts are dropped, with
-    a note;
-  - a request that the client package of v3 cannot make the way the v2 agent did (a
-    `Host` that differs from the URL, `SetResponse`, `Dest`, `RetryIf`, a `FormFile` that
-    two requests send, `MultipartForm` without a file, `FileData` or `SendFile` without
-    `MultipartForm`, ...) keeps running on `fiber_migrate_agent.go`, a copy of the v2
-    agent (`fiber.Get`, `fiber.Agent`, `fiber.Client` and `fiber.FormFile` under names
-    that start with `fiberMigrate`). Every such request gets a note that says why, and
-    every other request moves to the client package. Delete the file once these
-    requests use `github.com/gofiber/fiber/v3/client`.
+
+### Code that v3 has no counterpart for
+
+Where no rewrite can be faithful, the migration adds the v2 behavior to your project
+instead of changing what the program does. It goes to **one package of the module**,
+`internal/fibermigrate` (package `fibermigrate`), that the first migration that needs it
+creates and that every package of the module shares, so an agent or an app made in one
+package can be used in another. Every file starts with a `Code generated by "fiber
+migrate"; DO NOT EDIT.` line and says what it is and when to delete it, and the note of
+each use names the file. A module path without a dot (`module myapp`) gets the import in
+the standard library group, as `goimports` does. The files:
+
+- `agent.go`: a copy of the v2 HTTP client agent (`fibermigrate.Get`, `fibermigrate.Agent`,
+  `fibermigrate.Client`, `fibermigrate.FormFile`, ...) for the requests that the client
+  package of v3 cannot make the way the agent did: a `Host` that differs from the URL,
+  `Debug`, `SetResponse`, `Dest`, `RetryIf`, a header that the body encoder of v3
+  replaces, a query that v2 replaced or discarded, a `FormFile` that two requests send,
+  `MultipartForm` without a file, `FileData` or `SendFile` without `MultipartForm`, ...
+  Every such request gets a note that says why, and every other request moves to the
+  client package. A package that other packages import, and whose exported API uses the
+  agent, the client or a form file, keeps all of its values on the copy so that the code
+  that imports it keeps compiling. Delete the file once these requests use
+  `github.com/gofiber/fiber/v3/client`;
+- `listen.go`: the listener settings of `fiber.Config` (`Prefork`, `Network`,
+  `DisableStartupMessage`, `EnablePrintRoutes`) move to the `Listen` call. When the config
+  is built away from that call (a condition, a function that takes arguments, another
+  package), `fibermigrate.NewApp` records the settings with the app and
+  `fibermigrate.ListenConfig`, `Listen` and `Listener` hand them to the call that starts
+  it, wherever it is; `fibermigrate.Config` and `fibermigrate.New` stand in for a config
+  that a function returns, and `fibermigrate.ConfigOf(app)` for `app.Config()`. Delete the
+  file once you pass a `fiber.ListenConfig` to `Listen` yourself. The settings of an app
+  that nothing in the module starts are dropped, with a note;
+- `health.go`: the v2 healthcheck middleware (`HealthConfig`, `Health`) for the configs
+  that cannot be split into one route for each probe. Delete the file once the probes
+  are registered one by one;
+- `postgres.go`: `PostgresDB`, the one `*sql.DB` for each pool of the postgres storage;
+- `session.go`: the type `SessionSource` and its constants, only for a module whose
+  program tells a session `Source` from a string.
+
+Values do not cross the boundary of a Go module: a nested module (a directory with a
+`go.mod` of its own) gets its own `internal/fibermigrate`. The adapter for a filesystem
+root that is an `http.FileSystem` (packr, pkger, rice, statik, your own type),
+`fiber_migrate_httpfs.go`, is still a file next to the code that uses it, once per
+package; delete it once you serve an `embed.FS` or `os.DirFS`.
 
 ## What is left for you
 
@@ -132,8 +178,16 @@ The list has three kinds of entries:
   the default session ID, ...). These are reported once per project, at the first import.
   A few rewrites report their own difference the same way: the error of `ParamsInt`
   loses the `failed to convert: ` v2 put in front of it, the deprecated `timeout.New`
-  of v2 only logged the error of its handler, and `Redirect().Back` follows a `Referer`
-  of the same origin only.
+  of v2 only logged the error of its handler, `Redirect().Back` follows a `Referer`
+  of the same origin only, each healthcheck probe is a route of its own (HEAD is
+  answered, another method gets 405), and the v3 client adds `Accept: application/json`
+  to a JSON body, encodes a space of a query as `+` and returns one error where the
+  agent returned a slice.
+
+A construct that v3 refuses on purpose is left as it is and the note says why: the csrf
+middleware of v2 compared a token that came from the CSRF cookie with that same cookie
+(`KeyLookup: "cookie:csrf_"`), which protected nothing, and v3 panics on it; use a header
+or a form field instead.
 
 An empty list means the migrations found nothing left to report. It does not replace
 building the project and running its tests.
