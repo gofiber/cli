@@ -587,14 +587,32 @@ func config() csrf.Config {
 	cfg.KeyLookup = "form:_csrf"
 	var other csrf.Config
 	other.CookieExpires = time.Hour
+	other.TokenLookup = ""
 	return cfg
 }
 `)
 
-	file := res.file()
-	assert.Contains(t, file, `cfg.IdleTimeout = 5 * time.Minute`)
-	assert.Contains(t, file, `cfg.Extractor = extractors.FromForm("_csrf")`)
-	assert.Contains(t, file, `other.IdleTimeout = time.Hour`)
+	// the extractors import is the migration's, not goimports': an empty module cache does not have it
+	assert.Equal(t, `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2/middleware/csrf"
+	"github.com/gofiber/fiber/v3/extractors"
+)
+
+func config() csrf.Config {
+	cfg := csrf.ConfigDefault
+	cfg.IdleTimeout = 5 * time.Minute
+	cfg.Extractor = extractors.FromForm("_csrf")
+	var other csrf.Config
+	other.IdleTimeout = time.Hour
+	other.Extractor = extractors.FromHeader("X-Csrf-Token")
+	return cfg
+}
+`, res.file())
+	assert.Empty(t, res.notes)
 }
 
 func Test_MigrateCSRFConfig_Alias(t *testing.T) {

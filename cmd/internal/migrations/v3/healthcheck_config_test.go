@@ -23,6 +23,14 @@ const hcImportsLogger = `import (
 )
 `
 
+// hcServices are the services that the probes of the documentation example ask.
+const hcServices = `type service struct{}
+
+func (service) Ready() bool { return true }
+
+var serviceA, serviceB service
+`
+
 func Test_MigrateHealthcheckConfig(t *testing.T) {
 	t.Parallel()
 
@@ -30,6 +38,7 @@ func Test_MigrateHealthcheckConfig(t *testing.T) {
 	res := mw1Run(t, v3.MigrateHealthcheckConfig, `package main
 
 `+hcImportsLogger+`
+`+hcServices+`
 func main() {
 	app := fiber.New()
 
@@ -53,6 +62,7 @@ func main() {
 	assert.Equal(t, `package main
 
 `+hcImportsLogger+`
+`+hcServices+`
 func main() {
 	app := fiber.New()
 

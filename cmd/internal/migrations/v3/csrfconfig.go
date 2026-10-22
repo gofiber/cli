@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"go/ast"
+	"strconv"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -53,6 +54,8 @@ const (
 	csrfExtractor         = "Extractor"
 	csrfSessionKey        = "SessionKey"
 	csrfHandlerContextKey = "HandlerContextKey"
+	// csrfHeaderName is csrf.HeaderName, the header the default lookup reads
+	csrfHeaderName = "X-Csrf-Token"
 )
 
 // csrfMigration is the state of the rewrite of one file.
@@ -180,8 +183,13 @@ func (m *csrfMigration) assignment(as *ast.AssignStmt, stack []ast.Node) {
 		m.edits.replaceNode(m.g, sel.Sel, csrfIdleTimeout)
 	case csrfKeyLookup, csrfTokenLookup:
 		if text, ok := m.lookupExtractor(as.Rhs[0]); ok {
+			if text == "" {
+				// the empty lookup is the default one
+				text = m.extractorsName + ".FromHeader(" + strconv.Quote(csrfHeaderName) + ")"
+			}
 			m.edits.replaceNode(m.g, sel.Sel, csrfExtractor)
 			m.edits.replaceNode(m.g, as.Rhs[0], text)
+			m.usesExtractors = true
 		} else {
 			m.notef(as, "csrf.Config has no %s in v3: set the Extractor instead, with extractors.FromHeader, FromForm, FromQuery or FromParam", field)
 		}
