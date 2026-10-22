@@ -52,6 +52,8 @@ type ctxEnv struct {
 	methods map[string]*ast.FuncDecl
 	// fields are the declared types of every struct field of the file, by name.
 	fields map[string][]ast.Expr
+	// pkgVars are the package-level variables of the package, by name.
+	pkgVars map[string]ctxPkgVar
 	// declTypes and declInits are the types and the initializing expressions of
 	// the declarations of the file by the name they declare, in any scope.
 	declTypes map[string][]ast.Expr
@@ -62,6 +64,13 @@ type ctxEnv struct {
 	// to the fiber package: the declarations of those files are part of the
 	// environment, and they spell the fiber types their own way.
 	pkgNames []string
+}
+
+// ctxPkgVar is a package-level variable: its declaration and the position of the
+// name in it.
+type ctxPkgVar struct {
+	spec  *ast.ValueSpec
+	index int
 }
 
 // ctxSibling is another file of the package of the file that is migrated. Its
@@ -83,6 +92,7 @@ func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 		funcDecl: map[string]*ast.FuncDecl{},
 		methods:  map[string]*ast.FuncDecl{},
 		fields:   map[string][]ast.Expr{},
+		pkgVars:  map[string]ctxPkgVar{},
 
 		declTypes: map[string][]ast.Expr{},
 		declInits: map[string][]ast.Expr{},
@@ -127,12 +137,21 @@ func (env *ctxEnv) index(file *ast.File) {
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.GenDecl:
-			if d.Tok != token.TYPE {
-				continue
-			}
 			for _, spec := range d.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok && env.typeDecl[ts.Name.Name] == nil {
-					env.typeDecl[ts.Name.Name] = ts
+				switch sp := spec.(type) {
+				case *ast.TypeSpec:
+					if env.typeDecl[sp.Name.Name] == nil {
+						env.typeDecl[sp.Name.Name] = sp
+					}
+				case *ast.ValueSpec:
+					if d.Tok != token.VAR {
+						continue
+					}
+					for i, id := range sp.Names {
+						if _, known := env.pkgVars[id.Name]; !known {
+							env.pkgVars[id.Name] = ctxPkgVar{spec: sp, index: i}
+						}
+					}
 				}
 			}
 		case *ast.FuncDecl:

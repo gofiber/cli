@@ -20,29 +20,20 @@ const (
 // not be followed any more.
 const ctxRangeNote = "c.Range takes an int64 size in Fiber v3, and the Start and End of the returned ranges are int64: convert them where they are used as int"
 
-// ctxRangeKind says which of the types that carry the ranges of a request a value
-// has.
-type ctxRangeKind int
-
-const (
-	// ctxRangeNone: anything else.
-	ctxRangeNone ctxRangeKind = iota
-	// ctxRangeValue: a fiber.Range, what c.Range returns.
-	ctxRangeValue
-	// ctxRangeSlice: a []fiber.RangeSet, the Ranges of a fiber.Range.
-	ctxRangeSlice
-	// ctxRangeSet: a fiber.RangeSet, one of the ranges.
-	ctxRangeSet
-)
+// ctxRangeUnknownNote is the note for a read of a Start or End of a value whose
+// type is not known in a file that handles ranges.
+const ctxRangeUnknownNote = "the Start and End of a fiber.RangeSet are int64 in Fiber v3: the type of this value is not known here, so if it is a range, convert it where it is used as int"
 
 // ctxRangeTracker follows the ranges a request context returns through a file.
 // In v2 the Start and End of a range are int, in v3 they are int64: the places
 // that read them as int need a conversion, and so do the places that set them.
 // There are no types to ask, so the tracker goes by the declarations of the
-// file: the variable that takes the result of c.Range, the Ranges of it, the
-// elements of those, and whatever is declared as one of the types of the fiber
-// package. A range that is handed to a place the tracker can not follow is
-// reported.
+// file and of its package (see rshape): the variable that takes the result of
+// c.Range, the Ranges of it, the elements of those, and whatever is declared
+// with one of the types of the fiber package, in a slice, a map, a channel, a
+// function, a struct, a generic type or behind a function value. A range that is
+// handed to a place the tracker can not follow is reported, and so is a read of a
+// Start or End of a value whose type is not known.
 type ctxRangeTracker struct {
 	env   *ctxEnv
 	noter *ctxNoter
@@ -52,26 +43,72 @@ type ctxRangeTracker struct {
 	// harmless are the names the file binds to packages that take a range as an
 	// argument without looking into it: the standard library and testify.
 	harmless map[string]bool
+	// imports are the import paths of the packages of the file, by local name.
+	imports map[string]string
+	memo    map[ast.Expr]*rshape
+	busy    map[ast.Expr]bool
+	// active is set when the file handles ranges.
+	active bool
 }
 
 // ctxQueueRangeReads queues the conversions of the Start and End of the ranges
 // that c.Range returns, in the file env describes, and reports the places that
 // can not be followed.
 func ctxQueueRangeReads(plan *ctxPlan, noter *ctxNoter, env *ctxEnv) {
-	t := &ctxRangeTracker{env: env, noter: noter, plan: plan, keep: map[*ast.SelectorExpr]bool{}, harmless: map[string]bool{}}
+	env.g.walk(newCtxRangeTracker(plan, noter, env).visit)
+}
+
+// newCtxRangeTracker prepares the tracker for the file env describes.
+func newCtxRangeTracker(plan *ctxPlan, noter *ctxNoter, env *ctxEnv) *ctxRangeTracker {
+	t := &ctxRangeTracker{
+		env: env, noter: noter, plan: plan,
+		keep: map[*ast.SelectorExpr]bool{}, harmless: map[string]bool{}, imports: map[string]string{},
+		memo: map[ast.Expr]*rshape{}, busy: map[ast.Expr]bool{},
+	}
 	for _, imp := range env.g.file.Imports {
 		path, err := strconv.Unquote(imp.Path.Value)
-		if err != nil || !ctxIsHarmlessImport(path) {
+		if err != nil {
 			continue
 		}
 		name := defaultImportName(path)
 		if imp.Name != nil {
 			name = imp.Name.Name
 		}
-		t.harmless[name] = true
+		t.imports[name] = path
+		if ctxIsHarmlessImport(path) {
+			t.harmless[name] = true
+		}
 	}
 
-	env.g.walk(t.visit)
+	t.active = t.handlesRanges()
+	return t
+}
+
+// handlesRanges reports whether the file uses the ranges of a request: it names
+// one of the types, reads the Ranges of a value or calls Range of a context.
+func (t *ctxRangeTracker) handlesRanges() bool {
+	found := t.env.dotImported()
+	t.env.g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if found {
+			return false
+		}
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		switch sel.Sel.Name {
+		case ctxTypeRange, ctxTypeRangeSet:
+			if id, isIdent := sel.X.(*ast.Ident); isIdent && slices.Contains(t.env.pkgNames, id.Name) {
+				found = true
+			} else if call, isCall := ctxParentCall(sel, stack); isCall && sel.Sel.Name == ctxTypeRange && len(call.Args) == 1 {
+				found = true
+			}
+		case ctxFieldRanges:
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // ctxReTestify matches the import paths of testify.
@@ -87,17 +124,17 @@ func ctxIsHarmlessImport(path string) bool {
 // visit looks at one node of the file.
 func (t *ctxRangeTracker) visit(n ast.Node, stack []ast.Node) bool {
 	switch x := n.(type) {
-	case *ast.CallExpr:
-		t.checkSource(x, stack)
 	case *ast.SelectorExpr:
 		t.checkRead(x, stack)
+	case *ast.CallExpr:
+		t.checkConversion(x, stack)
 	case *ast.AssignStmt:
 		t.checkAssign(x, stack)
 	case *ast.CompositeLit:
 		t.checkLiteral(x, stack)
 	}
 
-	if expr, ok := n.(ast.Expr); ok && ctxIsValueNode(expr) && t.kindOf(expr, stack, 0) != ctxRangeNone && t.flowsOut(expr, stack) {
+	if expr, ok := n.(ast.Expr); ok && ctxIsValueNode(expr) && t.flowsOut(expr, stack) {
 		t.noter.oncef("range", n.Pos(), ctxRangeNote)
 	}
 	return true
@@ -163,225 +200,74 @@ func ctxIsNumericType(name string) bool {
 	return ok && basic.Info()&types.IsNumeric != 0
 }
 
-// kindOf says what the expression e is, given the ancestors of it.
-func (t *ctxRangeTracker) kindOf(e ast.Expr, stack []ast.Node, depth int) ctxRangeKind {
-	if depth > ctxMaxDepth {
-		return ctxRangeNone
-	}
-
-	switch x := e.(type) {
-	case *ast.ParenExpr:
-		return t.kindOf(x.X, stack, depth+1)
-	case *ast.StarExpr:
-		return t.kindOf(x.X, stack, depth+1)
-	case *ast.UnaryExpr:
-		if x.Op == token.AND {
-			return t.kindOf(x.X, stack, depth+1)
-		}
-	case *ast.Ident:
-		if site, ok := ctxResolveSite(x.Name, x.Pos(), stack); ok {
-			return t.siteKind(site, depth+1)
-		}
-	case *ast.SelectorExpr:
-		if t.kindOf(x.X, stack, depth+1) == ctxRangeValue && x.Sel.Name == ctxFieldRanges {
-			return ctxRangeSlice
-		}
-		return t.typeKind(t.env.typeOf(x, stack), depth+1)
-	case *ast.IndexExpr:
-		if t.kindOf(x.X, stack, depth+1) == ctxRangeSlice {
-			return ctxRangeSet
-		}
-	case *ast.SliceExpr:
-		if t.kindOf(x.X, stack, depth+1) == ctxRangeSlice {
-			return ctxRangeSlice
-		}
-	case *ast.CompositeLit:
-		return t.litKind(x, stack, depth+1)
-	case *ast.CallExpr:
-		if !t.isRangeCall(x, stack) {
-			return t.callKind(x, 0, stack, depth+1)
-		}
-	}
-	return ctxRangeNone
-}
-
-// siteKind says what the name declared at the site is.
-func (t *ctxRangeTracker) siteKind(site ctxSite, depth int) ctxRangeKind {
-	switch {
-	case site.typ != nil:
-		return t.typeKind(site.typ, depth)
-	case site.over != nil:
-		if t.kindOf(site.over, site.stack, depth) == ctxRangeSlice {
-			return ctxRangeSet
-		}
-	case site.init != nil && site.index < 0:
-		return t.kindOf(site.init, site.stack, depth)
-	case site.init != nil:
-		if call, ok := site.init.(*ast.CallExpr); ok {
-			return t.callKind(call, site.index, site.stack, depth)
-		}
-	}
-	return ctxRangeNone
-}
-
-// typeKind says which kind the type expression typ spells.
-func (t *ctxRangeTracker) typeKind(typ ast.Expr, depth int) ctxRangeKind {
-	if typ == nil || depth > ctxMaxDepth {
-		return ctxRangeNone
-	}
-
-	switch x := typ.(type) {
-	case *ast.ParenExpr:
-		return t.typeKind(x.X, depth+1)
-	case *ast.StarExpr:
-		return t.typeKind(x.X, depth+1)
-	case *ast.Ellipsis:
-		if t.typeKind(x.Elt, depth+1) == ctxRangeSet {
-			return ctxRangeSlice
-		}
-		return ctxRangeNone
-	case *ast.ArrayType:
-		if t.typeKind(x.Elt, depth+1) == ctxRangeSet {
-			return ctxRangeSlice
-		}
-		return ctxRangeNone
-	case *ast.Ident:
-		// A type of the file is what it is declared as, whatever its name.
-		if spec := t.env.typeDecl[x.Name]; spec != nil {
-			return t.typeKind(spec.Type, depth+1)
-		}
-	case *ast.StructType:
-		// A struct that embeds a range has its fields.
-		if x.Fields != nil {
-			for _, f := range x.Fields.List {
-				if kind := t.typeKind(f.Type, depth+1); len(f.Names) == 0 && (kind == ctxRangeValue || kind == ctxRangeSet) {
-					return kind
-				}
-			}
-		}
-		return ctxRangeNone
-	}
-
-	// The type may be declared in another file of the package, which can bind the
-	// fiber package to another name.
-	switch {
-	case ctxIsFiberType(typ, t.env.pkgNames, ctxTypeRange):
-		return ctxRangeValue
-	case ctxIsFiberType(typ, t.env.pkgNames, ctxTypeRangeSet):
-		return ctxRangeSet
-	}
-	return ctxRangeNone
-}
-
-// litKind says which kind the composite literal lit is. The type of a literal
-// inside another one may be left out.
-func (t *ctxRangeTracker) litKind(lit *ast.CompositeLit, stack []ast.Node, depth int) ctxRangeKind {
-	if lit.Type != nil {
-		return t.typeKind(lit.Type, depth)
-	}
-	if outer, ok := ctxParent(stack).(*ast.CompositeLit); ok && t.litKind(outer, stack[:len(stack)-1], depth+1) == ctxRangeSlice {
-		return ctxRangeSet
-	}
-	return ctxRangeNone
-}
-
-// callKind says what the idx-th result of the call is.
-func (t *ctxRangeTracker) callKind(call *ast.CallExpr, idx int, stack []ast.Node, depth int) ctxRangeKind {
-	if t.isRangeCall(call, stack) {
-		if idx == 0 {
-			return ctxRangeValue
-		}
-		return ctxRangeNone
-	}
-
-	if isIdentNamed(call.Fun, "append") && len(call.Args) > 0 {
-		return t.kindOf(call.Args[0], stack, depth+1)
-	}
-
-	if ft := t.calleeType(call, stack); ft != nil {
-		if results := ctxFieldTypes(ft.Results); idx < len(results) {
-			return t.typeKind(results[idx], depth+1)
-		}
-	}
-	return ctxRangeNone
-}
-
-// calleeType returns the signature of the function or method of the file that
-// call calls, nil when that is not known.
-func (t *ctxRangeTracker) calleeType(call *ast.CallExpr, stack []ast.Node) *ast.FuncType {
-	switch fun := ast.Unparen(call.Fun).(type) {
-	case *ast.FuncLit:
-		return fun.Type
-	case *ast.Ident:
-		if decl := t.env.funcDecl[fun.Name]; decl != nil {
-			return decl.Type
-		}
-	case *ast.SelectorExpr:
-		if recv := ctxTypeName(t.env.typeOf(fun.X, stack)); recv != "" {
-			if decl := t.env.methods[recv+"."+fun.Sel.Name]; decl != nil {
-				return decl.Type
-			}
-		}
-	}
-	return nil
-}
-
 // isRangeCall reports whether call is c.Range(size) on a fiber context.
 func (t *ctxRangeTracker) isRangeCall(call *ast.CallExpr, stack []ast.Node) bool {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != ctxRange || len(call.Args) != 1 || call.Ellipsis.IsValid() {
+		return false
+	}
+	if t.env.isCtxType(sel.X) {
 		return false
 	}
 	kind, _ := t.env.receiverKindVia(sel, stack, "")
 	return kind == ctxYes
 }
 
-// checkSource looks at where the two results of c.Range(size) go. They are
-// followed when they are assigned to variables or returned as the results of
-// a function that is declared to return them.
-func (t *ctxRangeTracker) checkSource(call *ast.CallExpr, stack []ast.Node) {
-	if !t.isRangeCall(call, stack) {
-		return
-	}
-
-	followed := false
-	switch p := ctxParent(stack).(type) {
-	case *ast.ExprStmt:
-		followed = true
-	case *ast.AssignStmt:
-		followed = len(p.Lhs) == 2 && len(p.Rhs) == 1 && t.holdsValue(p.Lhs[0], p.Tok == token.DEFINE, stack)
-	case *ast.ValueSpec:
-		followed = len(p.Names) == 2 && len(p.Values) == 1 && (p.Type == nil || t.typeKind(p.Type, 0) == ctxRangeValue)
-	case *ast.ReturnStmt:
-		if ft := ctxEnclosingFuncType(stack); ft != nil {
-			results := ctxFieldTypes(ft.Results)
-			followed = len(p.Results) == 1 && len(results) == 2 && t.typeKind(results[0], 0) == ctxRangeValue
-		}
-	}
-	if !followed {
-		t.noter.oncef("range", call.Pos(), ctxRangeNote)
-	}
+// isSet reports whether the shape has the Start and End of a fiber.RangeSet: it is
+// one, or it is a struct that embeds one and does not declare the fields itself.
+func (t *ctxRangeTracker) isSet(s *rshape) bool {
+	return t.promotesSet(s, 0)
 }
 
-// holdsValue reports whether the target of an assignment is a place that holds
-// a fiber.Range: a variable the assignment declares, the blank identifier, or
-// anything that is declared with that type.
-func (t *ctxRangeTracker) holdsValue(target ast.Expr, declares bool, stack []ast.Node) bool {
-	if id, ok := target.(*ast.Ident); ok && (id.Name == "_" || declares) {
-		return true
+func (t *ctxRangeTracker) promotesSet(s *rshape, depth int) bool {
+	if s == nil || depth > rMaxDepth {
+		return false
 	}
-	return t.kindOf(target, stack, 0) == ctxRangeValue
+	switch s.kind {
+	case rkSet:
+		return true
+	case rkStruct:
+		if s.fields == nil {
+			return false
+		}
+		for _, f := range s.fields.List {
+			for _, id := range f.Names {
+				if id.Name == "Start" || id.Name == "End" {
+					return false
+				}
+			}
+		}
+		for _, f := range s.fields.List {
+			if len(f.Names) == 0 && t.promotesSet(t.typeShape(f.Type, s.subst, depth+1), depth+1) {
+				return true
+			}
+		}
+	case rkNone, rkRange, rkSlice, rkMap, rkChan, rkFunc, rkIface, rkParam:
+	}
+	return false
 }
 
 // isRangeField reports whether sel reads or writes the Start or the End of a range.
 func (t *ctxRangeTracker) isRangeField(sel *ast.SelectorExpr, stack []ast.Node) bool {
-	return (sel.Sel.Name == "Start" || sel.Sel.Name == "End") && t.kindOf(sel.X, stack, 0) == ctxRangeSet
+	return (sel.Sel.Name == "Start" || sel.Sel.Name == "End") && t.isSet(t.shapeOf(sel.X, stack))
 }
 
 // checkRead converts the Start or the End of a range, which is an int64 now,
-// where it is read: v2 gave an int, and so does the conversion.
+// where it is read: v2 gave an int, and so does the conversion. A Start or End of
+// a value whose type is not known is reported when the file handles ranges.
 func (t *ctxRangeTracker) checkRead(sel *ast.SelectorExpr, stack []ast.Node) {
-	if t.keep[sel] || !t.isRangeField(sel, stack) {
+	if sel.Sel.Name != "Start" && sel.Sel.Name != "End" {
+		return
+	}
+	if _, isCall := ctxParentCall(sel, stack); isCall {
+		return // a method of that name
+	}
+
+	shape := t.shapeOf(sel.X, stack)
+	if shape == nil && t.active {
+		t.noter.oncef("range-unknown", sel.Pos(), "%s", ctxRangeUnknownNote)
+	}
+	if t.keep[sel] || !t.isSet(shape) {
 		return
 	}
 
@@ -394,7 +280,7 @@ func (t *ctxRangeTracker) checkRead(sel *ast.SelectorExpr, stack []ast.Node) {
 		return
 	case *ast.UnaryExpr:
 		if p.Op == token.AND {
-			t.noter.oncef("range", sel.Pos(), ctxRangeNote)
+			t.noter.oncef("range", sel.Pos(), "%s", ctxRangeNote)
 			return
 		}
 	case *ast.CallExpr:
@@ -410,6 +296,59 @@ func (t *ctxRangeTracker) checkRead(sel *ast.SelectorExpr, stack []ast.Node) {
 	})
 }
 
+// checkConversion rewrites the conversion of a range to a struct of the code, and
+// of such a struct to a range. In v2 span(rs) was valid when span had the
+// fields Start and End of type int; the fields of a RangeSet are int64 now, so
+// the struct is made from them.
+func (t *ctxRangeTracker) checkConversion(call *ast.CallExpr, stack []ast.Node) {
+	if len(call.Args) != 1 || call.Ellipsis.IsValid() || !t.isTypeExpr(ast.Unparen(call.Fun), stack) {
+		return
+	}
+
+	to, from := t.typeShape(call.Fun, nil, 0), t.shapeOf(call.Args[0], stack)
+	var elem string
+	switch {
+	case from != nil && from.kind == rkSet && t.isStartEndStruct(to):
+		elem = "int"
+	case to != nil && to.kind == rkSet && t.isStartEndStruct(from):
+		elem = "int64"
+	default:
+		return
+	}
+
+	g := t.env.g
+	target := g.text(call.Fun)
+	arg := call.Args[0]
+	pure := ctxIsPure(arg)
+	t.plan.add(func(e *editSet) {
+		operand := ctxRenderNode(e, g, arg)
+		if pure {
+			e.replaceNode(g, call, target+"{Start: "+elem+"("+operand+".Start), End: "+elem+"("+operand+".End)}")
+			return
+		}
+		e.replaceNode(g, call, "func(v "+t.env.qual(ctxTypeRangeSet)+") "+target+" {\nreturn "+target+"{Start: "+elem+"(v.Start), End: "+elem+"(v.End)}\n}("+operand+")")
+	})
+}
+
+// isStartEndStruct reports whether the shape is a struct with the two fields
+// Start and End of type int, the shape of the RangeSet of v2.
+func (t *ctxRangeTracker) isStartEndStruct(s *rshape) bool {
+	if s == nil || s.kind != rkStruct || s.fields == nil {
+		return false
+	}
+
+	var names []string
+	for _, f := range s.fields.List {
+		if !isIdentNamed(f.Type, "int") {
+			return false
+		}
+		for _, id := range f.Names {
+			names = append(names, id.Name)
+		}
+	}
+	return slices.Equal(names, []string{"Start", "End"})
+}
+
 // checkAssign converts what is assigned to the Start or the End of a range to
 // int64.
 func (t *ctxRangeTracker) checkAssign(as *ast.AssignStmt, stack []ast.Node) {
@@ -423,7 +362,7 @@ func (t *ctxRangeTracker) checkAssign(as *ast.AssignStmt, stack []ast.Node) {
 			continue
 		}
 		if len(as.Lhs) != len(as.Rhs) {
-			t.noter.oncef("range", sel.Pos(), ctxRangeNote)
+			t.noter.oncef("range", sel.Pos(), "%s", ctxRangeNote)
 			return
 		}
 		t.checkInt64(as.Rhs[i], stack)
@@ -432,7 +371,8 @@ func (t *ctxRangeTracker) checkAssign(as *ast.AssignStmt, stack []ast.Node) {
 
 // checkLiteral converts the values in a literal of a range to int64.
 func (t *ctxRangeTracker) checkLiteral(lit *ast.CompositeLit, stack []ast.Node) {
-	if t.litKind(lit, stack, 0) != ctxRangeSet {
+	shape := t.shapeOf(lit, stack)
+	if shape == nil || shape.kind != rkSet {
 		return
 	}
 
@@ -478,26 +418,27 @@ func (t *ctxRangeTracker) checkInt64(e ast.Expr, stack []ast.Node) {
 // a place that the tracker does not follow.
 func (t *ctxRangeTracker) flowsOut(e ast.Expr, stack []ast.Node) bool {
 	switch p := ctxParent(stack).(type) {
-	case *ast.SelectorExpr, *ast.ParenExpr, *ast.StarExpr, *ast.BinaryExpr, *ast.RangeStmt, *ast.IndexExpr, *ast.SliceExpr:
-		return false // the range is looked at through the expression it is part of
-	case *ast.Field, *ast.TypeSpec, *ast.FuncDecl, *ast.LabeledStmt, *ast.BranchStmt, *ast.CaseClause:
-		return false // the name of a declaration, or a comparison
-	case *ast.UnaryExpr:
-		return p.Op != token.AND
 	case *ast.AssignStmt:
-		return t.assignFlowsOut(p, e, stack)
+		return t.holdsRange(e, stack) && t.assignFlowsOut(p, e, stack)
 	case *ast.ValueSpec:
-		return slices.Index(p.Values, e) >= 0 && p.Type != nil && t.typeKind(p.Type, 0) == ctxRangeNone
+		return slices.Index(p.Values, e) >= 0 && p.Type != nil && t.holdsRange(e, stack) && t.typeShape(p.Type, nil, 0) == nil
 	case *ast.ReturnStmt:
-		return t.returnFlowsOut(p, e, stack)
+		return t.holdsRange(e, stack) && t.returnFlowsOut(p, e, stack)
 	case *ast.CallExpr:
-		return p.Fun != e && t.argFlowsOut(p, e, stack)
+		return p.Fun != e && t.holdsRange(e, stack) && t.argFlowsOut(p, e, stack)
 	case *ast.CompositeLit:
-		return t.litKind(p, stack[:len(stack)-1], 0) == ctxRangeNone
+		return t.holdsRange(e, stack) && t.shapeOf(p, stack[:len(stack)-1]) == nil
 	case *ast.KeyValueExpr:
-		return t.valueFlowsOut(p, e, stack)
+		return t.holdsRange(e, stack) && t.valueFlowsOut(p, e, stack)
+	case *ast.SendStmt:
+		return p.Value == e && t.holdsRange(e, stack) && t.shapeOf(p.Chan, stack) == nil
 	}
-	return true
+	return false
+}
+
+// holdsRange reports whether the value e is, or holds, a range.
+func (t *ctxRangeTracker) holdsRange(e ast.Expr, stack []ast.Node) bool {
+	return t.shapeOf(e, stack).holdsRange()
 }
 
 // assignFlowsOut is flowsOut for a value on the right side of an assignment.
@@ -509,14 +450,14 @@ func (t *ctxRangeTracker) assignFlowsOut(as *ast.AssignStmt, e ast.Expr, stack [
 	case len(as.Rhs) == 1:
 		i = 0 // the first of the results of a call
 	case len(as.Lhs) != len(as.Rhs):
-		return true
+		return false
 	}
 
 	target := as.Lhs[i]
 	if id, ok := target.(*ast.Ident); ok && (id.Name == "_" || as.Tok == token.DEFINE) {
 		return false // the new variable is what it is initialized with
 	}
-	return t.kindOf(target, stack, 0) == ctxRangeNone
+	return t.shapeOf(target, stack) == nil
 }
 
 // returnFlowsOut is flowsOut for a value that is returned.
@@ -524,10 +465,13 @@ func (t *ctxRangeTracker) returnFlowsOut(ret *ast.ReturnStmt, e ast.Expr, stack 
 	ft := ctxEnclosingFuncType(stack)
 	i := slices.Index(ret.Results, e)
 	if ft == nil || i < 0 {
-		return true
+		return false
 	}
 	results := ctxFieldTypes(ft.Results)
-	return len(results) != len(ret.Results) || t.typeKind(results[i], 0) == ctxRangeNone
+	if i >= len(results) {
+		return false
+	}
+	return t.typeShape(results[i], nil, 0) == nil
 }
 
 // valueFlowsOut is flowsOut for the value of a field in a composite literal.
@@ -538,16 +482,17 @@ func (t *ctxRangeTracker) valueFlowsOut(kv *ast.KeyValueExpr, e ast.Expr, stack 
 
 	lit, ok := stack[len(stack)-2].(*ast.CompositeLit)
 	if !ok {
-		return true
-	}
-	if t.litKind(lit, stack[:len(stack)-2], 0) != ctxRangeNone {
 		return false
 	}
-	key, isIdent := kv.Key.(*ast.Ident)
-	if !isIdent || lit.Type == nil {
+	shape := t.shapeOf(lit, stack[:len(stack)-2])
+	if shape == nil {
 		return true
 	}
-	return t.typeKind(t.env.structFieldType(lit.Type, key.Name, 0), 0) == ctxRangeNone
+	if shape.kind != rkStruct {
+		return false // the value of a map or an element of a slice: typed by the literal
+	}
+	key, isIdent := kv.Key.(*ast.Ident)
+	return !isIdent || t.member(shape, key.Name, 0) == nil
 }
 
 // argFlowsOut is flowsOut for an argument of a call.
@@ -558,26 +503,28 @@ func (t *ctxRangeTracker) argFlowsOut(call *ast.CallExpr, e ast.Expr, stack []as
 			return false
 		}
 	}
-	if root := ctxRootIdent(fun); root != nil && t.harmless[root.Name] {
+	if t.isTypeExpr(fun, stack) {
+		return false // a conversion
+	}
+	if root := ctxRootIdent(fun); root != nil && (t.harmless[root.Name] || slices.Contains(t.env.pkgNames, root.Name)) && t.isPackageName(root, stack) {
 		return false
 	}
 	if sel, ok := fun.(*ast.SelectorExpr); ok && t.env.receiverKind(sel, stack) == ctxYes {
 		return false // c.JSON(r)
 	}
 
-	ft := t.calleeType(call, stack)
-	if ft == nil {
+	fn := t.shapeOf(fun, stack)
+	if fn == nil || fn.kind != rkFunc {
 		return true
 	}
-	params := ctxFieldTypes(ft.Params)
 	i := slices.Index(call.Args, e)
 	switch {
-	case i < 0 || len(params) == 0:
+	case i < 0 || len(fn.params) == 0:
 		return true
-	case i >= len(params):
-		i = len(params) - 1
+	case i >= len(fn.params):
+		i = len(fn.params) - 1
 	}
-	return t.typeKind(params[i], 0) == ctxRangeNone
+	return fn.params[i] == nil
 }
 
 // ctxRootIdent returns the identifier an expression of selectors, calls and
