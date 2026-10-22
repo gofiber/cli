@@ -25,8 +25,6 @@ var (
 	// sentryContribPath is the import path of the Fiber middleware for sentry,
 	// before and after it moved below contrib/v3.
 	sentryContribPath = reviewContribPath("sentry|fibersentry")
-	// sentryAnyPath matches both.
-	sentryAnyPath = regexp.MustCompile(sentryRootPath.String() + `|` + sentryContribPath.String())
 )
 
 // sentryKind is what a value of sentry-go is.
@@ -49,7 +47,7 @@ var sentryTypeKinds = map[string]sentryKind{
 	"Scope":         sentryScope,
 	"Hub":           sentryHub,
 	"Event":         sentryEvent,
-	"Client":        sentryClient,
+	nameClient:      sentryClient,
 	"ClientOptions": sentryOptions,
 	"User":          sentryUser,
 }
@@ -73,7 +71,7 @@ var (
 
 // sentryMethodKinds are the methods of the values that return another value.
 var sentryMethodKinds = map[sentryKind]map[string]sentryKind{
-	sentryHub:    {"Scope": sentryScope, "PushScope": sentryScope, "Clone": sentryHub, "Client": sentryClient},
+	sentryHub:    {"Scope": sentryScope, "PushScope": sentryScope, "Clone": sentryHub, nameClient: sentryClient},
 	sentryScope:  {"Clone": sentryScope},
 	sentryClient: {"EventFromMessage": sentryEvent, "EventFromException": sentryEvent},
 }
@@ -117,7 +115,8 @@ func sentryNamesOf(file *ast.File) sentryNames {
 	return n
 }
 
-func (n sentryNames) any() bool { return len(n.root) > 0 || len(n.contrib) > 0 }
+// imported reports whether the file imports sentry-go or the middleware.
+func (n sentryNames) imported() bool { return len(n.root) > 0 || len(n.contrib) > 0 }
 
 // sentryFile answers the questions about the values of sentry-go in one file, and
 // holds the rewrite of the file being migrated.
@@ -242,6 +241,11 @@ func (f *sentryFile) callKind(call *ast.CallExpr, stack []ast.Node, depth int) s
 		if k := sentryMethodKinds[f.kindAt(fun.X, stack, depth+1)][fun.Sel.Name]; k != sentryUnknown {
 			return k
 		}
+		if t, ok := exprType(f.mf, call, stack, 0); ok {
+			if kind := f.run.modTypeKind(t); kind != sentryUnknown {
+				return kind
+			}
+		}
 		return f.run.methodKind(f, fun.Sel.Name)
 	case *ast.Ident:
 		if f.mf != nil && !modDeclaredLocally(fun.Name, fun.Pos(), stack) {
@@ -284,6 +288,11 @@ func (f *sentryFile) selectorKind(sel *ast.SelectorExpr, stack []ast.Node, depth
 	if id, ok := sel.X.(*ast.Ident); ok && f.isImport(id, stack) {
 		return f.declKind(f.mf.declOf(sel), depth)
 	}
+	if t, ok := exprType(f.mf, sel, stack, 0); ok {
+		if kind := f.run.modTypeKind(t); kind != sentryUnknown {
+			return kind
+		}
+	}
 	return f.run.fieldKind(f, sel.Sel.Name)
 }
 
@@ -306,6 +315,8 @@ func (f *sentryFile) declKind(d *modDecl, depth int) sentryKind {
 		if e, idx, ok := d.varInit(); ok && idx == 0 {
 			return f.run.fileOf(d.file).kindAt(e, nil, depth+1)
 		}
+	default:
+		// a constant or a type is not a value of sentry-go
 	}
 	return sentryUnknown
 }
@@ -316,18 +327,11 @@ func (f *sentryFile) declKind(d *modDecl, depth int) sentryKind {
 type sentryRun struct {
 	indexes moduleIndexes
 	files   map[*modFile]*sentryFile
-	fields  map[*moduleIndex]map[string]sentryKind
-	methods map[*moduleIndex]map[string]sentryKind
-	// own holds the fields and the methods of a file outside of a module.
-	own map[*goSource]sentryOwn
+	cache   kindTablesCache
 	// changed are the files written since the indexes read them.
 	changed []string
 	// the tallies of what the project is told once
 	extras, dropped sentryTally
-}
-
-type sentryOwn struct {
-	fields, methods map[string]sentryKind
 }
 
 // modTypeKind is the kind of a value of a type written in a file of the module.
@@ -365,130 +369,21 @@ func (r *sentryRun) fileOf(mf *modFile) *sentryFile {
 // fieldKind is the kind of the values that the fields called name hold, when every
 // struct of the module with such a field says the same.
 func (r *sentryRun) fieldKind(f *sentryFile, name string) sentryKind {
-	return r.tables(f).fields[name]
+	return sentryKind(r.tables(f).fields[name])
 }
 
 // methodKind is the kind of the first value that the methods called name return,
 // when every method of the module with that name says the same.
 func (r *sentryRun) methodKind(f *sentryFile, name string) sentryKind {
-	return r.tables(f).methods[name]
+	return sentryKind(r.tables(f).methods[name])
 }
 
 // tables returns the names of the fields and methods that hold values of sentry,
 // of the module of the file, or of the file alone outside of a module.
-func (r *sentryRun) tables(f *sentryFile) sentryOwn {
-	if f.mf != nil {
-		ix := f.mf.ix
-		if r.fields == nil {
-			r.fields, r.methods = map[*moduleIndex]map[string]sentryKind{}, map[*moduleIndex]map[string]sentryKind{}
-		}
-		if _, built := r.fields[ix]; !built {
-			r.fields[ix], r.methods[ix] = r.buildModuleTables(ix)
-		}
-		return sentryOwn{fields: r.fields[ix], methods: r.methods[ix]}
-	}
-
-	if t, built := r.own[f.g]; built {
-		return t
-	}
-	if r.own == nil {
-		r.own = map[*goSource]sentryOwn{}
-	}
-	t := f.ownTables()
-	r.own[f.g] = t
-	return t
-}
-
-// sentryTable collects the kinds that a name stands for, and drops the names that
-// stand for something else too.
-type sentryTable struct {
-	kinds map[string]sentryKind
-	mixed map[string]bool
-}
-
-func newSentryTable() *sentryTable {
-	return &sentryTable{kinds: map[string]sentryKind{}, mixed: map[string]bool{}}
-}
-
-func (t *sentryTable) add(name string, kind sentryKind) {
-	if prev, seen := t.kinds[name]; (seen && prev != kind) || kind == sentryUnknown {
-		t.mixed[name] = true
-	}
-	t.kinds[name] = kind
-}
-
-func (t *sentryTable) result() map[string]sentryKind {
-	out := map[string]sentryKind{}
-	for name, kind := range t.kinds {
-		if !t.mixed[name] {
-			out[name] = kind
-		}
-	}
-	return out
-}
-
-// buildModuleTables reads the structs and the methods of the module.
-func (r *sentryRun) buildModuleTables(ix *moduleIndex) (fields, methods map[string]sentryKind) {
-	ft, mt := newSentryTable(), newSentryTable()
-	for _, pkg := range ix.packages() {
-		for _, d := range pkg.decls(false) {
-			switch d.kind {
-			case modMethod:
-				kind := sentryUnknown
-				if results := d.results(); len(results) > 0 {
-					kind = r.modTypeKind(results[0])
-				}
-				mt.add(d.name, kind)
-			case modTypeDecl:
-				if d.typ.Assign.IsValid() {
-					continue
-				}
-				for _, fld := range (modType{d.file, d.typ.Type}).fields() {
-					ft.add(fld.name, r.modTypeKind(fld.typ))
-				}
-			}
-		}
-	}
-	return ft.result(), mt.result()
-}
-
-// ownTables reads the structs and the methods of a file that is outside of a
-// module.
-func (f *sentryFile) ownTables() sentryOwn {
-	ft, mt := newSentryTable(), newSentryTable()
-	for _, decl := range f.g.file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Recv != nil {
-				kind := sentryUnknown
-				if d.Type.Results != nil && len(d.Type.Results.List) > 0 {
-					kind = f.declaredKind(d.Type.Results.List[0].Type, nil)
-				}
-				mt.add(d.Name.Name, kind)
-			}
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-				st, isStruct := ts.Type.(*ast.StructType)
-				if !isStruct || st.Fields == nil {
-					continue
-				}
-				for _, fld := range st.Fields.List {
-					kind := f.declaredKind(fld.Type, nil)
-					if len(fld.Names) == 0 {
-						ft.add(modEmbeddedName(fld.Type), kind)
-					}
-					for _, id := range fld.Names {
-						ft.add(id.Name, kind)
-					}
-				}
-			}
-		}
-	}
-	return sentryOwn{fields: ft.result(), methods: mt.result()}
+func (r *sentryRun) tables(f *sentryFile) kindTables {
+	return r.cache.of(f.mf, f.g,
+		func(t modType) uint8 { return uint8(r.modTypeKind(t)) },
+		func(t ast.Expr) uint8 { return uint8(f.declaredKind(t, nil)) })
 }
 
 // sentryTally counts the places of a rewrite that the project is told about once,

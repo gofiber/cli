@@ -67,10 +67,10 @@ func mw1RunFiles(t *testing.T, migrate mw1Migration, files map[string]string) mw
 
 // mw1Module is what a migration did to a project that has a go.mod.
 type mw1Module struct {
-	mw1Result
 	// added are the Go files the migration wrote that the project did not have, by
 	// path below the project.
 	added map[string]string
+	mw1Result
 }
 
 // mw1RunModule is mw1RunFiles for a project in the module example.com/app, which

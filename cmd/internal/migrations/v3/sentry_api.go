@@ -53,16 +53,28 @@ func MigrateSentryAPI(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 // logImportPath is the import path of the log package of the standard library.
 var logImportPath = regexp.MustCompile(`^log$`)
 
+// the names of sentry-go that more than one place of this file asks about
+const (
+	sentryLoggerName     = "Logger"
+	sentrySetExtra       = "SetExtra"
+	sentrySetExtras      = "SetExtras"
+	sentryRemoveExtra    = "RemoveExtra"
+	sentryEnableLogs     = "EnableLogs"
+	sentryDisableLogs    = "DisableLogs"
+	sentryDisableMetrics = "DisableMetrics"
+	sentryProfilesRate   = "ProfilesSampleRate"
+)
+
 // sentryMentions are the texts that a file has to hold for the migration to look
 // at it: anything it rewrites or reports.
 var sentryMentions = []string{
-	"SetExtra", "RemoveExtra", ".Extra", "Extra:", "Logger", ".Client()", "EnableLogs", "DisableLogs",
-	"DisableMetrics", "ProfilesSampleRate", "Segment", "Metric",
+	sentrySetExtra, sentryRemoveExtra, ".Extra", "Extra:", sentryLoggerName, ".Client()", sentryEnableLogs, sentryDisableLogs,
+	sentryDisableMetrics, sentryProfilesRate, "Segment", "Metric",
 }
 
 // sentryCalls are the texts of the files that do not import sentry: they can call
 // the scope that a function of another package returns.
-var sentryCalls = []string{"SetExtra", "RemoveExtra", ".Extra"}
+var sentryCalls = []string{sentrySetExtra, sentryRemoveExtra, ".Extra"}
 
 func (r *sentryRun) migrate(content string, fi internal.FileInfo) string {
 	// the indexes read what the files were when they were first asked about; the
@@ -91,7 +103,7 @@ func (r *sentryRun) migrate(content string, fi internal.FileInfo) string {
 	ix := r.indexes.of(fi)
 	ix.packageIn(filepath.Dir(fi.Path)) // the file knows its package once the directory is read
 	f := &sentryFile{run: r, g: g, mf: ix.fileAt(fi.Path), names: names, fi: fi, rep: newMW1Reporter(g, fi), done: map[ast.Node]bool{}}
-	if !names.any() && f.mf == nil {
+	if !names.imported() && f.mf == nil {
 		return content // nothing tells what the values of the file are
 	}
 
@@ -185,7 +197,7 @@ func (f *sentryFile) call(call *ast.CallExpr, stack []ast.Node) {
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.SelectorExpr:
 		switch fun.Sel.Name {
-		case "SetExtra", "SetExtras", "RemoveExtra":
+		case sentrySetExtra, sentrySetExtras, sentryRemoveExtra:
 			f.extraCall(call, fun, stack)
 		}
 	case *ast.Ident:
@@ -203,7 +215,7 @@ func (f *sentryFile) call(call *ast.CallExpr, stack []ast.Node) {
 func (f *sentryFile) extraCall(call *ast.CallExpr, fun *ast.SelectorExpr, stack []ast.Node) {
 	name := fun.Sel.Name
 	if kind := f.kindOf(fun.X, stack); kind != sentryScope {
-		if kind == sentryUnknown && f.names.any() {
+		if kind == sentryUnknown && f.names.imported() {
 			f.rep.notef(fun.Sel, "%s was removed from sentry.Scope in sentry-go 0.46 and this file does not say what %s is: if it is a *sentry.Scope, "+
 				`use SetContext(key, sentry.Context{"value": value}), SetContexts or RemoveContext (left as it is)`, name, f.g.text(fun.X))
 		}
@@ -211,26 +223,26 @@ func (f *sentryFile) extraCall(call *ast.CallExpr, fun *ast.SelectorExpr, stack 
 	}
 
 	args := 2
-	if name != "SetExtra" {
+	if name != sentrySetExtra {
 		args = 1
 	}
 	if len(call.Args) != args || call.Ellipsis.IsValid() {
 		f.rep.notef(fun.Sel, "%s was removed from sentry.Scope in sentry-go 0.46: use SetContext, SetContexts or RemoveContext (left as it is)", name)
 		return
 	}
-	if key, isLiteral := mw1StringLiteral(call.Args[0]); isLiteral && name != "SetExtras" && slices.Contains(sentryReservedContexts, key) {
+	if key, isLiteral := mw1StringLiteral(call.Args[0]); isLiteral && name != sentrySetExtras && slices.Contains(sentryReservedContexts, key) {
 		f.rep.notef(fun.Sel, "%s was removed from sentry.Scope in sentry-go 0.46, and the key %q is the name of a context that the SDK sets on every event: "+
 			"give the context another name with SetContext (left as it is)", name, key)
 		return
 	}
 
 	switch name {
-	case "RemoveExtra":
+	case sentryRemoveExtra:
 		f.edits.replaceNode(f.g, fun.Sel, "RemoveContext")
-	case "SetExtra":
+	case sentrySetExtra:
 		f.edits.replaceNode(f.g, fun.Sel, "SetContext")
 		f.edits.replaceNode(f.g, call.Args[1], f.contextOf(call.Args[1], call.Pos(), stack))
-	case "SetExtras":
+	case sentrySetExtras:
 		f.edits.replaceNode(f.g, fun.Sel, "SetContexts")
 		f.contextMap(call.Args[0], call.Pos(), stack)
 	}
@@ -245,8 +257,9 @@ func (f *sentryFile) contextMap(e ast.Expr, pos token.Pos, stack []ast.Node) {
 		if mt, isMap := lit.Type.(*ast.MapType); isMap && f.isStringKey(mt.Key) && f.literalValuesAreKeyed(lit) {
 			f.edits.replaceNode(f.g, mt.Value, f.context(pos, stack))
 			for _, elt := range lit.Elts {
-				kv := elt.(*ast.KeyValueExpr)
-				f.edits.replaceNode(f.g, kv.Value, `{"value": `+f.g.text(kv.Value)+`}`)
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					f.edits.replaceNode(f.g, kv.Value, `{"value": `+f.g.text(kv.Value)+`}`)
+				}
 			}
 			return
 		}
@@ -284,7 +297,7 @@ func (f *sentryFile) assign(as *ast.AssignStmt, stack []ast.Node) {
 
 	switch lhs := ast.Unparen(as.Lhs[0]).(type) {
 	case *ast.IndexExpr:
-		// event.Extra[key] = value
+		// a key of the Extra map of an event is set
 		if sel := f.eventExtra(lhs.X, stack); sel != nil {
 			f.done[sel] = true
 			f.edits.replaceNode(f.g, sel.Sel, "Contexts")
@@ -307,7 +320,7 @@ func (f *sentryFile) assign(as *ast.AssignStmt, stack []ast.Node) {
 func (f *sentryFile) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	if id, ok := sel.X.(*ast.Ident); ok && f.isRoot(id, stack) {
 		switch {
-		case sel.Sel.Name == "Logger":
+		case sel.Sel.Name == sentryLoggerName:
 			if f.loggerValue(sel, stack) {
 				f.edits.replaceNode(f.g, sel.Sel, "DebugLogger")
 			}
@@ -372,6 +385,8 @@ func (f *sentryFile) literal(lit *ast.CompositeLit, stack []ast.Node) {
 		f.drop(lit, "Segment")
 	case sentryEvent:
 		f.eventLiteral(lit, stack)
+	default:
+		// nothing of the other types is gone
 	}
 }
 
@@ -430,11 +445,11 @@ func (f *sentryFile) optionsLiteral(lit *ast.CompositeLit) {
 		}
 
 		switch key.Name {
-		case "ProfilesSampleRate":
+		case sentryProfilesRate:
 			start, end := mw1ElementSpan(f.g, lit, i)
 			f.edits.replace(start, end, "")
 			f.tally(&f.run.dropped, kv.Pos())
-		case "EnableLogs", "DisableLogs", "DisableMetrics":
+		case sentryEnableLogs, sentryDisableLogs, sentryDisableMetrics:
 			if f.optionIsDefault(key.Name, kv.Value) {
 				start, end := mw1ElementSpan(f.g, lit, i)
 				f.edits.replace(start, end, "")
@@ -452,7 +467,7 @@ func (*sentryFile) optionIsDefault(name string, value ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	if name == "EnableLogs" {
+	if name == sentryEnableLogs {
 		return id.Name == "true"
 	}
 	return id.Name == "false"
@@ -460,7 +475,7 @@ func (*sentryFile) optionIsDefault(name string, value ast.Expr) bool {
 
 // reportOption tells that a removed option cannot be dropped.
 func (f *sentryFile) reportOption(at ast.Node, name string) {
-	if name == "EnableLogs" {
+	if name == sentryEnableLogs {
 		f.rep.notef(at, "ClientOptions.EnableLogs was removed in sentry-go 0.47: logs are sent whenever the code uses sentry.NewLogger or a logging integration, "+
 			"so leave out the code that you did not want to send (left as it is)")
 		return
@@ -473,15 +488,15 @@ func (f *sentryFile) reportOption(at ast.Node, name string) {
 // ClientOptions.
 func (f *sentryFile) optionAssignment(as *ast.AssignStmt, lhs *ast.SelectorExpr, stack []ast.Node) {
 	switch lhs.Sel.Name {
-	case "ProfilesSampleRate", "EnableLogs", "DisableLogs", "DisableMetrics":
+	case sentryProfilesRate, sentryEnableLogs, sentryDisableLogs, sentryDisableMetrics:
 	default:
 		return
 	}
 
-	if lhs.Sel.Name == "ProfilesSampleRate" || f.optionIsDefault(lhs.Sel.Name, as.Rhs[0]) {
+	if lhs.Sel.Name == sentryProfilesRate || f.optionIsDefault(lhs.Sel.Name, as.Rhs[0]) {
 		if start, end, ok := mw1StatementSpan(f.g, as, stack); ok {
 			f.edits.replace(start, end, "")
-			if lhs.Sel.Name == "ProfilesSampleRate" {
+			if lhs.Sel.Name == sentryProfilesRate {
 				f.tally(&f.run.dropped, as.Pos())
 			}
 			return
@@ -555,12 +570,12 @@ func isNilIdent(e ast.Expr) bool { return isIdentNamed(ast.Unparen(e), mw1NilIde
 // isLogger reports whether sel is sentry.Logger.
 func (f *sentryFile) isLogger(sel *ast.SelectorExpr, stack []ast.Node) bool {
 	id, ok := sel.X.(*ast.Ident)
-	return ok && sel.Sel.Name == "Logger" && f.isRoot(id, stack)
+	return ok && sel.Sel.Name == sentryLoggerName && f.isRoot(id, stack)
 }
 
 // loggerValue reports whether sentry.Logger is used as the variable of v2 and
 // not as the type that sentry-go has had since 0.35.
-func (f *sentryFile) loggerValue(sel *ast.SelectorExpr, stack []ast.Node) bool {
+func (*sentryFile) loggerValue(sel *ast.SelectorExpr, stack []ast.Node) bool {
 	if len(stack) == 0 {
 		return false
 	}
@@ -603,7 +618,7 @@ func (f *sentryFile) assignLogger(as *ast.AssignStmt, lhs *ast.SelectorExpr, sta
 	switch x := rhs.(type) {
 	case *ast.CallExpr:
 		sel, ok := x.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "New" || len(x.Args) != 3 || !f.isLogPackage(sel.X, stack) {
+		if !ok || sel.Sel.Name != mw2New || len(x.Args) != 3 || !f.isLogPackage(sel.X, stack) {
 			f.reportLoggerAssignment(as)
 			return
 		}
@@ -638,12 +653,7 @@ func (f *sentryFile) isLogPackage(e ast.Expr, stack []ast.Node) bool {
 	if hidden {
 		return false
 	}
-	for _, name := range importNames(f.g.src, logImportPath, "log") {
-		if name == id.Name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(importNames(f.g.src, logImportPath, "log"), id.Name)
 }
 
 // sentryMetricsAPI are the names that the metrics API of sentry-go had until 0.31.
