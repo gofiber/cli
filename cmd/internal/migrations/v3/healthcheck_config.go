@@ -492,7 +492,7 @@ func (h *hcMigration) configOf(newCall *ast.CallExpr, stack []ast.Node) (cfg hcC
 
 	switch arg := newCall.Args[0].(type) {
 	case *ast.CompositeLit:
-		if !mw1IsConfigLit(arg, h.names) {
+		if _, isConfig := mw1ConfigLit(arg, h.names); !isConfig {
 			h.reportUnmigrated(newCall, "its config is not a healthcheck.Config literal")
 			return cfg, split, false
 		}
@@ -607,7 +607,7 @@ func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack
 		h.reportUnmigrated(newCall, "its config "+id.Name+" is not declared next to it")
 		return cfg, split, false
 	}
-	if !mw1IsConfigLit(lit, h.names) {
+	if _, isConfig := mw1ConfigLit(lit, h.names); !isConfig {
 		h.reportUnmigrated(newCall, "its config "+id.Name+" is not a healthcheck.Config literal")
 		return cfg, split, false
 	}
@@ -745,7 +745,7 @@ func (h *hcMigration) splitDeclaration(lit *ast.CompositeLit, cfg hcConfig, read
 // collectV2Config remembers a healthcheck.Config literal that still has fields
 // of v2.
 func (h *hcMigration) collectV2Config(lit *ast.CompositeLit) {
-	if mw1IsConfigLit(lit, h.names) && hasV2OnlyField(lit) {
+	if _, isConfig := mw1ConfigLit(lit, h.names); isConfig && hasV2OnlyField(lit) {
 		h.v2Configs = append(h.v2Configs, lit)
 	}
 }

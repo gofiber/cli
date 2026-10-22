@@ -64,11 +64,14 @@ func mw1IsMember(e ast.Expr, names []string, member string) bool {
 	return ok && sel == member && slices.Contains(names, x)
 }
 
-// mw1IsConfigLit reports whether n is a composite literal of the Config type
-// of the package bound to names.
-func mw1IsConfigLit(n ast.Node, names []string) bool {
+// mw1ConfigLit reports whether n is a composite literal of the Config type of
+// the package bound to names, and returns it.
+func mw1ConfigLit(n ast.Node, names []string) (*ast.CompositeLit, bool) {
 	lit, ok := n.(*ast.CompositeLit)
-	return ok && lit.Type != nil && mw1IsMember(lit.Type, names, "Config")
+	if !ok || lit.Type == nil || !mw1IsMember(lit.Type, names, "Config") {
+		return nil, false
+	}
+	return lit, true
 }
 
 // mw1KeyValue returns the element `field: value` of a composite literal and its
@@ -84,6 +87,61 @@ func mw1KeyValue(lit *ast.CompositeLit, field string) (kv *ast.KeyValueExpr, ind
 		}
 	}
 	return nil, -1
+}
+
+// mw1IsConfigValue reports whether the declaration d is a value of the Config
+// type of the package bound to names: declared with that type, built from a
+// literal of it, or copied from its ConfigDefault.
+func mw1IsConfigValue(d decl, names []string) bool {
+	if d.typ != nil {
+		e := d.typ
+		if star, ok := e.(*ast.StarExpr); ok {
+			e = star.X
+		}
+		return mw1IsMember(e, names, "Config")
+	}
+
+	e := d.init
+	for e != nil {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.UnaryExpr:
+			if x.Op != token.AND {
+				return false
+			}
+			e = x.X
+		case *ast.CompositeLit:
+			return x.Type != nil && mw1IsMember(x.Type, names, "Config")
+		case *ast.SelectorExpr:
+			return mw1IsMember(x, names, "ConfigDefault")
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// mw1AssignedField recognizes `<config>.<field> = <value>` where <config> is a
+// variable holding a Config of the package bound to names.
+func mw1AssignedField(n ast.Node, stack []ast.Node, names []string) (as *ast.AssignStmt, field string, ok bool) {
+	as, isAssign := n.(*ast.AssignStmt)
+	if !isAssign || as.Tok != token.ASSIGN || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+		return nil, "", false
+	}
+	sel, isSel := as.Lhs[0].(*ast.SelectorExpr)
+	if !isSel {
+		return nil, "", false
+	}
+	id, isIdent := sel.X.(*ast.Ident)
+	if !isIdent {
+		return nil, "", false
+	}
+	d, found := resolveIdent(id.Name, id.Pos(), stack)
+	if !found || !mw1IsConfigValue(d, names) {
+		return nil, "", false
+	}
+	return as, sel.Sel.Name, true
 }
 
 // mw1Indent returns the whitespace that starts the line the offset is on.
@@ -125,9 +183,54 @@ func mw1TrailingComment(src string, i int) int {
 	return len(src)
 }
 
+// mw1ElementSpan returns the byte range that removes element i of a composite
+// literal: the element, its comma and the comment that trails it on its line.
+// When the element is alone on its lines, the lines go as well.
+func mw1ElementSpan(g *goSource, lit *ast.CompositeLit, i int) (start, end int) {
+	src := g.src
+	elt := lit.Elts[i]
+	start = g.offset(elt.Pos())
+	end = g.offset(elt.End())
+
+	comma := mw1SkipSpaces(src, end)
+	hasComma := comma < len(src) && src[comma] == ','
+	if hasComma {
+		end = comma + 1
+	}
+	commentEnd := mw1TrailingComment(src, end)
+
+	lineStart := strings.LastIndexByte(src[:start], '\n') + 1
+	aloneBefore := strings.TrimLeft(src[lineStart:start], " \t") == ""
+	rest := mw1SkipSpaces(src, commentEnd)
+	aloneAfter := rest >= len(src) || src[rest] == '\n'
+
+	switch {
+	case aloneBefore && aloneAfter:
+		if rest < len(src) {
+			rest++ // the newline
+		}
+		return lineStart, rest
+	case hasComma && commentEnd > end:
+		return start, commentEnd
+	case hasComma:
+		return start, mw1SkipSpaces(src, end)
+	default:
+		return start, end
+	}
+}
+
 // mw1MultiLine reports whether the literal spans more than one line.
 func mw1MultiLine(g *goSource, lit *ast.CompositeLit) bool {
 	return g.line(lit.Lbrace) != g.line(lit.Rbrace)
+}
+
+// mw1QuoteList renders a []string literal.
+func mw1QuoteList(items []string) string {
+	quoted := make([]string, len(items))
+	for i, item := range items {
+		quoted[i] = strconv.Quote(item)
+	}
+	return "[]string{" + strings.Join(quoted, ", ") + "}"
 }
 
 // mw1StringLiteral evaluates a string literal, an interpreted or a raw one, or a
@@ -216,4 +319,17 @@ func mw1UsesName(file *ast.File, name string) bool {
 		return !found
 	})
 	return found
+}
+
+// mw1ImportName returns the identifier the file uses for the package at path,
+// and whether the file has to import it first. name is the package name the
+// import gets when it has none.
+func mw1ImportName(src, path, name string) (ident string, add bool) {
+	re := regexp.MustCompile(`^` + regexp.QuoteMeta(path) + `$`)
+	for _, n := range importNames(src, re, name) {
+		if n != "." {
+			return n, false
+		}
+	}
+	return name, true
 }
