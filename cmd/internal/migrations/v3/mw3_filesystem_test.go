@@ -399,7 +399,12 @@ func config() static.Config {
 		}
 		return sub
 	}(), NotFoundHandler: func(c fiber.Ctx) error {
+		if c.Response().StatusCode() == fiber.StatusForbidden {
+			// a directory without an index: v2 answered 403 for it and sent the file only for a path that is not found
+			return fiber.ErrForbidden
+		}
 		c.Status(fiber.StatusOK)
+		c.Response().Header.Del(fiber.HeaderContentType)
 		return c.SendFile("dist/index.html", fiber.SendFile{FS: distFS})
 	}}
 }
@@ -866,7 +871,12 @@ func main() {
 	app.Use("/", static.New("dist", static.Config{
 		FS: distFS,
 		NotFoundHandler: func(c fiber.Ctx) error {
+			if c.Response().StatusCode() == fiber.StatusForbidden {
+				// a directory without an index: v2 answered 403 for it and sent the file only for a path that is not found
+				return fiber.ErrForbidden
+			}
 			c.Status(fiber.StatusOK)
+			c.Response().Header.Del(fiber.HeaderContentType)
 			return c.SendFile("dist/index.html", fiber.SendFile{FS: distFS})
 		},
 	}))
@@ -874,7 +884,12 @@ func main() {
 	app.Use("/files", static.New("", static.Config{
 		FS: os.DirFS("./files"),
 		NotFoundHandler: func(c fiber.Ctx) error {
+			if c.Response().StatusCode() == fiber.StatusForbidden {
+				// a directory without an index: v2 answered 403 for it and sent the file only for a path that is not found
+				return fiber.ErrForbidden
+			}
 			c.Status(fiber.StatusOK)
+			c.Response().Header.Del(fiber.HeaderContentType)
 			return c.SendFile("404.html", fiber.SendFile{FS: os.DirFS("./files"), MaxAge: 3600})
 		},
 		IndexNames: []string{"index.html"},
@@ -1289,4 +1304,165 @@ var _ = static.New("", static.Config{FS: os.DirFS(".")})
 			assert.Empty(t, res.notes)
 		})
 	}
+}
+
+// mw3ByHandHead is a library that serves its files with a handler of the
+// filesystem middleware that it calls itself.
+const mw3ByHandHead = `package swagger
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+`
+
+func Test_MigrateFilesystemMiddleware_HandlerCalledByHandAfterSettingThePath(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, mw3ByHandHead+`
+func New() fiber.Handler {
+	var (
+		count int
+		fs    = filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	)
+	return func(c *fiber.Ctx) error {
+		count++
+		p := c.Path(c.Params("*"))
+		if p == "" {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+		return fs(c)
+	}
+}
+
+func Typed() fiber.Handler {
+	var fs fiber.Handler = filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	return func(ctx *fiber.Ctx) error {
+		ctx.Path("/" + ctx.Params("*"))
+		return fs(ctx)
+	}
+}
+
+func Short() fiber.Handler {
+	fs := filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	return func(c *fiber.Ctx) error {
+		c.Path(c.Params("*"))
+		return fs(c)
+	}
+}
+`, v3.MigrateFilesystemMiddleware)
+
+	assert.Contains(t, got, `fs    = static.New("", static.Config{FS: os.DirFS("./files")})`)
+	if assert.Len(t, res.notes, 3, "%v", mw3Messages(res.notes)) {
+		for _, note := range res.notes {
+			assert.Contains(t, note.Message, "runs the static handler by hand after")
+			assert.Contains(t, note.Message, "the path set by hand is cut wrongly and the file is not found")
+		}
+		assert.Contains(t, res.notes[0].Message, `fs(c) runs the static handler by hand after c.Path(c.Params("*")) set another path`)
+		assert.Contains(t, res.notes[1].Message, "fs(ctx) runs the static handler by hand after ctx.Path")
+		assert.Contains(t, res.notes[0].Message, "c.SendFile(path, fiber.SendFile{FS: fsys})")
+	}
+}
+
+func Test_MigrateFilesystemMiddleware_HandlerThatIsNotCalledByHandHasNoNote(t *testing.T) {
+	t.Parallel()
+
+	_, res := mw3RunOne(t, mw3ByHandHead+`
+func Mount(app *fiber.App) {
+	fs := filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	app.Use("/files", fs)
+}
+
+// the handler is called, but the path is the one of the request
+func Wrap() fiber.Handler {
+	fs := filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	return func(c *fiber.Ctx) error {
+		if c.Query("raw") != "" {
+			return fs(c)
+		}
+		return c.Next()
+	}
+}
+
+// the path of another context is set
+func Other() fiber.Handler {
+	fs := filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	return func(c *fiber.Ctx) error {
+		other := c
+		other.Path("/x")
+		return fs(c)
+	}
+}
+
+// the path is set after the call
+func After() fiber.Handler {
+	fs := filesystem.New(filesystem.Config{Root: http.Dir("./files")})
+	return func(c *fiber.Ctx) error {
+		err := fs(c)
+		c.Path("/x")
+		return err
+	}
+}
+
+// a function that is not a handler of the middleware
+func Shadow() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		fs := func(c *fiber.Ctx) error { return c.Next() }
+		c.Path("/x")
+		return fs(c)
+	}
+}
+`, v3.MigrateFilesystemMiddleware)
+
+	assert.Empty(t, res.notes, "%v", mw3Messages(res.notes))
+}
+
+func Test_MigrateFilesystemMiddleware_NotFoundFileKeepsTheForbiddenOfADirectory(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use("/app", filesystem.New(filesystem.Config{
+		Root:         http.Dir("./dist"),
+		NotFoundFile: "index.html",
+	}))
+}
+`, v3.MigrateFilesystemMiddleware)
+
+	assert.Contains(t, got, "if c.Response().StatusCode() == fiber.StatusForbidden {")
+	assert.Contains(t, got, "return fiber.ErrForbidden")
+	assert.Contains(t, got, "c.Status(fiber.StatusOK)\n\t\t\tc.Response().Header.Del(fiber.HeaderContentType)\n\t\t\treturn c.SendFile(\"index.html\"")
+	assert.Empty(t, res.notes)
+
+	// the local `c` of the file does not clash with the context of the handler
+	got, _ = mw3RunOne(t, `package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/filesystem"
+)
+
+var c = http.Dir("./dist")
+
+func main() {
+	app := fiber.New()
+	app.Use(filesystem.New(filesystem.Config{Root: c, NotFoundFile: "index.html"}))
+}
+`, v3.MigrateFilesystemMiddleware)
+	assert.Contains(t, got, "NotFoundHandler: func(ctx fiber.Ctx) error {")
+	assert.Contains(t, got, "if ctx.Response().StatusCode() == fiber.StatusForbidden {")
+	assert.Contains(t, got, "ctx.Response().Header.Del(fiber.HeaderContentType)")
 }

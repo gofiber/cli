@@ -84,6 +84,7 @@ type mw3FSPass struct {
 	stringsName string
 	fiberName   string
 	refs        []mw3FSRef
+	stored      []mw3FSStored
 	assigns     []mw3FSAssign
 	// names are the identifiers the file binds to the filesystem package, http
 	// and fiber the ones for net/http and the fiber package.
@@ -135,6 +136,7 @@ func mw3FilesystemContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) strin
 	for _, a := range p.assigns {
 		p.assign(a)
 	}
+	p.calledByHand()
 
 	out := p.edits.apply(src)
 	if out == src {
@@ -362,6 +364,7 @@ func (p *mw3FSPass) reference(ref mw3FSRef) {
 // newCall migrates filesystem.New(cfg) to static.New("", cfg).
 func (p *mw3FSPass) newCall(call *ast.CallExpr, ref mw3FSRef) {
 	p.qualifier(ref)
+	p.remember(call, ref.stack)
 
 	prefix := `""`
 	if text, ok := p.prefix[call]; ok {
@@ -619,6 +622,11 @@ func (p *mw3FSPass) index(kv *ast.KeyValueExpr, stack []ast.Node) {
 // v2 did, because the file server has set the 404 by then. v2 gave that file the
 // MaxAge of the config as well, which the file server of v3 does not for a file
 // its handler sends.
+//
+// The file server of v3 calls the handler for a directory without an index too,
+// which it answers with a 403, where v2 answered 403 and sent no file: the handler
+// gives the 403 back. The content type that the response has when the handler is
+// called (a 403 has a text one) is dropped, so that the file brings its own.
 func (p *mw3FSPass) notFoundFile(kv, maxAge *ast.KeyValueExpr, fsys string, stack []ast.Node) {
 	g := p.g
 	if fsys == "" {
@@ -642,7 +650,12 @@ func (p *mw3FSPass) notFoundFile(kv, maxAge *ast.KeyValueExpr, fsys string, stac
 	}
 	fiber := p.fiberQualifier()
 	handler := "NotFoundHandler: func(" + ctx + " " + fiber + "Ctx) error {\n" +
+		"if " + ctx + ".Response().StatusCode() == " + fiber + "StatusForbidden {\n" +
+		"// a directory without an index: v2 answered 403 for it and sent the file only for a path that is not found\n" +
+		"return " + fiber + "ErrForbidden\n" +
+		"}\n" +
 		ctx + ".Status(" + fiber + "StatusOK)\n" +
+		ctx + ".Response().Header.Del(" + fiber + "HeaderContentType)\n" +
 		"return " + ctx + ".SendFile(" + file + ", " + fiber + "SendFile{" + sendFile + "})\n" +
 		"}"
 	p.edits.replaceNode(g, kv, handler)
