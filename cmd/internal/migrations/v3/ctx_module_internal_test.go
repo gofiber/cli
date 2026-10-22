@@ -13,20 +13,24 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// ctxModuleTarget is the file of the modules these tests write that they ask the
+// environment about.
+const ctxModuleTarget = "cmd/api/main.go"
+
 // ctxModuleKinds writes the files as a module and returns, for every call of
 // probe in the target file, what the environment of that file says about its
 // receiver, keyed by the text of the first argument.
-func ctxModuleKinds(t *testing.T, files map[string]string, target string) map[string]ctxKind {
+func ctxModuleKinds(t *testing.T, files map[string]string) map[string]ctxKind {
 	t.Helper()
 
 	dir := modTestFiles(t, files)
-	path := filepath.Join(dir, filepath.FromSlash(target))
+	path := filepath.Join(dir, filepath.FromSlash(ctxModuleTarget))
 	src, err := os.ReadFile(path) // #nosec G304 -- a file the test wrote
 	require.NoError(t, err)
 
 	g, ok := parseSource(string(src))
 	require.True(t, ok)
-	env := newCtxRun().newEnv(internal.FileInfo{Root: dir, Path: path, Rel: target}, g, fiberNames(string(src)))
+	env := newCtxRun().newEnv(internal.FileInfo{Root: dir, Path: path, Rel: ctxModuleTarget}, g, fiberNames(string(src)))
 	return ctxKindsWith(g, env)
 }
 
@@ -237,7 +241,7 @@ func handlers(c *web.Ctx, c2 web.Ctx2, c3 util.Ctx3, w *web.Context, d *web.Deep
 `,
 	}
 
-	got := ctxModuleKinds(t, files, "cmd/api/main.go")
+	got := ctxModuleKinds(t, files)
 	want := map[string]ctxKind{
 		`"alias"`:                                                    ctxYes,
 		`"alias of an alias"`:                                        ctxYes,
@@ -362,7 +366,7 @@ type Context struct{ *fiber.Ctx }
 
 			files := maps.Clone(base)
 			files["cmd/api/main.go"] = "package main\n\n" + tc.source
-			assert.Equal(t, map[string]ctxKind{`"x"`: tc.want}, ctxModuleKinds(t, files, "cmd/api/main.go"))
+			assert.Equal(t, map[string]ctxKind{`"x"`: tc.want}, ctxModuleKinds(t, files))
 		})
 	}
 }
@@ -435,7 +439,7 @@ func handlers(c *Ctx, x *Context, wr *Wrapped, h *Holder) {
 `,
 	}
 
-	got := ctxModuleKinds(t, files, "cmd/api/main.go")
+	got := ctxModuleKinds(t, files)
 	want := map[string]ctxKind{
 		`"alias"`:   ctxYes,
 		`"wrapper"`: ctxYes,
@@ -756,7 +760,7 @@ func f() {
 		`"field of a name of a package of the module that the sibling dot-imports"`: ctxYes,
 		`"alias of a package of the module that the sibling dot-imports"`:           ctxYes,
 	}
-	assert.Equal(t, want, ctxModuleKinds(t, files, "cmd/api/main.go"))
+	assert.Equal(t, want, ctxModuleKinds(t, files))
 }
 
 func Test_ctxEnv_moreWaysToReachAContextOfAnotherPackage(t *testing.T) {
@@ -815,7 +819,7 @@ func handlers(wp *web.WithProvider, h *web.Holder, j *web.Job, v any, ch <-chan 
 `,
 	}
 
-	got := ctxModuleKinds(t, files, "cmd/api/main.go")
+	got := ctxModuleKinds(t, files)
 	for key, kind := range got {
 		assert.Equal(t, ctxYes, kind, key)
 	}
