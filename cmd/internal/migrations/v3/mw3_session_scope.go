@@ -22,6 +22,34 @@ const (
 	mw3SessionNewStore = "NewStore"
 )
 
+// mw3NeedImport returns the identifier the file uses for the package at path.
+// A file that does not import it yet gets the import scheduled, under the first
+// of the candidate names that the file does not use for something else.
+func mw3NeedImport(g *goSource, imports *mw3ImportEdits, path string, candidates ...string) string {
+	if name := mw3ImportName(g.src, path); name != "" {
+		return name
+	}
+	declared := mw3DeclaredNames(g.file)
+	name := mw3FreeName(func(name string) bool {
+		_, taken := declared[name]
+		return taken
+	}, candidates...)
+	imports.require(path, name)
+	return name
+}
+
+// mw3ImportHidden reports whether the file imports the package at path under a
+// name that a declaration hides where the node whose ancestors are stack sits,
+// so that the package cannot be used there.
+func mw3ImportHidden(g *goSource, path string, pos token.Pos, stack []ast.Node) bool {
+	name := mw3ImportName(g.src, path)
+	if name == "" {
+		return false
+	}
+	_, hidden := resolveIdent(name, pos, stack)
+	return hidden
+}
+
 // mw3SessionFacts is what the files of a package say about session stores,
 // which a function in another file of the package may use.
 type mw3SessionFacts struct {
@@ -377,5 +405,21 @@ func (f *mw3SessionFile) isConfigValue(e ast.Expr, stack []ast.Node) bool {
 	if _, isLit := f.isConfigLit(init, stack); isLit {
 		return true
 	}
-	return init != nil && f.isMember(init, mw3ConfigDefault, stack)
+	if init == nil {
+		return false
+	}
+	if f.isMember(init, mw3ConfigDefault, stack) {
+		return true
+	}
+
+	// A copy of a config is one: cfg := base, cfg := *ptr, cfg := store.Config.
+	switch x := init.(type) {
+	case *ast.Ident:
+		return f.isConfigValue(x, stack)
+	case *ast.StarExpr:
+		return f.isConfigValue(x.X, stack)
+	case *ast.SelectorExpr:
+		return x.Sel.Name == mw3Config && f.isStore(x.X, stack)
+	}
+	return false
 }

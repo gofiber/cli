@@ -404,6 +404,18 @@ func where(src session.Source) bool { return src == session.SourceCookie }
 `,
 			rewrite: mw3SessionSourceContent,
 		},
+		{
+			name: "session reads: the extractors package",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+var store = session.NewStore()
+
+func lookup() string { return store.KeyLookup }
+`,
+			rewrite: mw3SessionReadsContent,
+		},
 	}
 
 	for _, tc := range tests {
@@ -504,6 +516,16 @@ var _ = fiber.New
 	run("session extractor", sessionHeader, sessionBodies, mw3SessionExtractorContent)
 	run("session store", sessionHeader, sessionBodies, mw3SessionStoreContent)
 	run("session methods", sessionHeader, sessionBodies, mw3SessionMethodsContent)
+	readBodies := []string{
+		"var s = session.New()\nvar _ = s.KeyLookup",
+		"func f(s *session.Store) string {\n\treturn s.KeyLookup + s.CookieName\n}",
+		"func f(s *session.Store) {\n\tfmt.Println(\n\t\ts.KeyLookup,\n\t)\n}",
+		"var cfg = session.Config{KeyLookup: \"cookie:a\"}\nvar _ = cfg.KeyLookup",
+		"func f(a *session.Store) *session.Store {\n\treturn session.New(session.Config{KeyLookup: a.KeyLookup, /* c */ CookieSecure: true})\n}",
+		"func f(a *session.Store) *session.Store {\n\tcfg := session.ConfigDefault\n\tcfg.KeyLookup = a.KeyLookup\n\treturn session.New(cfg)\n}",
+		"func f(s *session.Store) {\n\ts.KeyLookup = \"x\"\n}",
+	}
 	run("session source", sessionHeader, sourceBodies, mw3SessionSourceContent)
+	run("session reads", sessionHeader, readBodies, mw3SessionReadsContent)
 	run("filesystem", fsHeader, fsBodies, mw3FilesystemContent)
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -29,10 +28,13 @@ const mw3StringsPkg = "strings"
 // the file) are left as they are, so that the build fails on them instead of the
 // session quietly using the default cookie, and are reported.
 //
-// The program may have built a lookup from the Source constants, which do not
-// exist in v3. The Source type is string and its constants are the strings they
-// stood for (mw3SessionSourceContent), and that is written first, in a pass over
-// the project of its own, so that the lookups are read as plain strings.
+// The program may have built a lookup from the Source constants, or read the
+// lookup of a store back. Neither exists in v3, and both are written as what they
+// were before the lookups are rewritten: the Source type is string and its
+// constants are the strings they stood for (mw3SessionSourceContent), and
+// store.KeyLookup and store.CookieName are computed from store.Extractor
+// (mw3SessionReadsContent). Each step is a pass over the project of its own, so
+// that the next one reads the whole project as the step before left it.
 func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	// Every step reads the project as the one before left it, with a view of the
 	// package of its own.
@@ -51,11 +53,15 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		cmd.Println("Migrating session Source constants")
 	}
 
+	reads, err := run(mw3SessionReadsContent)
+	if err != nil {
+		return fmt.Errorf("failed to migrate session lookup reads: %w", err)
+	}
 	lookups, err := run(mw3SessionExtractorContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate session extractor config: %w", err)
 	}
-	if lookups {
+	if reads || lookups {
 		cmd.Println("Migrating session KeyLookup config")
 	}
 	return nil
@@ -103,15 +109,7 @@ func mw3SessionExtractorContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs)
 // package, importing the package when the file does not yet.
 func (p *mw3SessionExtractorPass) extractorsName() string {
 	if p.extractors == "" {
-		p.extractors = mw3ImportName(p.f.g.src, mw3ExtractorsPath)
-		if p.extractors == "" {
-			declared := mw3DeclaredNames(p.f.g.file)
-			p.extractors = mw3FreeName(func(name string) bool {
-				_, taken := declared[name]
-				return taken
-			}, "extractors", "fiberextractors")
-			p.imports.require(mw3ExtractorsPath, p.extractors)
-		}
+		p.extractors = mw3NeedImport(p.f.g, &p.imports, mw3ExtractorsPath, "extractors", "fiberextractors")
 	}
 	return p.extractors
 }
@@ -157,7 +155,7 @@ const mw3QueryLookupNote = "a `query:` lookup now reads the cookie first and the
 // configLit migrates the lookup of a session.Config literal.
 func (p *mw3SessionExtractorPass) configLit(lit *ast.CompositeLit, stack []ast.Node) {
 	g := p.f.g
-	if mw3Field(lit, "Extractor") != nil {
+	if mw3Field(lit, mw3ExtractorField) != nil {
 		return
 	}
 	lookup := mw3Field(lit, mw3KeyLookup)
@@ -313,7 +311,7 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 	value, ok := p.strs.value(as.Rhs[0], stack)
 	if ok && sel.Sel.Name == mw3KeyLookup {
 		if expr, query, valid := p.extractor(value); valid {
-			p.edits.replaceNode(g, sel.Sel, "Extractor")
+			p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
 			p.edits.replaceNode(g, as.Rhs[0], expr)
 			p.imports.releaseIn(g, as.Rhs[0])
 			if query {
@@ -323,7 +321,7 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 		}
 	}
 	if ok && sel.Sel.Name == mw3CookieName && value != "" {
-		p.edits.replaceNode(g, sel.Sel, "Extractor")
+		p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
 		p.edits.replaceNode(g, as.Rhs[0], p.extractorsName()+".FromCookie("+strconv.Quote(value)+")")
 		p.imports.releaseIn(g, as.Rhs[0])
 		return
@@ -331,7 +329,7 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 	if !ok {
 		// The function reads the field the assignment sets, and nothing else of the config.
 		if fn, written := p.lookupFunc(sel.Sel.Name, g.text(as.Rhs[0])); written {
-			p.edits.replaceNode(g, sel.Sel, "Extractor")
+			p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
 			p.edits.replaceNode(g, as.Rhs[0], fn)
 			p.noteComputed(sel.Sel.Name, g.line(as.Pos()))
 			return
@@ -343,8 +341,10 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 			"Set Config.Extractor instead.", g.text(as))
 }
 
-// selector reports the session identifiers that v3 no longer has: the lookup
-// fields of a store, and a Source that could not be written as a string.
+// selector reports what the steps before this one left of the session
+// identifiers that v3 no longer has: a Source that could not be written as a
+// string, and a lookup field of a store or a config that is assigned to, whose
+// address is taken, or that was read where the extractors package is hidden.
 func (p *mw3SessionExtractorPass) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	g := p.f.g
 	if id, ok := sel.X.(*ast.Ident); ok && p.f.isPackage(id, stack) {
@@ -362,7 +362,8 @@ func (p *mw3SessionExtractorPass) selector(sel *ast.SelectorExpr, stack []ast.No
 		return
 	}
 	if len(stack) > 0 {
-		if as, ok := stack[len(stack)-1].(*ast.AssignStmt); ok && slices.ContainsFunc(as.Lhs, func(e ast.Expr) bool { return e == ast.Expr(sel) }) && p.f.isConfigValue(sel.X, stack) {
+		as, ok := stack[len(stack)-1].(*ast.AssignStmt)
+		if ok && as.Tok == token.ASSIGN && len(as.Lhs) == 1 && len(as.Rhs) == 1 && as.Lhs[0] == ast.Expr(sel) && p.f.isConfigValue(sel.X, stack) {
 			return // assign handles it
 		}
 	}
