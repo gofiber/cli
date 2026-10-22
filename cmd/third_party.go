@@ -188,7 +188,11 @@ func findContribModules(cwd string) ([]string, error) {
 func latestContribVersion(module string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("https://proxy.golang.org/%s%s/@latest", contribModulePrefix, module)
+	base, ok := internal.GoProxyBase()
+	if !ok {
+		return ""
+	}
+	url := fmt.Sprintf("%s/%s%s/@latest", base, contribModulePrefix, module)
 	b, status, err := cachedGET(ctx, url, nil)
 	if err != nil || status != 200 {
 		return ""
@@ -352,7 +356,11 @@ func findThirdPartyModules(cwd, repo string) (map[string]string, error) {
 func latestThirdPartyVersion(repo, module, major string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("https://proxy.golang.org/github.com/gofiber/%s/%s", repo, module)
+	base, ok := internal.GoProxyBase()
+	if !ok {
+		return ""
+	}
+	url := fmt.Sprintf("%s/github.com/gofiber/%s/%s", base, repo, module)
 	if major != "" {
 		url += "/" + major
 	}

@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"golang.org/x/mod/module"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 // importsModuleInfo is what the Go module proxy says about a module.
@@ -37,17 +37,7 @@ var importsHTTPClient = &http.Client{Timeout: importsProxyTimeout}
 // GOPROXY, or proxy.golang.org when it is not set. ok is false when GOPROXY
 // allows no proxy at all.
 func importsProxyBase() (base string, ok bool) {
-	goproxy, set := os.LookupEnv("GOPROXY")
-	if !set || strings.TrimSpace(goproxy) == "" {
-		return "https://proxy.golang.org", true
-	}
-
-	for _, entry := range strings.FieldsFunc(goproxy, func(r rune) bool { return r == ',' || r == '|' }) {
-		if strings.HasPrefix(entry, "https://") || strings.HasPrefix(entry, "http://") {
-			return strings.TrimRight(entry, "/"), true
-		}
-	}
-	return "", false
+	return internal.GoProxyBase()
 }
 
 func importsLookupOnProxy(path, vers string) (importsModuleInfo, error) {
