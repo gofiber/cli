@@ -122,7 +122,7 @@ func (fam importsFamily) retarget(f *gomod.File, unknown func(r *modfile.Require
 		}
 	}
 
-	f.DedupeRequires()
+	f.DedupeRequires(fam.module.MatchString)
 
 	for _, rep := range f.Replacements(fam.module.MatchString) {
 		m := fam.module.FindStringSubmatch(rep.Old.Path)

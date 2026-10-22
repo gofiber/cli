@@ -3,6 +3,7 @@ package gomod_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -154,12 +155,13 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.15
 	github.com/gofiber/fiber/v3 v3.0.0-beta.4
 	github.com/google/uuid v1.6.0
+	github.com/google/uuid v1.5.0
 )
 `)
 
 	_, err := gomod.Edit(dir, func(f *gomod.File) error {
 		f.SetRequire(f.Requires("github.com/gofiber/fiber/v2"), "github.com/gofiber/fiber/v3", "v3.6.1")
-		f.DedupeRequires()
+		f.DedupeRequires(func(path string) bool { return strings.HasPrefix(path, "github.com/gofiber/") })
 		return nil
 	})
 	require.NoError(t, err)
@@ -170,8 +172,9 @@ go 1.21
 require (
 	github.com/gofiber/fiber/v3 v3.6.1
 	github.com/google/uuid v1.6.0
+	github.com/google/uuid v1.5.0
 )
-`, read(t, path))
+`, read(t, path), "only the modules asked for are collapsed")
 }
 
 func Test_File_DropRequire(t *testing.T) {

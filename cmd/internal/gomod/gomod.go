@@ -348,13 +348,14 @@ func (f *File) SetReplaceOld(r *modfile.Replace, path, vers string) {
 	r.Old = module.Version{Path: path, Version: vers}
 }
 
-// DedupeRequires collapses requirements of the same module into one, the
-// first of them, at the highest version. Retargeting a requirement can leave
-// two of them for the same module.
-func (f *File) DedupeRequires() {
+// DedupeRequires collapses the requirements of the same module into one, the
+// first of them, at the highest version, for the modules that satisfy match.
+// Retargeting a requirement can leave two of them for the same module. Other
+// modules are left as they are, whatever the file says about them.
+func (f *File) DedupeRequires(match func(path string) bool) {
 	first := map[string]*modfile.Require{}
 	for _, r := range f.Require {
-		if r.Mod.Path == "" {
+		if r.Mod.Path == "" || !match(r.Mod.Path) {
 			continue
 		}
 		kept, seen := first[r.Mod.Path]

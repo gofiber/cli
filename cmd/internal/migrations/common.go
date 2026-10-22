@@ -141,7 +141,7 @@ func importsRetargetFiber(cwd string, f *gomod.File, target *semver.Version) {
 	for _, r := range f.Requirements(importsReFiberModulePath.MatchString) {
 		f.SetRequire(r, path, vers)
 	}
-	f.DedupeRequires()
+	f.DedupeRequires(importsReFiberModulePath.MatchString)
 
 	for _, rep := range f.Replacements(importsReFiberModulePath.MatchString) {
 		if rep.Old.Path != path {
