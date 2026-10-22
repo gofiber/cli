@@ -443,8 +443,9 @@ func show(sess *session.Session) []string {
 	assert.Contains(t, got, `stdfmt "fmt"`)
 	assert.Contains(t, got, "names[i] = stdfmt.Sprint(key)")
 
-	// The import is there, and hidden where the call is: the call is reported.
-	src := `package main
+	// The import is there, and hidden where one call is: that call uses the
+	// package under a second name, the other keeps the name of the file.
+	got, res := mw3RunOne(t, `package main
 
 import (
 	"fmt"
@@ -459,12 +460,45 @@ func show(sess *session.Session) []string {
 	_ = fmt
 	return sess.Keys()
 }
-`
-	got, res := mw3RunOne(t, src, v3.MigrateSessionMethods)
-	assert.Equal(t, src, got)
-	require.Len(t, res.notes, 1)
-	assert.Equal(t, 14, res.notes[0].Line)
-	assert.Contains(t, res.notes[0].Message, "sess.Keys() returns []any in v3")
+
+func plain(sess *session.Session) []string {
+	return sess.Keys()
+}
+`, v3.MigrateSessionMethods)
+	assert.Equal(t, `package main
+
+import (
+	"fmt"
+	stdfmt "fmt"
+
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+var _ = fmt.Sprint
+
+func show(sess *session.Session) []string {
+	fmt := "hidden"
+	_ = fmt
+	return func(keys []any) []string {
+		names := make([]string, len(keys))
+		for i, key := range keys {
+			names[i] = stdfmt.Sprint(key)
+		}
+		return names
+	}(sess.Keys())
+}
+
+func plain(sess *session.Session) []string {
+	return func(keys []any) []string {
+		names := make([]string, len(keys))
+		for i, key := range keys {
+			names[i] = fmt.Sprint(key)
+		}
+		return names
+	}(sess.Keys())
+}
+`, got)
+	assert.Empty(t, res.notes)
 }
 
 func Test_MigrateSessionMethods_KeysOnlyOfSessions(t *testing.T) {

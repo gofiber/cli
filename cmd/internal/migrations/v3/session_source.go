@@ -23,11 +23,13 @@ const mw3SessionSource = "Source"
 
 // mw3SessionSourceValues are the constants of the removed Source type, with the
 // strings they stood for.
-var mw3SessionSourceValues = map[string]string{
-	"SourceCookie":   mw3SourceCookie,
-	"SourceHeader":   mw3SourceHeader,
-	"SourceURLQuery": mw3SourceQuery,
-}
+var mw3SessionSourceValues = func() map[string]string {
+	values := map[string]string{}
+	for _, c := range mw3SourceConstants {
+		values[c.name] = c.value
+	}
+	return values
+}()
 
 // mw3SessionSourceContent writes the Source type of the v2 session middleware as
 // the string it was, and its constants as the strings they stood for:
@@ -47,13 +49,19 @@ var mw3SessionSourceValues = map[string]string{
 // reads.
 //
 // One thing does change: v2 told a Source from a plain string where the type
-// is asked for, in a type assertion or a type switch, and string does not. Those
-// are reported.
+// is asked for, in a type assertion or a type switch, and string does not. A
+// module with such a place keeps the type, as SessionSource of its package
+// <module>/internal/fibermigrate (see sessionShimModuleFile), in every file that
+// uses it, so that the two stay apart. So does a module with a file that declares
+// the identifier string itself, where the type cannot be written as string.
 //
-// What cannot be written that way is left for the extractor rewrite to report:
-// an embedded field (its name would change), a file that declares string itself,
-// and the Source in a type switch that has a case string, which would be there
-// twice.
+// An embedded field is called after its type, Source, and stays so:
+//
+//	type lookups struct{ session.Source }  ->  type lookups struct{ Source string }
+//
+// What cannot be written is left for the extractor rewrite to report: a module
+// that needs the type and cannot have the package for it is told, and gets the
+// type as a string where that can be done.
 func mw3SessionSourceContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	if !strings.Contains(src, mw3SessionSource) {
 		return src
@@ -63,65 +71,104 @@ func mw3SessionSourceContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) st
 		return src
 	}
 	g := f.g
-	if _, hidden := mw3DeclaredNames(g.file)["string"]; hidden {
+	mode := pkgs.sourceMode(fi)
+	if _, hidden := mw3DeclaredNames(g.file)["string"]; hidden && mode.path == "" {
 		return src
 	}
 
-	var (
-		edits   editSet
-		imports mw3ImportEdits
-		twice   = map[*ast.SelectorExpr]struct{}{}
-	)
+	p := &mw3SessionSourcePass{f: f, fi: fi, mode: mode, twice: map[*ast.SelectorExpr]struct{}{}}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.TypeSwitchStmt:
-			for _, sel := range mw3SourcesNextToString(f, n, stack) {
-				twice[sel] = struct{}{}
+			if mode.path == "" {
+				for _, sel := range mw3SourcesNextToString(f, n, stack) {
+					p.twice[sel] = struct{}{}
+				}
 			}
 			return true
 		case *ast.TypeAssertExpr:
-			if n.Type != nil && f.isMember(n.Type, mw3SessionSource, stack) {
+			if mode.path == "" && n.Type != nil && f.isMember(n.Type, mw3SessionSource, stack) {
 				internal.Notef(fi, g.line(n.Pos()), mw3SourceTypeTestNote, g.text(n.Type))
 			}
 			return true
-		}
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		id, ok := sel.X.(*ast.Ident)
-		if !ok || !f.isPackage(id, stack) {
-			return true
-		}
-
-		switch name := sel.Sel.Name; {
-		case name == mw3SessionSource:
-			if _, dup := twice[sel]; !dup && !mw3IsEmbeddedField(stack) {
-				edits.replaceNode(g, sel, "string")
-				imports.releaseIn(g, sel)
-				if mw3IsTypeSwitchCase(stack) {
-					internal.Notef(fi, g.line(sel.Pos()), mw3SourceTypeTestNote, g.text(sel))
-				}
-			}
-		case mw3SessionSourceValues[name] != "":
-			literal := strconv.Quote(mw3SessionSourceValues[name])
-			if conversion := mw3StringConversion(sel, stack); conversion != nil {
-				// string(session.SourceCookie) is the string itself.
-				edits.replaceNode(g, conversion, literal)
-				imports.releaseIn(g, conversion)
-				return true
-			}
-			edits.replaceNode(g, sel, literal)
-			imports.releaseIn(g, sel)
+		case *ast.SelectorExpr:
+			p.selector(n, stack)
 		}
 		return true
 	})
 
-	out := edits.apply(src)
+	out := p.edits.apply(src)
 	if out == src {
 		return src
 	}
-	return imports.apply(out)
+	return p.imports.apply(out)
+}
+
+// mw3SessionSourcePass is the rewrite of one file by mw3SessionSourceContent.
+type mw3SessionSourcePass struct {
+	f    *mw3SessionFile
+	fi   internal.FileInfo
+	mode *mw3SourceMode
+	// twice are the Source types of a type switch that has a case string as well:
+	// the two would be one case.
+	twice   map[*ast.SelectorExpr]struct{}
+	imports mw3ImportEdits
+	edits   editSet
+}
+
+// typeName returns the text that takes the place of session.Source: string, or the
+// type of the module package.
+func (p *mw3SessionSourcePass) typeName(sel *ast.SelectorExpr, stack []ast.Node, name string) string {
+	if p.mode.path == "" {
+		return "string"
+	}
+	pkg := p.f.importAt(&p.imports, p.mode.path, sel.Pos(), stack, nil, moduleShimPkg)
+	return pkg + "." + name
+}
+
+// selector rewrites session.Source and its constants.
+func (p *mw3SessionSourcePass) selector(sel *ast.SelectorExpr, stack []ast.Node) {
+	g := p.f.g
+	id, ok := sel.X.(*ast.Ident)
+	if !ok || !p.f.isPackage(id, stack) {
+		return
+	}
+
+	switch name := sel.Sel.Name; {
+	case name == mw3SessionSource:
+		if _, dup := p.twice[sel]; dup {
+			return
+		}
+		if field, pointer := mw3EmbeddedSource(stack); field != nil {
+			// The field is called Source, whatever the type is written as.
+			text := "Source " + p.typeName(sel, stack, sessionShimType)
+			if pointer {
+				text = "Source *" + p.typeName(sel, stack, sessionShimType)
+			}
+			p.edits.replaceNode(g, field.Type, text)
+			p.imports.releaseIn(g, field.Type)
+			return
+		}
+		p.edits.replaceNode(g, sel, p.typeName(sel, stack, sessionShimType))
+		p.imports.releaseIn(g, sel)
+		if p.mode.path == "" && mw3IsTypeSwitchCase(stack) {
+			internal.Notef(p.fi, g.line(sel.Pos()), mw3SourceTypeTestNote, g.text(sel))
+		}
+	case mw3SessionSourceValues[name] != "":
+		literal := strconv.Quote(mw3SessionSourceValues[name])
+		if conversion := mw3StringConversion(sel, stack); conversion != nil {
+			// string(session.SourceCookie) is the string itself.
+			p.edits.replaceNode(g, conversion, literal)
+			p.imports.releaseIn(g, conversion)
+			return
+		}
+		if p.mode.path == "" {
+			p.edits.replaceNode(g, sel, literal)
+		} else {
+			p.edits.replaceNode(g, sel, p.typeName(sel, stack, sessionShimConstants[name]))
+		}
+		p.imports.releaseIn(g, sel)
+	}
 }
 
 const mw3SourceTypeTestNote = "%s is string now, and no type of its own: this also matches a plain string, which it did not in v2."
@@ -179,25 +226,32 @@ func mw3StringConversion(arg ast.Expr, stack []ast.Node) *ast.CallExpr {
 	return call
 }
 
-// mw3IsEmbeddedField reports whether the type whose ancestors are stack is the
-// type of an embedded field of a struct, whose name is the name of the type.
-func mw3IsEmbeddedField(stack []ast.Node) bool {
+// mw3EmbeddedSource returns the embedded field of a struct whose type is the one
+// whose ancestors are stack, and whether the type is a pointer. It is nil when the
+// type is not that of an embedded field.
+func mw3EmbeddedSource(stack []ast.Node) (field *ast.Field, pointer bool) {
 	i := len(stack) - 1
 	for i >= 0 {
 		switch stack[i].(type) {
-		case *ast.StarExpr, *ast.ParenExpr:
+		case *ast.StarExpr:
+			pointer = true
+			i--
+			continue
+		case *ast.ParenExpr:
 			i--
 			continue
 		}
 		break
 	}
 	if i < 2 {
-		return false
+		return nil, false
 	}
 	field, ok := stack[i].(*ast.Field)
 	if !ok || len(field.Names) > 0 {
-		return false
+		return nil, false
 	}
-	_, inStruct := stack[i-2].(*ast.StructType)
-	return inStruct
+	if _, inStruct := stack[i-2].(*ast.StructType); !inStruct {
+		return nil, false
+	}
+	return field, pointer
 }

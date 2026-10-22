@@ -26,7 +26,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/session"
 )
 
-var store = session.New(session.Config{KeyLookup: "header:X-SID"})
+var store *session.Store
+
+func init() { store = session.New(session.Config{KeyLookup: "header:X-SID"}) }
 
 func lookup() string {
 	return store.KeyLookup
@@ -46,7 +48,9 @@ import (
 	"github.com/gofiber/fiber/v3/extractors"
 )
 
-var store = session.New(session.Config{Extractor: extractors.FromHeader("X-SID")})
+var store *session.Store
+
+func init() { store = session.New(session.Config{Extractor: extractors.FromHeader("X-SID")}) }
 
 func lookup() string {
 	return func(e extractors.Extractor) string {
@@ -77,10 +81,10 @@ var _ = fmt.Sprint
 	assert.Contains(t, res.out, "Migrating session KeyLookup config")
 
 	require.Len(t, res.notes, 2)
-	assert.Equal(t, 12, res.notes[0].Line)
+	assert.Equal(t, 14, res.notes[0].Line)
 	assert.Contains(t, res.notes[0].Message, "store.KeyLookup is rebuilt from the Extractor")
 	assert.Contains(t, res.notes[0].Message, "an extractor that you wrote yourself")
-	assert.Equal(t, 15, res.notes[1].Line)
+	assert.Equal(t, 17, res.notes[1].Line)
 	assert.Contains(t, res.notes[1].Message, "store.CookieName is the name of the cookie the Extractor reads")
 	assert.Contains(t, res.notes[1].Message, "the value differs in that case")
 }
@@ -99,7 +103,9 @@ import (
 	fsession "github.com/gofiber/fiber/v2/middleware/session"
 )
 
-var store = fsession.New()
+var store *fsession.Store
+
+func init() { store = fsession.New() }
 
 type app struct {
 	sessions *fsession.Store
@@ -147,11 +153,10 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/session"
 )
 
-func main() {
-	custom := session.Config{KeyLookup: "cookie:c"}
+func main(custom session.Config) {
 	var zero session.Config
-	defaults := session.ConfigDefault
-	fmt.Println(custom.KeyLookup, zero.KeyLookup, defaults.KeyLookup, session.ConfigDefault.KeyLookup)
+	other := &custom
+	fmt.Println(custom.KeyLookup, zero.KeyLookup, other.KeyLookup)
 }
 `, v3.MigrateSessionExtractor)
 
@@ -160,10 +165,176 @@ func main() {
 	assert.Equal(t, 3, strings.Count(got, "if e.Extract == nil {"), got)
 	assert.Contains(t, got, "}(custom.Extractor), func")
 	assert.Contains(t, got, "}(zero.Extractor), func")
-	assert.Contains(t, got, "}(defaults.Extractor), func")
-	assert.Contains(t, got, "}(session.ConfigDefault.Extractor))")
+	assert.Contains(t, got, "}(other.Extractor))")
 	assert.NotContains(t, got, ".KeyLookup")
-	assert.Len(t, res.notes, 4)
+	assert.Len(t, res.notes, 3)
+}
+
+// A config that the program makes in view has the strings it was given, and a
+// read is that string.
+func Test_MigrateSessionReads_ReadsOfAConfigMadeInView(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+const cookie = "sid"
+
+func newConfig(ttl time.Duration) session.Config {
+	cfg := session.ConfigDefault
+	cfg.Expiration = ttl
+	return cfg
+}
+
+func main() {
+	byCookie := session.Config{CookieName: cookie}
+	byLookup := session.Config{KeyLookup: "header:" + "X-ID"}
+	both := session.Config{KeyLookup: "query:q", CookieName: "c"}
+	none := session.Config{Expiration: time.Hour}
+	copied := byCookie
+	fmt.Printf("%q %q %q %q\n", byCookie.KeyLookup, byCookie.CookieName, byLookup.KeyLookup, byLookup.CookieName)
+	fmt.Printf("%q %q %q %q\n", both.KeyLookup, both.CookieName, none.KeyLookup, none.CookieName)
+	fmt.Printf("%q %q %q\n", copied.KeyLookup, session.ConfigDefault.KeyLookup, session.ConfigDefault.CookieName)
+	derived := newConfig(time.Minute)
+	fmt.Printf("%q %q\n", derived.KeyLookup, derived.CookieName)
+	_, _, _, _, _ = session.New(byLookup), session.New(both), session.New(none), session.New(copied), session.New(derived)
+}
+`, v3.MigrateSessionExtractor)
+
+	assert.Contains(t, got, `fmt.Printf("%q %q %q %q\n", "", "sid", "header:X-ID", "")`)
+	assert.Contains(t, got, `fmt.Printf("%q %q %q %q\n", "query:q", "c", "", "")`)
+	assert.Contains(t, got, `fmt.Printf("%q %q %q\n", "", "cookie:session_id", "")`)
+	assert.Contains(t, got, `fmt.Printf("%q %q\n", "cookie:session_id", "")`)
+	assert.NotContains(t, got, "func(e")
+	assert.NotContains(t, got, "KeyLookup")
+	assert.Empty(t, res.notes, "nothing is lost where the strings are known")
+}
+
+// A variable that the program changes, or that a function hands over, has to be
+// read from the extractor.
+func Test_MigrateSessionReads_ReadsOfAConfigThatIsNotKnown(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+func load() session.Config {
+	if os.Getenv("X") != "" {
+		return session.Config{CookieName: "a"}
+	}
+	return session.Config{CookieName: "b"}
+}
+
+func param(p session.Config) { fmt.Println(p.KeyLookup) }
+
+func changed() {
+	cfg := session.Config{CookieName: "a"}
+	cfg.KeyLookup = os.Getenv("LOOKUP")
+	fmt.Println(cfg.KeyLookup)
+
+	again := session.Config{CookieName: "a"}
+	again = load()
+	fmt.Println(again.KeyLookup)
+
+	addr := session.Config{CookieName: "a"}
+	set(&addr)
+	fmt.Println(addr.CookieName)
+
+	both := load()
+	fmt.Println(both.CookieName)
+}
+
+func set(*session.Config) {}
+`, v3.MigrateSessionExtractor)
+
+	assert.NotContains(t, got, ".KeyLookup")
+	assert.Contains(t, got, "}(p.Extractor))")
+	assert.Contains(t, got, "}(cfg.Extractor))")
+	assert.Contains(t, got, "}(again.Extractor))")
+	assert.Contains(t, got, "}(addr.Extractor))")
+	assert.Contains(t, got, "}(both.Extractor))")
+	assert.Len(t, res.notes, 5+1)
+}
+
+// A store the program makes in view has the CookieName it was given, which is the
+// empty one where it used KeyLookup, and the lookup v2 made of them.
+func Test_MigrateSessionReads_ReadsOfAStoreMadeInView(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+func newConfig(ttl time.Duration) session.Config {
+	cfg := session.ConfigDefault
+	cfg.Expiration = ttl
+	cfg.CookieHTTPOnly = true
+	return cfg
+}
+
+var shared = session.New(session.Config{KeyLookup: "header:X-SID"})
+
+func main() {
+	store := session.New(newConfig(2 * time.Hour))
+	byCookie := session.New(session.Config{CookieName: "sid"})
+	plain := session.New()
+	fmt.Println(store.Expiration, store.KeyLookup, store.CookieName)
+	fmt.Println(byCookie.KeyLookup, byCookie.CookieName, plain.KeyLookup, plain.CookieName)
+	fmt.Println(shared.KeyLookup, shared.CookieName, shared.Config.CookieName)
+	byCookie.Reset()
+	plain.Reset()
+}
+`, v3.MigrateSessionConfig, v3.MigrateSessionExtractor)
+
+	assert.Contains(t, got, `fmt.Println(store.IdleTimeout, "cookie:session_id", "")`)
+	assert.Contains(t, got, `fmt.Println("cookie:sid", "sid", "cookie:session_id", "")`)
+	assert.Contains(t, got, `fmt.Println("header:X-SID", "", "")`)
+	assert.NotContains(t, got, "func(e")
+	assert.Empty(t, res.notes)
+}
+
+// The variable that the read was the last use of stays used.
+func Test_MigrateSessionReads_AFoldedReadKeepsTheVariableUsed(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+func main() {
+	store := session.New()
+	fmt.Println(store.KeyLookup)
+	used := session.New()
+	fmt.Println(used.KeyLookup)
+	used.Reset()
+}
+`, v3.MigrateSessionExtractor)
+
+	// The first store has nothing but the read: it is read from the extractor.
+	assert.Contains(t, got, "}(store.Extractor))")
+	assert.Contains(t, got, `fmt.Println("cookie:session_id")`)
+	assert.NotEmpty(t, res.notes)
 }
 
 // A lookup that is copied from one config to another needs no string, and is the
@@ -242,8 +413,8 @@ func derive(from *session.Store) *session.Store {
 	assert.NotContains(t, got, "KeyLookup")
 }
 
-// An assignment to the field, or its address, is not a read: the code stays, the
-// build fails on it, and it is reported.
+// An assignment to the field of a config that is not a plain "=", or its address,
+// is not a read: the code stays, the build fails on it, and it is reported.
 func Test_MigrateSessionReads_LeavesWhatIsNotARead(t *testing.T) {
 	t.Parallel()
 
@@ -251,13 +422,12 @@ func Test_MigrateSessionReads_LeavesWhatIsNotARead(t *testing.T) {
 
 import "github.com/gofiber/fiber/v2/middleware/session"
 
-var store = session.New()
-
-func write() {
-	store.KeyLookup = "header:X"
-	store.CookieName += "x"
-	p := &store.KeyLookup
+func write(cfg session.Config) {
+	cfg.KeyLookup += "x"
+	p := &cfg.CookieName
 	_ = p
+	for cfg.KeyLookup = range []string{"a"} {
+	}
 }
 `
 	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
@@ -265,9 +435,9 @@ func write() {
 
 	msgs := mw3Messages(res.notes)
 	require.Len(t, msgs, 3)
-	assert.Contains(t, msgs[0], "store.KeyLookup no longer exists")
-	assert.Contains(t, msgs[1], "store.CookieName no longer exists")
-	assert.Contains(t, msgs[2], "store.KeyLookup no longer exists")
+	assert.Contains(t, msgs[0], "cfg.KeyLookup no longer exists")
+	assert.Contains(t, msgs[1], "&cfg.CookieName: the session Config has no KeyLookup or CookieName in v3")
+	assert.Contains(t, msgs[2], "cfg.KeyLookup no longer exists")
 }
 
 // Other things that have a KeyLookup are not sessions.
@@ -309,7 +479,9 @@ func Test_MigrateSessionReads_StoreOfAnotherFile(t *testing.T) {
 
 import "github.com/gofiber/fiber/v2/middleware/session"
 
-var Store = session.New(session.Config{KeyLookup: "cookie:app_sid"})
+var Store *session.Store
+
+func init() { Store = session.New(session.Config{KeyLookup: "cookie:app_sid"}) }
 
 type App struct{ Sessions *session.Store }
 
@@ -369,9 +541,7 @@ import "github.com/gofiber/fiber/v2/middleware/session"
 
 var extractors = []string{"unrelated"}
 
-var store = session.New()
-
-func lookup() string { return store.KeyLookup }
+func lookup(store *session.Store) string { return store.KeyLookup }
 `, v3.MigrateSessionExtractor)
 
 	assert.Contains(t, got, `fiberextractors "github.com/gofiber/fiber/v3/extractors"`)
@@ -398,12 +568,105 @@ func lookup() string {
 	_ = extractors
 	return store.KeyLookup
 }
+
+func plain() string {
+	return store.KeyLookup
+}
 `
 	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
-	assert.Equal(t, src, got)
-	msgs := mw3Messages(res.notes)
-	require.Len(t, msgs, 1)
-	assert.Contains(t, msgs[0], "store.KeyLookup no longer exists")
+	assert.Equal(t, `package main
+
+import (
+	"github.com/gofiber/fiber/v3/extractors"
+	fiberextractors "github.com/gofiber/fiber/v3/extractors"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New(session.Config{Extractor: extractors.FromCookie("sid")})
+
+func lookup() string {
+	extractors := []string{"unrelated"}
+	_ = extractors
+	return func(e fiberextractors.Extractor) string {
+		if n := len(e.Chain); n > 0 {
+			e = e.Chain[n-1]
+		}
+		switch e.Source {
+		case fiberextractors.SourceHeader:
+			return "header:" + e.Key
+		case fiberextractors.SourceQuery:
+			return "query:" + e.Key
+		}
+		return "cookie:" + e.Key
+	}(store.Extractor)
+}
+
+func plain() string {
+	return func(e extractors.Extractor) string {
+		if n := len(e.Chain); n > 0 {
+			e = e.Chain[n-1]
+		}
+		switch e.Source {
+		case extractors.SourceHeader:
+			return "header:" + e.Key
+		case extractors.SourceQuery:
+			return "query:" + e.Key
+		}
+		return "cookie:" + e.Key
+	}(store.Extractor)
+}
+`, got)
+	assert.Len(t, res.notes, 2)
+
+	again, second := mw3RunOne(t, got, v3.MigrateSessionExtractor)
+	assert.Equal(t, got, again)
+	assert.Empty(t, second.out)
+}
+
+// The name for the second import is free in the whole package, and the names
+// the function literals declare themselves are not used for a package.
+func Test_MigrateSessionReads_AliasOfTheSecondImportIsFree(t *testing.T) {
+	t.Parallel()
+
+	res := mw3Run(t, map[string]string{
+		"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3/extractors"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New(session.Config{Extractor: extractors.FromCookie("sid")})
+
+func lookup() string {
+	extractors := []string{"unrelated"}
+	_ = extractors
+	return store.KeyLookup
+}
+`,
+		"other.go": `package main
+
+var fiberextractors = "a package level name of another file"
+`,
+		"e.go": `package main
+
+import (
+	e "github.com/gofiber/fiber/v3/extractors"
+)
+
+func name() string {
+	return store.CookieName
+}
+`,
+	}, v3.MigrateSessionExtractor)
+	assert.Contains(t, res.files["main.go"], "\tfiberextractors2 \"github.com/gofiber/fiber/v3/extractors\"\n")
+	assert.Contains(t, res.files["main.go"], "return func(e fiberextractors2.Extractor) string {")
+	// The file that names the package e keeps a literal whose parameter is e.
+	assert.Contains(t, res.files["e.go"], "\textractors \"github.com/gofiber/fiber/v3/extractors\"\n")
+	assert.Contains(t, res.files["e.go"], "func(e extractors.Extractor) string {")
+	assert.Contains(t, res.files["e.go"], "if e.Source == extractors.SourceCookie {")
 }
 
 func Test_MigrateSessionReads_Idempotent(t *testing.T) {
@@ -431,4 +694,68 @@ func main() {
 	assert.Equal(t, got, again)
 	assert.Empty(t, second.out)
 	assert.Empty(t, second.notes)
+}
+
+// A program that changes the lookup of the default config has configs that are
+// made from it with another lookup than the default.
+func Test_MigrateSessionReads_ADefaultThatTheProgramChanged(t *testing.T) {
+	t.Parallel()
+
+	res := mw3RunModule(t, map[string]string{
+		"init.go": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func init() {
+	session.ConfigDefault.KeyLookup = "header:X-Default"
+}
+`,
+		"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+func main() {
+	cfg := session.ConfigDefault
+	fmt.Println(cfg.KeyLookup, session.ConfigDefault.KeyLookup)
+	_ = session.New(cfg)
+}
+`,
+	}, v3.MigrateSessionExtractor)
+
+	got := res.files["main.go"]
+	assert.NotContains(t, got, `"cookie:session_id"`)
+	assert.Contains(t, got, "}(cfg.Extractor), func")
+	assert.Contains(t, got, "}(session.ConfigDefault.Extractor))")
+	assert.Contains(t, res.files["init.go"], `session.ConfigDefault.Extractor = extractors.FromHeader("X-Default")`)
+}
+
+// A constant in a case or in the key of a literal would be a case or a key more
+// that may be there already: those reads stay reads of the extractor.
+func Test_MigrateSessionReads_NoConstantInACaseOrAKey(t *testing.T) {
+	t.Parallel()
+
+	got, _ := mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func where(v string) bool {
+	store := session.New()
+	defer store.Reset()
+	switch v {
+	case store.KeyLookup:
+		return true
+	case "cookie:session_id":
+		return false
+	}
+	_ = map[string]bool{store.KeyLookup: true, "cookie:session_id": false}
+	return false
+}
+`, v3.MigrateSessionExtractor)
+
+	assert.Equal(t, 2, strings.Count(got, "}(store.Extractor)"), got)
+	assert.NotContains(t, got, ".KeyLookup")
 }

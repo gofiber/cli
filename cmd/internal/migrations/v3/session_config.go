@@ -42,15 +42,16 @@ var mw3SessionV3Fields = []string{"IdleTimeout", "AbsoluteTimeout", "Extractor",
 
 // mw3SessionConfigPass is the rewrite of one file by MigrateSessionConfig.
 type mw3SessionConfigPass struct {
-	f        *mw3SessionFile
-	fi       internal.FileInfo
-	timeName string
-	imports  mw3ImportEdits
-	edits    editSet
+	f       *mw3SessionFile
+	fi      internal.FileInfo
+	imports mw3ImportEdits
+	edits   editSet
 }
 
 func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
-	f, ok := mw3OpenSessionFile(fi, src, pkgs)
+	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
+		return strings.Contains(src, "middleware/session") || strings.Contains(src, cacheExpiration) || strings.Contains(src, mw3Config)
+	})
 	if !ok {
 		return src
 	}
@@ -99,25 +100,15 @@ func (p *mw3SessionConfigPass) isV3Config(stack []ast.Node) bool {
 	return p.f.isMember(call.Fun, mw3SessionNew, outer) && mw3IsUseArgument(call, outer)
 }
 
-// idleTimeout is the field that keeps the v2 lifetime.
-func (p *mw3SessionConfigPass) idleTimeout() string {
-	return "IdleTimeout: " + p.v2Lifetime()
+// idleTimeout is the field that keeps the v2 lifetime, written at the node whose
+// position and ancestors are given.
+func (p *mw3SessionConfigPass) idleTimeout(at mw3Site) string {
+	return "IdleTimeout: " + p.v2Lifetime(at)
 }
 
 // v2Lifetime is the expression for the lifetime v2 sessions had by default.
-func (p *mw3SessionConfigPass) v2Lifetime() string {
-	if p.timeName == "" {
-		p.timeName = mw3ImportName(p.f.g.src, "time")
-		if p.timeName == "" {
-			declared := mw3DeclaredNames(p.f.g.file)
-			p.timeName = mw3FreeName(func(name string) bool {
-				_, taken := declared[name]
-				return taken
-			}, "time", "stdtime")
-			p.imports.require("time", p.timeName)
-		}
-	}
-	return "24 * " + p.timeName + ".Hour"
+func (p *mw3SessionConfigPass) v2Lifetime(at mw3Site) string {
+	return "24 * " + p.f.importAt(&p.imports, "time", at.pos, at.stack, nil, "time", "stdtime") + ".Hour"
 }
 
 // configLit migrates a session.Config literal.
@@ -140,7 +131,7 @@ func (p *mw3SessionConfigPass) configLit(lit *ast.CompositeLit, stack []ast.Node
 			return
 		}
 	}
-	mw3AddElement(g, &p.edits, lit, p.idleTimeout())
+	mw3AddElement(g, &p.edits, lit, p.idleTimeout(mw3Site{pos: lit.Pos(), stack: stack}))
 }
 
 // sameSite keeps the cookie v2 sent for a "disabled" SameSite. v2 knew only
@@ -175,13 +166,14 @@ func (p *mw3SessionConfigPass) newCall(call *ast.CallExpr, stack []ast.Node) {
 		return
 	}
 	pkgName := g.text(sel.X)
-	config := pkgName + ".Config{" + p.idleTimeout() + "}"
+	config := pkgName + ".Config{" + p.idleTimeout(mw3Site{pos: call.Pos(), stack: stack}) + "}"
 
 	if len(call.Args) == 0 {
 		p.edits.replace(g.offset(call.Lparen)+1, g.offset(call.Rparen), config)
 		return
 	}
 	if call.Ellipsis.IsValid() {
+		p.spread(call, pkgName, stack)
 		return
 	}
 
@@ -201,6 +193,38 @@ func (p *mw3SessionConfigPass) newCall(call *ast.CallExpr, stack []ast.Node) {
 			"%s: v2 sessions lasted 24 hours unless Expiration said otherwise, v3 sessions idle out after 30 minutes unless IdleTimeout says otherwise. "+
 				"Make sure the config sets IdleTimeout (24 * time.Hour keeps the v2 lifetime).", g.text(arg))
 	}
+}
+
+// spread keeps the lifetime of a store made from the configs that a slice holds,
+// session.New(configs...): v2 made one with the default lifetime when the slice
+// is empty, which is what a function of the program that takes a variadic
+// config and passes it on does when it is called with none. The configs in the
+// slice have their lifetime where they are made.
+func (p *mw3SessionConfigPass) spread(call *ast.CallExpr, pkgName string, stack []ast.Node) {
+	g := p.f.g
+	arg := call.Args[len(call.Args)-1]
+	if !mw3IsPlainValue(arg) {
+		internal.Notef(p.fi, g.line(arg.Pos()),
+			"%s...: v2 sessions lasted 24 hours unless Expiration said otherwise, v3 sessions idle out after 30 minutes unless IdleTimeout says otherwise. "+
+				"If the slice is empty the store gets the default: set IdleTimeout to 24 * time.Hour in a config you add then to keep the v2 lifetime.", g.text(arg))
+		return
+	}
+
+	text := g.text(arg)
+	site := mw3Site{pos: call.Pos(), stack: stack}
+	p.edits.replaceNode(g, arg, "func() []"+pkgName+".Config {\nif len("+text+") == 0 {\nreturn []"+pkgName+".Config{{"+p.idleTimeout(site)+"}}\n}\nreturn "+text+"\n}()")
+}
+
+// mw3IsPlainValue reports whether the expression is a name or a field of one,
+// which can be written twice.
+func mw3IsPlainValue(e ast.Expr) bool {
+	switch x := ast.Unparen(e).(type) {
+	case *ast.Ident:
+		return true
+	case *ast.SelectorExpr:
+		return mw3IsPlainValue(x.X)
+	}
+	return false
 }
 
 // mw3FromOtherPackage reports whether the expression is a call of a function
@@ -233,9 +257,11 @@ func mw3FromOtherPackage(e ast.Expr, stack []ast.Node) bool {
 // lifetime of a config copied from ConfigDefault.
 func (p *mw3SessionConfigPass) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	g := p.f.g
-	if sel.Sel.Name == cacheExpiration && p.f.isConfig(sel.X, stack) {
-		p.edits.replaceNode(g, sel.Sel, "IdleTimeout")
-		return
+	if sel.Sel.Name == cacheExpiration {
+		if _, isConfig := p.f.providedBy(sel.X, cacheExpiration, mw3KindConfig, stack); isConfig {
+			p.edits.replaceNode(g, sel.Sel, "IdleTimeout")
+			return
+		}
 	}
 	if p.f.isMember(sel, mw3ConfigDefault, stack) {
 		p.configDefault(sel, stack)
@@ -265,7 +291,7 @@ func (p *mw3SessionConfigPass) configDefault(sel *ast.SelectorExpr, stack []ast.
 // zeroConfig handles a session.Config variable that is declared without a
 // value: a zero config has no IdleTimeout, which v3 takes for 30 minutes.
 func (p *mw3SessionConfigPass) zeroConfig(spec *ast.ValueSpec, stack []ast.Node) {
-	if spec.Type == nil || len(spec.Values) > 0 || !p.f.isMember(spec.Type, mw3Config, stack) {
+	if spec.Type == nil || len(spec.Values) > 0 || !p.f.isConfigType(spec.Type, stack) {
 		return
 	}
 	for _, name := range spec.Names {
@@ -295,7 +321,7 @@ func (p *mw3SessionConfigPass) keepLifetimeAfter(name string, stack []ast.Node) 
 	}
 	if !mw3AssignsField(list, stmt, name, "Expiration", "IdleTimeout") {
 		end := g.offset(stmt.End())
-		p.edits.replace(end, end, "\n"+mw3Indent(g.src, g.offset(stmt.Pos()))+name+".IdleTimeout = "+p.v2Lifetime())
+		p.edits.replace(end, end, "\n"+mw3Indent(g.src, g.offset(stmt.Pos()))+name+".IdleTimeout = "+p.v2Lifetime(mw3Site{pos: stmt.End(), stack: stack}))
 	}
 	return true
 }

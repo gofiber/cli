@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -265,9 +266,9 @@ func shadowed(session struct {
 	assert.Empty(t, res.notes)
 }
 
-// A type that cannot be written as string where it stands is left, so that the
-// build fails on it, and is reported.
-func Test_MigrateSessionSource_ReportsWhatItCannotWrite(t *testing.T) {
+// An embedded field is called after its type: it keeps the name when the type is
+// written as string.
+func Test_MigrateSessionSource_EmbeddedFieldsKeepTheirName(t *testing.T) {
 	t.Parallel()
 
 	got, res := mw3RunOne(t, `package main
@@ -279,19 +280,25 @@ type embedded struct {
 }
 
 type embeddedPointer struct {
-	*session.Source
+	*session.Source `+"`json:\"src\"`"+`
+	name string
 }
 
-var kind session.Source = session.SourceCookie
+var kind = embedded{session.SourceCookie}
 `, v3.MigrateSessionExtractor)
 
-	assert.Contains(t, got, "\tsession.Source\n}")
-	assert.Contains(t, got, "\t*session.Source\n}")
-	assert.Contains(t, got, `var kind string = "cookie"`, "a use that can be written is written")
-	msgs := mw3Messages(res.notes)
-	require.Len(t, msgs, 2)
-	assert.Contains(t, msgs[0], "session.Source was removed")
-	assert.Contains(t, msgs[1], "session.Source was removed")
+	assert.Contains(t, got, "type embedded struct {\n\tSource string\n}")
+	assert.Contains(t, got, "\tSource *string `json:\"src\"`\n")
+	assert.Contains(t, got, `var kind = embedded{"cookie"}`)
+	assert.NotContains(t, got, "session")
+	assert.Empty(t, res.notes)
+}
+
+// A type that cannot be written as string where it stands, in a module that cannot
+// have the type of its own, is left so that the build fails on it, and is
+// reported.
+func Test_MigrateSessionSource_ReportsWhatItCannotWrite(t *testing.T) {
+	t.Parallel()
 
 	src := `package main
 
@@ -306,12 +313,13 @@ func show(src session.Source) {
 	fmt.Println(string, src, session.SourceCookie)
 }
 `
-	got, res = mw3RunOne(t, src, v3.MigrateSessionExtractor)
+	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
 	assert.Equal(t, src, got, "a file that declares string cannot name it")
-	msgs = mw3Messages(res.notes)
+	msgs := mw3Messages(res.notes)
 	require.Len(t, msgs, 2)
 	assert.Contains(t, msgs[0], "session.Source was removed")
 	assert.Contains(t, msgs[1], "session.SourceCookie was removed")
+	assert.Contains(t, msgs[0], "cannot have the package for a type that keeps a Source and a string apart")
 }
 
 // v2 told a Source from a string in a type switch, and the switch cannot have
@@ -414,5 +422,46 @@ var cookie = lookup(SourceCookie)
 
 var cookie = lookup(SourceCookie)
 `, res.files["use.go"])
+	assert.Empty(t, res.notes)
+}
+
+// A variable called like the session package hides it wherever it is declared:
+// by a range clause, a type switch or a select case as well as by a var.
+func Test_MigrateSessionSource_NamesHiddenByVariablesThatSayNothingOfTheirType(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+type item struct{ Source string }
+
+func use(items []item, v any, ch chan item) []string {
+	var out []string
+	for _, session := range items {
+		out = append(out, session.Source)
+	}
+	switch session := v.(type) {
+	case item:
+		out = append(out, session.Source)
+	}
+	select {
+	case session := <-ch:
+		out = append(out, session.Source)
+	}
+	type session struct{ Source string }
+	out = append(out, session{}.Source)
+	return out
+}
+
+var _ session.Source = session.SourceCookie
+`
+	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
+	assert.Contains(t, got, "out = append(out, session.Source)")
+	assert.Equal(t, 3, strings.Count(got, "out = append(out, session.Source)"))
+	assert.Contains(t, got, `out = append(out, session{}.Source)`)
+	assert.Contains(t, got, `var _ string = "cookie"`)
 	assert.Empty(t, res.notes)
 }

@@ -43,15 +43,42 @@ type mw3ImportEdits struct {
 type mw3ImportAdd struct {
 	path string
 	name string
+	// extra is an import of a package that the file imports already, under a name
+	// of its own: the code that is written needs the package where a declaration
+	// hides that name.
+	extra bool
 }
 
 // require schedules the import of path under name. A name that is the package's
 // own name, or empty, imports it without an alias. A package the file already
 // imports, under whatever name, is left as it is.
 func (e *mw3ImportEdits) require(path, name string) {
-	if !slices.ContainsFunc(e.add, func(a mw3ImportAdd) bool { return a.path == path }) {
+	if _, done := e.scheduled(path, false); !done {
 		e.add = append(e.add, mw3ImportAdd{path: path, name: name})
 	}
+}
+
+// requireExtra schedules a second import of a package the file already imports,
+// under a name that is free where the first one is hidden.
+func (e *mw3ImportEdits) requireExtra(path, name string) {
+	if _, done := e.scheduled(path, true); !done {
+		e.add = append(e.add, mw3ImportAdd{path: path, name: name, extra: true})
+	}
+}
+
+// scheduled returns the name the import of path is scheduled under, and whether
+// it is scheduled: the import of a package the file lacks, or with extra the
+// second one of a package it has.
+func (e *mw3ImportEdits) scheduled(path string, extra bool) (name string, ok bool) {
+	for _, a := range e.add {
+		if a.path == path && a.extra == extra {
+			if a.name == "" {
+				return defaultImportName(path), true
+			}
+			return a.name, true
+		}
+	}
+	return "", false
 }
 
 // dropIfUnused schedules the removal of the import of path, which only happens
@@ -106,6 +133,10 @@ func (e *mw3ImportEdits) apply(src string) string {
 
 	changed := false
 	for _, imp := range e.add {
+		if imp.extra {
+			changed = astutil.AddNamedImport(fset, file, imp.name, imp.path) || changed
+			continue
+		}
 		if mw3Imports(file, imp.path) {
 			continue
 		}

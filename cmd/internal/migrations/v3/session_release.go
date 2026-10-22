@@ -31,9 +31,10 @@ var mw3SessionV3Path = regexp.MustCompile(`^github\.com/gofiber/fiber/v3/middlew
 //
 // Middleware handlers do NOT require Release() as the middleware manages the lifecycle.
 //
-// The store is found through the file's own import of the session package, and
-// may be a variable of the function, a package level variable (of any file of
-// the package), a parameter, or a field of a struct the package declares.
+// The store may be a variable of the function, a package level variable (of any
+// file of the package), a parameter, a field of a struct, a type that embeds a
+// store, or any of these in another package of the module; a session that an
+// interface of the program hands out is released like one from the store.
 //
 // A session that leaves the function it was gotten in (it is returned, stored,
 // sent, or handed to a goroutine) is not released there: whoever uses it next
@@ -60,7 +61,7 @@ func mw3SessionReleaseContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) s
 		return src
 	}
 	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
-		return strings.Contains(src, ".Get(") || strings.Contains(src, ".GetByID(")
+		return strings.Contains(src, ".Get(") || strings.Contains(src, "."+mw3GetByID+"(")
 	})
 	if !ok {
 		return src
@@ -86,7 +87,18 @@ func mw3ReleaseGet(f *mw3SessionFile, edits *editSet, as *ast.AssignStmt, stack 
 		return
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != appMethodGet && sel.Sel.Name != "GetByID") || !f.isStore(sel.X, stack) {
+	if !ok || (sel.Sel.Name != appMethodGet && sel.Sel.Name != mw3GetByID) {
+		return
+	}
+	m, isStore := f.providedBy(sel.X, sel.Sel.Name, mw3KindStore, stack)
+	if !isStore && (!m.user || f.reader().ofExpr(call, stack).base != mw3KindSession) {
+		return // not a store, nor a method of the program that hands out a session
+	}
+	if isStore && m.unsure {
+		internal.Notef(f.fi, f.g.line(as.Pos()),
+			"%s: if this is the %s of the session store that its receiver embeds, v3 needs defer sess.Release() on the session it returns. "+
+				"It cannot be told here, because a type that the receiver embeds above the store may declare %s as well.",
+			f.g.text(sel), sel.Sel.Name, sel.Sel.Name)
 		return
 	}
 	sess, ok := as.Lhs[0].(*ast.Ident)

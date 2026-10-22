@@ -22,44 +22,94 @@ const (
 	mw3SessionNewStore = "NewStore"
 )
 
-// mw3NeedImport returns the identifier the file uses for the package at path.
-// A file that does not import it yet gets the import scheduled, under the first
-// of the candidate names that the file does not use for something else.
-func mw3NeedImport(g *goSource, imports *mw3ImportEdits, path string, candidates ...string) string {
-	if name := mw3ImportName(g.src, path); name != "" {
-		return name
+// mw3Shadowed reports whether a declaration hides the name at pos, where the
+// node whose ancestors are stack sits. resolveIdent finds the variables that
+// say something about their type or value; the declarations that do not are
+// looked for here: the variables of a range clause, the binding of a type switch
+// or of a select case, the constants and types a function declares, and the
+// type parameters of a function.
+func mw3Shadowed(name string, pos token.Pos, stack []ast.Node) bool {
+	if _, declared := resolveIdent(name, pos, stack); declared {
+		return true
 	}
-	declared := mw3DeclaredNames(g.file)
-	name := mw3FreeName(func(name string) bool {
-		_, taken := declared[name]
-		return taken
-	}, candidates...)
-	imports.require(path, name)
-	return name
+	for _, node := range slices.Backward(stack) {
+		switch n := node.(type) {
+		case *ast.RangeStmt:
+			if n.Tok == token.DEFINE && n.Body != nil && pos >= n.Body.Pos() &&
+				(isIdentNamed(n.Key, name) || isIdentNamed(n.Value, name)) {
+				return true
+			}
+		case *ast.TypeSwitchStmt:
+			if as, ok := n.Assign.(*ast.AssignStmt); ok && n.Body != nil && pos >= n.Body.Pos() &&
+				len(as.Lhs) == 1 && isIdentNamed(as.Lhs[0], name) {
+				return true
+			}
+		case *ast.CommClause:
+			if as, ok := n.Comm.(*ast.AssignStmt); ok && as.Tok == token.DEFINE && pos > as.End() &&
+				slices.ContainsFunc(as.Lhs, func(e ast.Expr) bool { return isIdentNamed(e, name) }) {
+				return true
+			}
+			if mw3DeclaresConstOrType(n.Body, name, pos) {
+				return true
+			}
+		case *ast.BlockStmt:
+			if mw3DeclaresConstOrType(n.List, name, pos) {
+				return true
+			}
+		case *ast.CaseClause:
+			if mw3DeclaresConstOrType(n.Body, name, pos) {
+				return true
+			}
+		case *ast.FuncDecl:
+			if _, found := declInFieldList(name, n.Type.TypeParams); found {
+				return true
+			}
+		}
+	}
+	return false
 }
 
-// mw3ImportHidden reports whether the file imports the package at path under a
-// name that a declaration hides where the node whose ancestors are stack sits,
-// so that the package cannot be used there.
-func mw3ImportHidden(g *goSource, path string, pos token.Pos, stack []ast.Node) bool {
-	name := mw3ImportName(g.src, path)
-	if name == "" {
-		return false
+// mw3DeclaresConstOrType reports whether a statement of the list that ends
+// before pos declares a constant or a type called name.
+func mw3DeclaresConstOrType(stmts []ast.Stmt, name string, pos token.Pos) bool {
+	for _, stmt := range stmts {
+		ds, ok := stmt.(*ast.DeclStmt)
+		if !ok || ds.End() > pos {
+			continue
+		}
+		gd, ok := ds.Decl.(*ast.GenDecl)
+		if !ok || (gd.Tok != token.CONST && gd.Tok != token.TYPE) {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				if s.Name.Name == name {
+					return true
+				}
+			case *ast.ValueSpec:
+				if slices.ContainsFunc(s.Names, func(id *ast.Ident) bool { return id.Name == name }) {
+					return true
+				}
+			}
+		}
 	}
-	_, hidden := resolveIdent(name, pos, stack)
-	return hidden
+	return false
 }
 
 // mw3SessionFile is a file that imports the session middleware, parsed, with
 // what it takes to tell the session package and its values from other things
 // of the same name.
 type mw3SessionFile struct {
-	g     *goSource
-	pkgs  *mw3Pkgs
-	pkg   *mw3Pkg
-	fi    internal.FileInfo
-	names []string
-	fiber []string
+	g    *goSource
+	pkgs *mw3Pkgs
+	pkg  *mw3Pkg
+	env  *mw3Env
+	// declared are the names the file declares anywhere, read when first asked for.
+	declared map[string]struct{}
+	fi       internal.FileInfo
+	names    []string
+	fiber    []string
 }
 
 // mw3OpenSessionFile parses src when it imports the fiber session middleware.
@@ -75,7 +125,7 @@ func mw3OpenSessionFile(fi internal.FileInfo, src string, pkgs *mw3Pkgs) (*mw3Se
 	if !ok {
 		return nil, false
 	}
-	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, names: names, fiber: fiberNames(src)}, true
+	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, names: names, fiber: fiberNames(src), env: pkgs.envOf(fi, g.file, src)}, true
 }
 
 // mw3OpenStoreUser is mw3OpenSessionFile for the migrations of what is done
@@ -92,44 +142,89 @@ func mw3OpenStoreUser(fi internal.FileInfo, src string, pkgs *mw3Pkgs, cheap fun
 		return f, true
 	}
 
-	head, err := parser.ParseFile(token.NewFileSet(), fi.Path, src, parser.PackageClauseOnly)
+	head, err := parser.ParseFile(token.NewFileSet(), fi.Path, src, parser.ImportsOnly)
 	if err != nil {
 		return nil, false
 	}
-	if !pkgs.of(fi, head.Name.Name).sessions().holdsSessions() {
+	pkg := pkgs.of(fi, head.Name.Name)
+	if !pkg.sessions().holdsSessions() && !pkg.importsSessions(head) {
 		return nil, false
 	}
 	g, ok := parseFile(fi, src)
 	if !ok {
 		return nil, false
 	}
-	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, fiber: fiberNames(src)}, true
+	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, fiber: fiberNames(src), env: pkgs.envOf(fi, g.file, src)}, true
+}
+
+// pkgOf returns what is known about the package the file belongs to.
+func (f *mw3SessionFile) pkgOf() *mw3Pkg {
+	if f.pkg == nil {
+		f.pkg = f.pkgs.of(f.fi, f.g.file.Name.Name)
+	}
+	return f.pkg
 }
 
 // facts returns what the package says about session stores.
 func (f *mw3SessionFile) facts() *mw3SessionFacts {
-	if f.pkg == nil {
-		f.pkg = f.pkgs.of(f.fi, f.g.file.Name.Name)
-	}
-	return f.pkg.sessions()
+	return f.pkgOf().sessions()
 }
 
 // strings returns the reader of string values of the file.
 func (f *mw3SessionFile) strings() mw3Strings {
-	if f.pkg == nil {
-		f.pkg = f.pkgs.of(f.fi, f.g.file.Name.Name)
-	}
-	return newMw3Strings(f.g, f.pkg)
+	return newMw3Strings(f.g, f.pkgOf())
 }
 
 // isPackage reports whether the identifier names the session package here and
 // not a variable that has the same name.
 func (f *mw3SessionFile) isPackage(id *ast.Ident, stack []ast.Node) bool {
-	if !slices.Contains(f.names, id.Name) {
-		return false
+	return slices.Contains(f.names, id.Name) && !mw3Shadowed(id.Name, id.Pos(), stack)
+}
+
+// taken tells whether a new import of the file cannot have the name: something
+// declares it in the file or in the package, an import that is about to be added
+// has it, or the code to be written declares it itself (reserved).
+func (f *mw3SessionFile) taken(imports *mw3ImportEdits, reserved []string) func(name string) bool {
+	if f.declared == nil {
+		f.declared = mw3DeclaredNames(f.g.file)
 	}
-	_, shadowed := resolveIdent(id.Name, id.Pos(), stack)
-	return !shadowed
+	return func(name string) bool {
+		if _, ok := f.declared[name]; ok || slices.Contains(reserved, name) {
+			return true
+		}
+		if _, ok := f.pkgOf().declared()[name]; ok {
+			return true
+		}
+		return slices.ContainsFunc(imports.add, func(a mw3ImportAdd) bool { return a.name == name })
+	}
+}
+
+// importAt returns the identifier that code written at pos, where the node whose
+// ancestors are stack sits, uses for the package at path. A file that does not
+// import the package gets the import scheduled, under the first of the
+// candidates that is free in the file and in its package. A file that does, but
+// under a name that a declaration hides at pos or that the code declares itself
+// (reserved), gets the package imported a second time under a name that is free.
+func (f *mw3SessionFile) importAt(imports *mw3ImportEdits, path string, pos token.Pos, stack []ast.Node, reserved []string, candidates ...string) string {
+	name := mw3ImportName(f.g.src, path)
+	if name == "" {
+		name, _ = imports.scheduled(path, false)
+	}
+	if name != "" && !slices.Contains(reserved, name) && !mw3Shadowed(name, pos, stack) {
+		return name
+	}
+
+	if name == "" {
+		name = mw3FreeName(f.taken(imports, reserved), candidates...)
+		imports.require(path, name)
+		return name
+	}
+	if alias, ok := imports.scheduled(path, true); ok {
+		return alias
+	}
+	alias := mw3FreeName(f.taken(imports, reserved), candidates...)
+	imports.requireExtra(path, alias)
+	return alias
 }
 
 // isMember reports whether e is session.member, through the name the file
@@ -149,7 +244,23 @@ func (f *mw3SessionFile) isConfigLit(e ast.Expr, stack []ast.Node) (*ast.Composi
 	if !ok || lit.Type == nil {
 		return nil, false
 	}
-	return lit, f.isMember(lit.Type, mw3Config, stack)
+	return lit, f.isConfigType(lit.Type, stack)
+}
+
+// isConfigType reports whether the type is the session Config, by the name the
+// file gives the session package or by a name that a package of the module gives
+// it.
+func (f *mw3SessionFile) isConfigType(t ast.Expr, stack []ast.Node) bool {
+	if f.isMember(t, mw3Config, stack) {
+		return true
+	}
+	if sel, ok := t.(*ast.SelectorExpr); ok {
+		if id, isIdent := sel.X.(*ast.Ident); isIdent && mw3Shadowed(id.Name, id.Pos(), stack) {
+			return false
+		}
+	}
+	r := f.reader()
+	return r.resolve(mw3KindOfType(t, f.env)).base == mw3KindConfig
 }
 
 // isStoreCall reports whether e creates a store, and with which function.
@@ -168,32 +279,24 @@ func (f *mw3SessionFile) isStoreCall(e ast.Expr, stack []ast.Node) (*ast.CallExp
 
 // reader returns the reader of the kinds of this file.
 func (f *mw3SessionFile) reader() *mw3KindReader {
-	return &mw3KindReader{facts: f.facts(), names: f.names}
+	return f.facts().reader(f.env)
 }
 
-// isStore reports whether e is a session store: a variable declared as one or
+// member says where x.name comes from, for the expression x whose ancestors are
+// stack: the session type that provides it when x is, or embeds, a store, a
+// session or a config. x is a store when it is a variable declared as one or
 // created by session.New, a package level store, a field of a struct that holds
 // one (also of a struct in one that embeds it), an element of a collection of
-// stores, a function that returns one, or a type assertion to one.
-func (f *mw3SessionFile) isStore(e ast.Expr, stack []ast.Node) bool {
-	return f.reader().ofExpr(e, stack).base == mw3KindStore
+// stores, a function that returns one, or a type assertion to one; a session and
+// a config are found in the same ways.
+func (f *mw3SessionFile) member(x ast.Expr, name string, stack []ast.Node) mw3Member {
+	r := f.reader()
+	return r.lookup(r.ofExpr(x, stack), name)
 }
 
-// isSession reports whether e is a session: a variable declared as one, or the
-// result of getting one from a store or of a function that returns one, in the
-// same ways as a store.
-func (f *mw3SessionFile) isSession(e ast.Expr, stack []ast.Node) bool {
-	return f.reader().ofExpr(e, stack).base == mw3KindSession
-}
-
-// isConfig reports whether e is a session Config, or a store, which embeds one.
-func (f *mw3SessionFile) isConfig(e ast.Expr, stack []ast.Node) bool {
-	kind := f.reader().ofExpr(e, stack)
-	return kind.base == mw3KindStore || kind.base == mw3KindConfig
-}
-
-// isConfigValue reports whether e is a session Config: a variable that holds
-// one, a copy of one, a field of that type, or session.ConfigDefault.
-func (f *mw3SessionFile) isConfigValue(e ast.Expr, stack []ast.Node) bool {
-	return f.reader().ofExpr(e, stack).base == mw3KindConfig
+// providedBy is member for the callers that look for one session type: ok is
+// whether x.name is a member of base.
+func (f *mw3SessionFile) providedBy(x ast.Expr, name string, base mw3Base, stack []ast.Node) (m mw3Member, ok bool) {
+	m = f.member(x, name, stack)
+	return m, m.base == base
 }
