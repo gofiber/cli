@@ -352,6 +352,9 @@ func newClient() *fiberclient.Client {
 }
 `,
 			},
+			notes: []string{
+				"main.go:16: " + clientErrsNote,
+			},
 		},
 		{
 			name: "clients_in_structs",

@@ -187,6 +187,9 @@ var err error
 func use() error { return err }
 `,
 			},
+			notes: []string{
+				"main.go:14: " + clientErrsNote,
+			},
 		},
 		{
 			name: "errs_compat_slices",
@@ -394,6 +397,9 @@ func text(url string) string {
 	return ""
 }
 `,
+			},
+			notes: []string{
+				"main.go:35: " + clientErrsNote,
 			},
 		},
 		{
@@ -797,6 +803,9 @@ func main() {
 	fmt.Println(string(data), err)
 }
 `,
+			},
+			notes: []string{
+				"main.go:14: " + clientErrsNote,
 			},
 		},
 		{

@@ -32,6 +32,7 @@ func Test_clientShim_ModuleFile(t *testing.T) {
 	assert.Contains(t, mf.source, mf.marker, "a second run finds the file by its marker")
 	assert.Contains(t, mf.marker, moduleShimMarker, "the package finds out that a migration wrote the file")
 	assert.Contains(t, mf.source, "github.com/gofiber/fiber/v3/client", "the header says what to move to")
+	assert.Contains(t, mf.source, "type switch", "the header says what the types are called")
 
 	// The code below the package clause is the code of the agentshim package, without
 	// the directives of the linters of the CLI.

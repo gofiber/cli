@@ -147,3 +147,15 @@ const clientShareNote = "its agent is shared with code that stays on the copy of
 // clientShareClientNote is the note of a request that could be migrated but shares
 // its client with requests that cannot.
 const clientShareClientNote = "its client is shared with requests that stay on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go, so this request does too"
+
+// The notes that are written once for a project, at the first request that uses a
+// construct the v3 client does differently.
+const (
+	// clientAcceptNote is the note of a JSON body, which the v3 client sends with an
+	// Accept header.
+	clientAcceptNote = "the v3 client sends an Accept: application/json header with a JSON body, which Fiber v2 did not"
+	// clientQueryNote is the note of a query, which the v3 client encodes again.
+	clientQueryNote = "the v3 client encodes the query of a request again: a space that was written as %20 is sent as +"
+	// clientErrsNote is the note of an []error that is printed.
+	clientErrsNote = "an error that was printed with the []error of Fiber v2 is now printed as it is"
+)

@@ -58,8 +58,9 @@ func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	return nil
 }
 
-// clientMaxScans bounds the scans: a package has three kinds of value to taint, and
-// every scan but the last taints at least one.
+// clientMaxScans bounds the scans. A scan taints the agents or the clients of a
+// package, which makes more requests stay on the copy, and with them the other kind:
+// two scans learn all there is, and a third one finds out that it is all.
 const clientMaxScans = 8
 
 // clientErrorsPath and clientLogPaths match the packages whose functions only

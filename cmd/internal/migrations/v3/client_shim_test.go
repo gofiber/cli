@@ -124,6 +124,7 @@ func plainAgain(url string) {
 			},
 			notes: []string{
 				"main.go:15: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+				"main.go:11: " + clientErrsNote,
 			},
 		},
 	})
@@ -389,6 +390,7 @@ func unrelated(url string) {
 			},
 			notes: []string{
 				"main.go:10: `fiber.Agent` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
+				"main.go:19: " + clientErrsNote,
 			},
 		},
 		{

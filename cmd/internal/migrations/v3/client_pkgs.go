@@ -74,6 +74,8 @@ type clientPackages struct {
 	pkgs map[string]*clientPackage
 	// dirs are the exports of the directories packages are imported from.
 	dirs map[string]clientDirExports
+	// noted are the differences of the v3 client that were reported already.
+	noted map[string]bool
 	// root is the directory the migration runs in: modules are looked for below it.
 	root string
 	// taints counts the kinds of value the scans found out that packages share, so
@@ -83,7 +85,19 @@ type clientPackages struct {
 }
 
 func clientNewPackages(root string) *clientPackages {
-	return &clientPackages{pkgs: map[string]*clientPackage{}, dirs: map[string]clientDirExports{}, root: root}
+	return &clientPackages{pkgs: map[string]*clientPackage{}, dirs: map[string]clientDirExports{}, noted: map[string]bool{}, root: root}
+}
+
+// once reports whether the difference of the v3 client called kind is reported for
+// the first time, and records it.
+func (p *clientPackages) once(kind string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.noted[kind] {
+		return false
+	}
+	p.noted[kind] = true
+	return true
 }
 
 // learned returns how many facts the scans found out so far.

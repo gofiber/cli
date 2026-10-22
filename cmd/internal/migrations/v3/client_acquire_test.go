@@ -520,6 +520,9 @@ func overwritten(url string) ([]byte, error) {
 }
 `,
 			},
+			notes: []string{
+				"main.go:53: " + clientErrsNote,
+			},
 		},
 		{
 			name: "acquire_parse_timing",
@@ -644,6 +647,9 @@ func logBetween(url string) ([]byte, error) {
 	return body, nil
 }
 `,
+			},
+			notes: []string{
+				"main.go:39: " + clientErrsNote,
 			},
 		},
 		{
@@ -910,6 +916,10 @@ func userAgentWithParen(url string) ([]byte, error) {
 	return body, nil
 }
 `,
+			},
+			notes: []string{
+				"main.go:10: " + clientQueryNote,
+				"main.go:45: " + clientAcceptNote,
 			},
 		},
 		{
@@ -1194,6 +1204,9 @@ func ignored(url string) ([]byte, error) {
 	return body, nil
 }
 `,
+			},
+			notes: []string{
+				"main.go:23: " + clientErrsNote,
 			},
 		},
 	})

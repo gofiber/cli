@@ -52,64 +52,54 @@ func (e *clientEmit) markHandled() {
 	}
 }
 
-// notes reports the behavior differences of the rewritten request.
+// The differences of the v3 client that cannot be undone, and that a project can run
+// into with any request that uses the construct. Each one is reported once for the
+// project, at the first request that does.
+const (
+	clientNoteAccept = "accept"
+	clientNoteQuery  = "query"
+	clientNoteErrs   = "errs"
+)
+
+// noteOncef reports a difference of the v3 client, if no request of the project
+// reported it before.
+func (f *clientFile) noteOncef(kind string, line int, format string, args ...any) {
+	if f.dry || !f.pkgs.once(kind) {
+		return
+	}
+	f.notef(line, format, args...)
+}
+
+// notes reports what the rewritten request does differently from the v2 request
+// where the v3 client leaves no choice.
 func (e *clientEmit) notes() {
 	f, u := e.f, e.u
-	all := u.allOps()
-	for _, op := range all {
-		if op.note != "" {
-			f.notef(op.line, "%s", op.note)
-		}
+	if f.dry {
+		return
 	}
-	e.headerConflicts(all)
 
-	// SetRequestURI replaced the URI, and with it the query arguments that were
-	// added to the old one.
-	var touched *clientOp
-	for i := range all {
-		switch op := &all[i]; {
-		case op.setsURL && touched != nil:
-			f.notef(touched.line, "the query was added before SetRequestURI(), which discarded it in Fiber v2; the v3 client sends it")
-			touched = nil
-		case op.touchesURI || op.hasQuery:
-			if touched == nil {
-				touched = op
-			}
+	for _, op := range u.allOps() {
+		if op.body == clientBodyJSON {
+			f.noteOncef(clientNoteAccept, op.line, "the v3 client sends an Accept: application/json header with a JSON body, which Fiber v2 did not; "+
+				"every request of the project that sends JSON is affected, this is reported once")
+			break
 		}
 	}
-	hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
-	if u.kind == clientAcquire || u.kind == clientExternal {
-		for _, op := range all {
-			if hasQuery && op.setsURL && clientHasQueryMark(op.urlArg) {
-				f.notef(op.line, "QueryString() replaced the query of this URL, but the v3 client adds the parameters to it")
-			}
-		}
-	} else if _, exact := f.withoutQuery(u.url); hasQuery && exact && clientHasQueryMark(u.url) {
-		f.notef(f.line(u.url), "QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both")
+	if u.sendsQuery() {
+		f.noteOncef(clientNoteQuery, f.line(u.rootNode()), "the v3 client encodes the query of a request again: a space that was written as %%20 is sent as +, "+
+			"where Fiber v2 sent the query as it was written; every request of the project with a query is affected, this is reported once")
 	}
 }
 
-// headerConflicts reports the headers set by hand that the v3 client replaces
-// when it encodes the body: it sets Content-Type, and Accept for JSON.
-func (e *clientEmit) headerConflicts(all []clientOp) {
-	bodyAt := slices.IndexFunc(all, func(op clientOp) bool { return clientBodyMedia(op.body) != "" })
-	if bodyAt < 0 {
-		return
+// sendsQuery reports whether the request has a query that the v3 client encodes: a
+// literal URL with one, or a setting that adds one.
+func (u *clientUnit) sendsQuery() bool {
+	if u.url != nil && clientHasQueryMark(u.url) {
+		return true
 	}
-	media := clientBodyMedia(all[bodyAt].body)
-	isMedia := func(op clientOp) bool {
-		return op.headerVal != "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(op.headerVal)), media)
-	}
-	for i, op := range all {
-		// v2 set the content type when the body was set, so a header set before
-		// the body lost against it there too.
-		replaced := (op.header == clientHdrContentType && i > bodyAt) ||
-			(op.header == clientHdrAccept && all[bodyAt].body == clientBodyJSON)
-		if replaced && !isMedia(op) {
-			e.f.notef(op.line, "the v3 client sets %s: %s for a body it encodes as %s, which replaces this header",
-				map[string]string{clientHdrContentType: "Content-Type", clientHdrAccept: "Accept"}[op.header], media, media[strings.Index(media, "/")+1:])
-		}
-	}
+	return slices.ContainsFunc(u.allOps(), func(op clientOp) bool {
+		return op.hasQuery || op.touchesURI || (op.setsURL && clientHasQueryMark(op.urlArg))
+	})
 }
 
 // replaceStmt replaces a statement, keeping its trailing and inner comments.
@@ -341,12 +331,9 @@ const (
 func (e *clientEmit) urlText() string {
 	f, u := e.f, e.u
 	if !slices.ContainsFunc(u.allOps(), func(op clientOp) bool { return op.hasQuery }) {
-		return f.text(u.url)
+		return f.urlOf(u.url)
 	}
-	text, exact := f.withoutQuery(u.url)
-	if !exact {
-		f.notef(f.line(u.url), "QueryString() replaced the query of this URL, but the v3 client adds the parameters to it")
-	}
+	text, _ := f.withoutQuery(u.url)
 	return text
 }
 
@@ -360,15 +347,15 @@ func (f *clientFile) withoutQuery(e ast.Expr) (text string, exact bool) {
 	case *ast.BasicLit:
 		if v, ok := clientStringLit(x); ok {
 			base, _, _ := strings.Cut(v, "?")
-			return strconv.Quote(base), true
+			return strconv.Quote(clientHTTPPrefix(base)), true
 		}
 	case *ast.BinaryExpr:
 		if x.Op == token.ADD && !clientHasQueryMark(x.X) {
 			right, exact := f.withoutQuery(x.Y)
 			if right == `""` {
-				return f.text(x.X), exact
+				return f.urlOf(x.X), exact
 			}
-			return f.text(x.X) + " + " + right, exact
+			return f.urlOf(x.X) + " + " + right, exact
 		}
 	}
 	return f.text(e), !clientHasQueryMark(e)
@@ -435,12 +422,12 @@ func (e *clientEmit) config() {
 func (e *clientEmit) configCall() string {
 	f, u := e.f, e.u
 	pkg := f.use(clientPkgPath, "client")
-	url := f.text(u.url)
+	url := f.urlOf(u.url)
 	var entries []clientCfg
 	for _, op := range u.allOps() {
 		if op.hasQuery {
 			base, _ := clientStringLit(u.url)
-			base, _, _ = strings.Cut(base, "?")
+			base, _, _ = strings.Cut(clientHTTPPrefix(base), "?")
 			if len(op.query) > 0 {
 				base += "?" + op.rawQuery
 			}

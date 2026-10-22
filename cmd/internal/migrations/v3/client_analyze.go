@@ -210,6 +210,7 @@ func (f *clientFile) analyze(u *clientUnit) clientUnsupported {
 		}
 	}
 	slices.SortStableFunc(u.items, func(a, b *clientItem) int { return cmp.Compare(a.stmt.Pos(), b.stmt.Pos()) })
+	clientOrderCookies(u)
 	return clientValidate(u)
 }
 
@@ -587,6 +588,12 @@ func clientValidate(u *clientUnit) clientUnsupported {
 	if reason := clientValidateForms(u); reason != "" {
 		return reason
 	}
+	if reason := clientHeaderConflict(all); reason != "" {
+		return reason
+	}
+	if reason := u.queryConflict(all); reason != "" {
+		return reason
+	}
 
 	if u.retExpr != nil && slices.ContainsFunc(u.ops, func(op clientOp) bool { return op.stmt != nil }) {
 		return clientUnsupported(u.ops[slices.IndexFunc(u.ops, func(op clientOp) bool { return op.stmt != nil })].method +
@@ -630,6 +637,69 @@ func clientValidate(u *clientUnit) clientUnsupported {
 				return "the error of Parse() is read after the request is sent, where it was nil in v2"
 			}
 		}
+	}
+	return ""
+}
+
+// clientHeaderConflict returns the reason a header that is set by hand is replaced by
+// the v3 client when it encodes the body: it sets Content-Type, and Accept for JSON.
+// The request stays on the copy of the v2 agent, which sends the header as it was set.
+func clientHeaderConflict(all []clientOp) clientUnsupported {
+	bodyAt := slices.IndexFunc(all, func(op clientOp) bool { return clientBodyMedia(op.body) != "" })
+	if bodyAt < 0 {
+		return ""
+	}
+	media := clientBodyMedia(all[bodyAt].body)
+	isMedia := func(op clientOp) bool {
+		return op.headerVal != "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(op.headerVal)), media)
+	}
+	for i, op := range all {
+		// v2 set the content type when the body was set, so a header set before
+		// the body lost against it there too.
+		replaced := (op.header == clientHdrContentType && i > bodyAt) ||
+			(op.header == clientHdrAccept && all[bodyAt].body == clientBodyJSON)
+		if replaced && !isMedia(op) {
+			name := "Content-Type"
+			if op.header == clientHdrAccept {
+				name = "Accept"
+			}
+			return clientUnsupported(fmt.Sprintf("the v3 client sets %s: %s for a body it encodes as %s, which replaces this header",
+				name, media, media[strings.Index(media, "/")+1:]))
+		}
+	}
+	return ""
+}
+
+// queryConflict returns the reason the query of the request would differ in the v3
+// client. QueryString replaced the query of the URL in v2 and SetRequestURI
+// replaced the URI with the query arguments added to it, where the v3 client
+// adds the parameters to the query of the URL and keeps them.
+func (u *clientUnit) queryConflict(all []clientOp) clientUnsupported {
+	hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
+
+	touched := false
+	for _, op := range all {
+		switch {
+		case op.setsURL && touched:
+			return "the query is added before SetRequestURI(), which discards it in Fiber v2"
+		case op.touchesURI || op.hasQuery:
+			touched = true
+		}
+	}
+	if !hasQuery {
+		return ""
+	}
+
+	if u.kind == clientAcquire || u.kind == clientExternal {
+		for _, op := range all {
+			if op.setsURL && clientHasQueryMark(op.urlArg) {
+				return "QueryString() replaces the query of the URL that SetRequestURI() sets, where the v3 client adds the parameters to it"
+			}
+		}
+		return ""
+	}
+	if _, exact := u.f.withoutQuery(u.url); !exact {
+		return "QueryString() replaces the query of the URL, which the migration cannot take out of it"
 	}
 	return ""
 }

@@ -102,8 +102,6 @@ type clientOp struct {
 	req string
 	// cli is the call to make on the client that sends the request.
 	cli string
-	// note is reported when the op was migrated but the behavior differs.
-	note string
 	// header is the lower-case name of the literal header the op sets, and
 	// headerVal its value when that is a literal too.
 	header    string
@@ -116,6 +114,8 @@ type clientOp struct {
 	cfg []clientCfg
 	// query holds the pairs of a literal query string.
 	query []clientParam
+	// cookies are the key and value, rendered, of the cookies the op sets.
+	cookies [][2]string
 	// line is the line of the call in the source.
 	line int
 	body clientBodyKind
@@ -176,6 +176,53 @@ func clientBytesConversion(e ast.Expr) (ast.Expr, bool) {
 		return nil, false
 	}
 	return call.Args[0], true
+}
+
+// clientHTTPPrefix writes the scheme in front of a URL that starts with //. The v2
+// agent sent such a URL over http, and the v3 client refuses it. A URL without a
+// scheme and without // was refused by the v2 agent too (missing port in address), so
+// it is left as it is.
+func clientHTTPPrefix(u string) string {
+	if strings.HasPrefix(u, "//") {
+		return "http:" + u
+	}
+	return u
+}
+
+// urlOf renders the expression of a URL, a literal that starts with // having got
+// the scheme the v2 agent assumed for it.
+func (f *clientFile) urlOf(e ast.Expr) string {
+	text := f.text(e)
+	lit := clientLeftmostLit(e)
+	if lit == nil {
+		return text
+	}
+	v, ok := clientStringLit(lit)
+	if !ok || clientHTTPPrefix(v) == v {
+		return text
+	}
+	before, after, found := strings.Cut(text, f.text(lit))
+	if !found {
+		return text
+	}
+	return before + strconv.Quote(clientHTTPPrefix(v)) + after
+}
+
+// clientLeftmostLit returns the literal a concatenation starts with.
+func clientLeftmostLit(e ast.Expr) *ast.BasicLit {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return clientLeftmostLit(x.X)
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			return clientLeftmostLit(x.X)
+		}
+	case *ast.BasicLit:
+		if x.Kind == token.STRING {
+			return x
+		}
+	}
+	return nil
 }
 
 // strOf renders a []byte expression as a string expression: the literal
@@ -315,9 +362,7 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr, it *clientItem) (op c
 	case "Reuse":
 		op.dropped = true
 	case "Debug":
-		op.dropped = true
-		op.note = "Debug() has no per-request equivalent in the v3 client and was removed, so the request/response dump is gone; " +
-			"call Debug() on the client (client.C().Debug() or client.New().Debug()) to log every request through its logger"
+		return op, "Debug(): the v3 client cannot dump a single request and its response"
 	case "InsecureSkipVerify":
 		tls := f.use(clientTLSPath, "tls")
 		op.cli = "SetTLSConfig(&" + tls + ".Config{InsecureSkipVerify: true})"
@@ -384,7 +429,43 @@ func clientHeaderOp(op clientOp, call string, keyExpr ast.Expr, key, val string,
 func clientCookieOp(op clientOp, key, val string) (clientOp, clientUnsupported) {
 	op.req = fmt.Sprintf("SetCookie(%s, %s)", key, val)
 	op.cfg = []clientCfg{{field: clientFieldCookie, key: key, val: val}}
+	op.cookies = [][2]string{{key, val}}
 	return op, ""
+}
+
+// clientOrderCookies makes the cookies of a request go out in the order they were set.
+// The v3 request keeps its cookies in a map and sends them in map order, so when
+// there are two or more they are set on the fasthttp request, which keeps the order,
+// the way Fiber v2 set them.
+func clientOrderCookies(u *clientUnit) {
+	count := 0
+	for _, op := range u.allOps() {
+		count += len(op.cookies)
+	}
+	if count < 2 {
+		return
+	}
+
+	order := func(ops []clientOp) {
+		for i := range ops {
+			pairs := ops[i].cookies
+			if len(pairs) == 0 {
+				continue
+			}
+			ops[i].req, ops[i].cfg = "", nil
+			ops[i].stmt = func(recv string) string {
+				lines := make([]string, len(pairs))
+				for j, p := range pairs {
+					lines[j] = recv + ".RawRequest.Header.SetCookie(" + p[0] + ", " + p[1] + ")"
+				}
+				return strings.Join(lines, "\n")
+			}
+		}
+	}
+	order(u.ops)
+	for _, it := range u.items {
+		order(it.ops)
+	}
 }
 
 // cookiesOp builds the op of Cookies and CookiesBytesKV, which take key and
@@ -402,6 +483,7 @@ func (f *clientFile) cookiesOp(op clientOp, call *ast.CallExpr) (clientOp, clien
 		}
 		calls = append(calls, fmt.Sprintf("SetCookie(%s, %s)", key, val))
 		op.cfg = append(op.cfg, clientCfg{field: clientFieldCookie, key: key, val: val})
+		op.cookies = append(op.cookies, [2]string{key, val})
 	}
 	if len(calls) == 0 {
 		op.dropped = true
@@ -593,7 +675,11 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 		}
 	case "SetRequestURI", "SetRequestURIBytes":
 		if arity(1) && u.allowsURI() {
-			op.req = "SetURL(" + nameOrBytes(0) + ")"
+			text := nameOrBytes(0)
+			if path == "SetRequestURI" {
+				text = f.urlOf(args[0])
+			}
+			op.req = "SetURL(" + text + ")"
 			op.setsURL = true
 			op.urlArg = args[0]
 			return op, ""

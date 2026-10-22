@@ -505,13 +505,21 @@ func (e *clientEmit) errsPlan(it *clientItem, errs clientTermSide, define bool, 
 	}
 
 	var edits []clientEdit
+	printedAt := 0
 	for _, r := range refs {
-		ed, ok := f.errsRewrite(r, errName)
+		ed, printed, ok := f.errsRewrite(r, errName)
 		if !ok {
 			delete(f.errsGone[l.owner], errs.text)
 			return clientErrsOwn, nil
 		}
+		if printed && printedAt == 0 {
+			printedAt = f.line(r.id)
+		}
 		edits = append(edits, ed)
+	}
+	if printedAt > 0 {
+		f.noteOncef(clientNoteErrs, printedAt, "an error that was printed with the []error of Fiber v2 is now printed as it is: fmt and log show the error "+
+			"or <nil> where they showed a slice such as [the error] or []; every request of the project that prints its errors is affected, this is reported once")
 	}
 	if f.errsGone[l.owner] == nil {
 		f.errsGone[l.owner] = map[string]bool{}
@@ -528,17 +536,19 @@ var clientFormatSinks = map[string][]string{
 
 // errsRewrite returns the edit that makes one use of the []error variable work
 // with the single error of the v3 call, ok is false when the use needs a slice.
-func (f *clientFile) errsRewrite(r clientRef, errName string) (clientEdit, bool) {
+// printed says the use only formats the error, which looks different without the
+// slice around it.
+func (f *clientFile) errsRewrite(r clientRef, errName string) (ed clientEdit, printed, ok bool) {
 	if len(r.stack) == 0 {
-		return clientEdit{}, false
+		return clientEdit{}, false, false
 	}
 	parent := r.stack[len(r.stack)-1]
 	var grand ast.Node
 	if len(r.stack) >= 2 {
 		grand = r.stack[len(r.stack)-2]
 	}
-	edit := func(n ast.Node, text string) (clientEdit, bool) {
-		return clientEdit{start: f.g.offset(n.Pos()), end: f.g.offset(n.End()), text: text}, true
+	edit := func(n ast.Node, text string) (clientEdit, bool, bool) {
+		return clientEdit{start: f.g.offset(n.Pos()), end: f.g.offset(n.End()), text: text}, false, true
 	}
 
 	switch p := parent.(type) {
@@ -549,13 +559,14 @@ func (f *clientFile) errsRewrite(r clientRef, errName string) (clientEdit, bool)
 					return edit(cmp, text)
 				}
 			}
-			return clientEdit{}, false
+			return clientEdit{}, false, false
 		}
 		if f.isErrorsJoin(p, r.id) {
 			return edit(p, errName)
 		}
 		if f.isFormatSink(p, r.id) {
-			return edit(r.id, errName)
+			ed, _, ok := edit(r.id, errName)
+			return ed, true, ok
 		}
 	case *ast.BinaryExpr:
 		if (p.Op == token.EQL || p.Op == token.NEQ) && (isIdentNamed(p.X, "nil") || isIdentNamed(p.Y, "nil")) {
@@ -570,7 +581,7 @@ func (f *clientFile) errsRewrite(r clientRef, errName string) (clientEdit, bool)
 			return edit(p, errName)
 		}
 	}
-	return clientEdit{}, false
+	return clientEdit{}, false, false
 }
 
 // clientLenComparison rewrites a comparison of len(errs) with a constant to a

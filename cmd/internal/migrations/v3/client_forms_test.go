@@ -377,6 +377,8 @@ func fromParam(url string, args *fasthttp.Args) ([]byte, error) {
 		args.VisitAll(func(key, value []byte) {
 			a.AddFormData(string(key), string(value))
 		})
+	} else {
+		a.SetHeader("Content-Type", "application/x-www-form-urlencoded")
 	}
 	resp, err := a.Send()
 	if err != nil {
@@ -392,6 +394,8 @@ func chained(url string, args *fasthttp.Args) (int, error) {
 		args.VisitAll(func(key, value []byte) {
 			req.AddFormData(string(key), string(value))
 		})
+	} else {
+		req.SetHeader("Content-Type", "application/x-www-form-urlencoded")
 	}
 	resp, err := req.Send()
 	if err != nil {
