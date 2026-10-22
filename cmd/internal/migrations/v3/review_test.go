@@ -161,11 +161,12 @@ func main() {
 `})
 
 	// Valid v3 code leaves nothing over; the only entries are the behavior notes of the
-	// client, session and static middleware it uses.
-	require.Len(t, notes, 3, "%v", notes)
+	// client, session and static middleware and of the binder it uses.
+	require.Len(t, notes, 4, "%v", notes)
 	assert.Contains(t, notes[0], "session: the default session ID is now a secure random token")
 	assert.Contains(t, notes[1], "static: a directory without an index file answers 404 instead of 403")
 	assert.Contains(t, notes[2], "client: errors of the transport are worded by the fasthttp that Fiber v3 requires")
+	assert.Contains(t, notes[3], "Bind().Body, Query, Header, Cookie and URI return a *fiber.BindError")
 }
 
 func Test_Review_ClientCallsOnShadowedOrUnknownReceivers(t *testing.T) {

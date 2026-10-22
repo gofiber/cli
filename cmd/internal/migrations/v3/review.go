@@ -51,8 +51,10 @@ type reviewer struct {
 	run *ctxRun
 	// trust collects what the note about the trusted proxy settings needs (see review_trust.go).
 	trust reviewTrust
-	// fileNameSeen is set once the SendFile file name note was given.
+	// fileNameSeen is set once the SendFile file name note was given, bindSeen the note about
+	// the texts of the binder errors.
 	fileNameSeen bool
+	bindSeen     bool
 }
 
 // reviewFile is what the checks need to know about the file being scanned.
@@ -169,6 +171,7 @@ func (rf *reviewFile) checkUses() {
 			rf.checkLiteral(x)
 		case *ast.CallExpr:
 			rf.checkCall(x, stack)
+			rf.checkBindErrors(x, stack)
 		}
 		return true
 	})
