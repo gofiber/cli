@@ -18,12 +18,26 @@ import (
 // Fiber v3.
 //
 // It understands whole statements. A request that is built and sent by
-// statements it recognizes is rewritten, every other request is left as it is
-// and reported, so that no setting of a request is ever dropped silently.
+// statements it recognizes is rewritten. Every other request keeps running on
+// a copy of the v2 agent, which is added to the package, so that no setting of a
+// request is ever dropped silently; where the package cannot have the copy the
+// request is left as it is and reported.
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	pkgs := clientNewPackages()
+
+	// The first pass changes nothing. It finds out which packages hand agents and
+	// clients from one function to another in ways the migration does not follow:
+	// the types of those cannot be the ones of the client package for some of the
+	// code and the copy's for the rest.
+	if _, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		clientMigrateContent(content, fi, pkgs, true)
+		return content
+	}); err != nil {
+		return fmt.Errorf("failed to scan client usage: %w", err)
+	}
+
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return clientMigrateContent(content, fi, pkgs)
+		return clientMigrateContent(content, fi, pkgs, false)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate client usage: %w", err)
@@ -55,51 +69,86 @@ type clientFile struct {
 	reported map[ast.Node]bool
 	intro    map[ast.Node]map[string]bool
 	errsGone map[ast.Node]map[string]bool
-	fi       internal.FileInfo
-	fiber    []string
-	errors   []string
-	fmt      []string
-	log      []string
-	edits    clientEdits
+	// helperCalls are the calls of functions that return an agent, which a
+	// request was made of.
+	helperCalls map[*ast.CallExpr]bool
+	// viaClient are the calls on a fiber.Client that a request was made of.
+	viaClient map[*ast.SelectorExpr]bool
+	shim      clientShimState
+	fi        internal.FileInfo
+	fiber     []string
+	errors    []string
+	fmt       []string
+	log       []string
+	edits     clientEdits
+	// dry says the file is only scanned: nothing is reported or written.
+	dry bool
+	// shimNoted says a request of the file was reported as running on the copy.
+	shimNoted bool
+	// copyAgents and copyClients say that the agents or the clients of the
+	// package are the copy's.
+	copyAgents  bool
+	copyClients bool
 }
 
-func clientMigrateContent(content string, fi internal.FileInfo, pkgs *clientPackages) string {
+func clientMigrateContent(content string, fi internal.FileInfo, pkgs *clientPackages, dry bool) string {
 	names := fiberNames(content)
 	names = slices.DeleteFunc(names, func(n string) bool { return n == "." })
 	if len(names) == 0 {
 		return content
 	}
-	g, ok := parseFile(fi, content)
+	var g *goSource
+	var ok bool
+	if dry {
+		g, ok = parseSource(content)
+	} else {
+		g, ok = parseFile(fi, content)
+	}
 	if !ok {
 		return content
 	}
 
 	f := &clientFile{
-		g:        g,
-		pkgs:     pkgs,
-		fi:       fi,
-		fiber:    names,
-		errors:   importNames(content, clientReErrors, "errors"),
-		fmt:      importNames(content, clientReFmt, "fmt"),
-		log:      importNames(content, clientReLog, "log"),
-		pkgNames: map[string]string{},
-		handled:  map[ast.Node]bool{},
-		reported: map[ast.Node]bool{},
-		intro:    map[ast.Node]map[string]bool{},
-		errsGone: map[ast.Node]map[string]bool{},
+		g:           g,
+		pkgs:        pkgs,
+		fi:          fi,
+		fiber:       names,
+		dry:         dry,
+		errors:      importNames(content, clientReErrors, "errors"),
+		fmt:         importNames(content, clientReFmt, "fmt"),
+		log:         importNames(content, clientReLog, "log"),
+		pkgNames:    map[string]string{},
+		handled:     map[ast.Node]bool{},
+		reported:    map[ast.Node]bool{},
+		intro:       map[ast.Node]map[string]bool{},
+		errsGone:    map[ast.Node]map[string]bool{},
+		helperCalls: map[*ast.CallExpr]bool{},
+		viaClient:   map[*ast.SelectorExpr]bool{},
 	}
 	f.run()
+	if dry {
+		return content
+	}
 	return f.finish(content)
 }
 
 // run migrates the requests of the file.
 func (f *clientFile) run() {
+	if f.dry {
+		// The files of the package that do not import fiber are read with it.
+		f.pkgs.get(f.dir(), f.pkgName())
+	}
+	f.copyAgents = f.shimmed(clientDomainAgent)
+	f.copyClients = f.shimmed(clientDomainClient)
 	f.renameAliases()
 	f.rewriteClients()
 	for _, decl := range f.g.file.Decls {
 		f.walkDecl(decl, clientNewFunc(decl))
 	}
-	f.reportLeftovers()
+	f.leftovers()
+	if f.dry {
+		f.scanReferences()
+	}
 }
 
 // finish applies the edits and fixes the imports.
@@ -109,7 +158,7 @@ func (f *clientFile) finish(content string) string {
 	}
 	out, ok := f.edits.apply(content)
 	if !ok {
-		internal.Notef(f.fi, 0, "client calls left unchanged: two rewrites touch the same code (please report this)")
+		f.notef(0, "client calls left unchanged: two rewrites touch the same code (please report this)")
 		return content
 	}
 	return f.fixImports(out)
@@ -203,7 +252,7 @@ func clientFuncNames(recv *ast.FieldList, ft *ast.FuncType) []string {
 // processList migrates the requests that start in a statement list.
 func (f *clientFile) processList(l clientList) {
 	for idx, s := range l.stmts {
-		if f.clientStatement(s) {
+		if !f.copyClients && f.clientStatement(s) {
 			continue
 		}
 		if ret, ok := s.(*ast.ReturnStmt); ok {
@@ -278,6 +327,9 @@ func (f *clientFile) line(n ast.Node) int {
 
 // notef reports something the user has to look at.
 func (f *clientFile) notef(line int, format string, args ...any) {
+	if f.dry {
+		return
+	}
 	internal.Notef(f.fi, line, format, args...)
 }
 
@@ -339,19 +391,5 @@ var clientAPIMembers = []string{
 	nameAcquireAgent, "ReleaseAgent", "AcquireClient", "ReleaseClient",
 	clientMemberAcquireArgs, nameReleaseArgs, nameAcquireFormFile, "ReleaseFormFile",
 	nameAcquireResponse, nameReleaseResponse,
-	nameAgent, "Client", "Args", "FormFile", clientMethodRequest, nameResponse, "RetryIfFunc",
-}
-
-// reportLeftovers reports the members of the v2 client that are still used.
-func (f *clientFile) reportLeftovers() {
-	f.g.walk(func(n ast.Node, _ []ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !f.isFiberName(sel.X) || !slices.Contains(clientAPIMembers, sel.Sel.Name) || f.handled[sel] || f.reported[sel] {
-			return true
-		}
-		f.reported[sel] = true
-		f.notef(f.line(sel), "`%s.%s` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
-			f.g.text(sel.X), sel.Sel.Name)
-		return true
-	})
+	nameAgent, "Client", "Args", clientMemberFormFile, clientMethodRequest, nameResponse, "RetryIfFunc",
 }

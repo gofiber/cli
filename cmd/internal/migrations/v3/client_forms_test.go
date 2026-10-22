@@ -75,13 +75,12 @@ func formFileResult() *fiber.FormFile {
 import (
 	"fmt"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/valyala/fasthttp"
 )
 
 // The files are only written to the body by MultipartForm.
 func notSent(api string) error {
-	a := fiber.Post(api)
+	a := fiberMigratePost(api)
 	a.SendFile("./go.mod", "f")
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -94,7 +93,7 @@ func notSent(api string) error {
 func fieldsOnly(api string) error {
 	args := fasthttp.AcquireArgs()
 	args.Set("k", "v")
-	a := fiber.Post(api)
+	a := fiberMigratePost(api)
 	a.MultipartForm(args)
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -105,17 +104,17 @@ func fieldsOnly(api string) error {
 
 // A FormFile that two requests send.
 func shared(api string, data []byte) error {
-	ff := fiber.AcquireFormFile()
+	ff := fiberMigrateAcquireFormFile()
 	ff.Fieldname = "f"
 	ff.Name = "n"
 	ff.Content = data
-	a := fiber.Post(api)
+	a := fiberMigratePost(api)
 	a.FileData(ff)
 	a.MultipartForm(nil)
 	if _, _, errs := a.Bytes(); len(errs) > 0 {
 		return errs[0]
 	}
-	b := fiber.Post(api)
+	b := fiberMigratePost(api)
 	b.FileData(ff)
 	b.MultipartForm(nil)
 	if _, _, errs := b.Bytes(); len(errs) > 0 {
@@ -124,19 +123,16 @@ func shared(api string, data []byte) error {
 	return nil
 }
 
-func formFileResult() *fiber.FormFile {
-	return fiber.AcquireFormFile()
+func formFileResult() *fiberMigrateFormFile {
+	return fiberMigrateAcquireFormFile()
 }
 `,
 			},
 			notes: []string{
-				"main.go:11: left as Fiber v2 code: FileData()/SendFile() without a MultipartForm() call after them: v2 only sends the files from MultipartForm()",
-				"main.go:24: left as Fiber v2 code: MultipartForm() without a file: the v3 client sends a form without files url-encoded, never as multipart",
-				"main.go:39: left as Fiber v2 code: FileData() with a FormFile that more than one call sends (a v3 file can be read once)",
-				"main.go:45: left as Fiber v2 code: FileData() with a FormFile that more than one call sends (a v3 file can be read once)",
-				"main.go:35: `fiber.AcquireFormFile` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
-				"main.go:54: `fiber.FormFile` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
-				"main.go:55: `fiber.AcquireFormFile` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:11: FileData()/SendFile() without a MultipartForm() call after them: v2 only sends the files from MultipartForm()" + clientShimNote,
+				"main.go:24: MultipartForm() without a file: the v3 client sends a form without files url-encoded, never as multipart" + clientShimNote,
+				"main.go:39: FileData() with a FormFile that more than one call sends (a v3 file can be read once)" + clientShimNote,
+				"main.go:45: FileData() with a FormFile that more than one call sends (a v3 file can be read once)" + clientShimNote,
 			},
 		},
 		{

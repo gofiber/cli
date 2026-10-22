@@ -3,19 +3,20 @@
 // Fiber v3 cannot make the way the Fiber v2 agent did (a Host that differs from
 // the URL, SetResponse, RetryIf, ...).
 //
-// It is a copy of the HTTP client of Fiber v2.52.15 (client.go), with its
-// behavior unchanged. The only differences are:
-//
-//   - every package level name starts with fiberMigrate and is unexported, and so
-//     are the names the imports get, so that the file cannot collide with a name of
-//     the project it is added to;
-//   - the fasthttp aliases of the fiber package (Args, Request, Response,
-//     RetryIfFunc and their pools) are the fasthttp types and functions themselves;
-//   - the helpers of the fiber/utils package it needed are plain conversions.
-//
 // The package exists so that the code is built, vetted, linted and tested together
-// with the CLI. The migration embeds this file and writes everything below the
-// package clause into the project.
+// with the CLI. The migration embeds agent.go and writes everything below the
+// package clause into the project, so the file must not import anything but the
+// standard library and fasthttp, and must declare nothing but names that start with
+// fiberMigrate and are unexported (see the tests of the migration).
+package agentshim
+
+// The code below is the HTTP client of Fiber v2.52.15 (client.go) and behaves like
+// it. The differences are the names, which all start with fiberMigrate and are
+// unexported, imports included, so that this file cannot collide with a name of the
+// package it is added to; the aliases of fasthttp that the fiber package declared
+// (Args, Request, Response, RetryIfFunc and their pools), which are the fasthttp
+// types and functions themselves; and the helpers of fiber/utils, which are plain
+// conversions.
 //
 // The original code is licensed under the MIT license:
 //
@@ -40,7 +41,6 @@
 //	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 //	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //	SOFTWARE.
-package agentshim
 
 import (
 	fmbytes "bytes"

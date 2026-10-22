@@ -172,6 +172,9 @@ type clientUnit struct {
 	// dedicated says the request needs a client of its own, because it changes
 	// the settings of the client.
 	dedicated bool
+	// flows says the agent is used for more than calling its methods, so that it
+	// may reach code the migration does not follow.
+	flows bool
 }
 
 // decompose takes a chain of agent calls apart.

@@ -48,6 +48,9 @@ func (e *clientEmit) markHandled() {
 	if u.create != nil {
 		mark(u.create)
 	}
+	if u.retExpr != nil {
+		mark(u.retExpr)
+	}
 	for _, op := range u.allOps() {
 		for _, ff := range op.files {
 			e.formFile(ff)
