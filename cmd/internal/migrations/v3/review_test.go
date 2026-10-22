@@ -230,6 +230,7 @@ func (unrelated) RedirectBack(string) error { return nil }
 	})
 
 	assert.ElementsMatch(t, []string{
+		"main.go:3: Redirect().Back only follows a Referer that comes from the same origin and takes the fallback otherwise; RedirectBack of v2 followed any Referer.",
 		"main.go:7: RedirectBack was removed in Fiber v3: use c.Redirect().Back(fallback); " +
 			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on c.Ctx",
 		"main.go:22: RedirectBack was removed in Fiber v3: use c.Redirect().Back(fallback); " +
@@ -397,4 +398,35 @@ func routes(app *fiber.App, h fiber.Handler) {
 }
 `})
 	assert.Equal(t, []string{"a.go:7: " + noWait, "a.go:7: " + status}, notes)
+}
+
+// Redirect().Back refuses a Referer of another origin, which RedirectBack of v2
+// followed: a project that uses it is told once.
+func Test_Review_RedirectBackFollowsSameOriginOnly(t *testing.T) {
+	t.Parallel()
+
+	notes := reviewNotes(t, map[string]string{
+		"a.go": `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func a(c fiber.Ctx) error { return c.Redirect().Status(fiber.StatusFound).Back("/") }
+`,
+		"b.go": `package main
+
+import f "github.com/gofiber/fiber/v3"
+
+func b(c f.Ctx) error { return c.Redirect().
+	Back("/") }
+`,
+		"c.go": `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func c(c fiber.Ctx) error { return c.Redirect().To("/x") }
+`,
+	})
+
+	require.Len(t, notes, 1, "%v", notes)
+	assert.Contains(t, notes[0], "Redirect().Back only follows a Referer that comes from the same origin")
 }

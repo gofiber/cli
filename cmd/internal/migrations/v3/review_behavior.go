@@ -65,6 +65,11 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: "requestid: the default ID is now a secure random token instead of a UUID; set Config.Generator to utils.UUIDv4 if something relies on the UUID format.",
 	},
 	{
+		pkg:     regexp.MustCompile(`^github\.com/gofiber/fiber/v3$`),
+		uses:    regexp.MustCompile(`\bRedirect\(\)\s*(?:\.Status\([^)]*\)\s*)?\.Back\(`),
+		message: "Redirect().Back only follows a Referer that comes from the same origin and takes the fallback otherwise; RedirectBack of v2 followed any Referer.",
+	},
+	{
 		pkg:     reviewMiddlewarePath("session"),
 		unless:  regexp.MustCompile(`\bKeyGenerator\b`),
 		message: "session: the default session ID is now a secure random token instead of a UUID; set Config.KeyGenerator to utils.UUIDv4 if something relies on the UUID format.",
