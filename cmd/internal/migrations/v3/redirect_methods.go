@@ -311,7 +311,7 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 		}
 		body += "return " + recv + ".Redirect().Status(" + status + ")." + target.method + "(" + strings.Join(args, ", ") + ")"
 
-		text := lit.text("error", body)
+		text := lit.text(ctxLitError, body)
 		if comments := ctxStrayComments(g, call, append(slices.Clone(before), statuses[0])); len(comments) > 0 {
 			text += " " + strings.Join(comments, " ")
 		}

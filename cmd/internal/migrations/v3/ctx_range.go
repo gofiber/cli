@@ -14,6 +14,8 @@ const (
 	ctxTypeRange    = "Range"
 	ctxTypeRangeSet = "RangeSet"
 	ctxFieldRanges  = "Ranges"
+	ctxFieldStart   = "Start"
+	ctxFieldEnd     = "End"
 )
 
 // ctxRangeNote is the note for a place where the Start and End of the ranges can
@@ -232,7 +234,7 @@ func (t *ctxRangeTracker) promotesSet(s *rshape, depth int) bool {
 		}
 		for _, f := range s.fields.List {
 			for _, id := range f.Names {
-				if id.Name == "Start" || id.Name == "End" {
+				if id.Name == ctxFieldStart || id.Name == ctxFieldEnd {
 					return false
 				}
 			}
@@ -249,14 +251,14 @@ func (t *ctxRangeTracker) promotesSet(s *rshape, depth int) bool {
 
 // isRangeField reports whether sel reads or writes the Start or the End of a range.
 func (t *ctxRangeTracker) isRangeField(sel *ast.SelectorExpr, stack []ast.Node) bool {
-	return (sel.Sel.Name == "Start" || sel.Sel.Name == "End") && t.isSet(t.shapeOf(sel.X, stack))
+	return (sel.Sel.Name == ctxFieldStart || sel.Sel.Name == ctxFieldEnd) && t.isSet(t.shapeOf(sel.X, stack))
 }
 
 // checkRead converts the Start or the End of a range, which is an int64 now,
 // where it is read: v2 gave an int, and so does the conversion. A Start or End of
 // a value whose type is not known is reported when the file handles ranges.
 func (t *ctxRangeTracker) checkRead(sel *ast.SelectorExpr, stack []ast.Node) {
-	if sel.Sel.Name != "Start" && sel.Sel.Name != "End" {
+	if sel.Sel.Name != ctxFieldStart && sel.Sel.Name != ctxFieldEnd {
 		return
 	}
 	if _, isCall := ctxParentCall(sel, stack); isCall {
@@ -308,9 +310,9 @@ func (t *ctxRangeTracker) checkConversion(call *ast.CallExpr, stack []ast.Node) 
 	to, from := t.typeShape(call.Fun, nil, 0), t.shapeOf(call.Args[0], stack)
 	var elem string
 	switch {
-	case from != nil && from.kind == rkSet && t.isStartEndStruct(to):
+	case from != nil && from.kind == rkSet && isStartEndStruct(to):
 		elem = "int"
-	case to != nil && to.kind == rkSet && t.isStartEndStruct(from):
+	case to != nil && to.kind == rkSet && isStartEndStruct(from):
 		elem = "int64"
 	default:
 		return
@@ -332,7 +334,7 @@ func (t *ctxRangeTracker) checkConversion(call *ast.CallExpr, stack []ast.Node) 
 
 // isStartEndStruct reports whether the shape is a struct with the two fields
 // Start and End of type int, the shape of the RangeSet of v2.
-func (t *ctxRangeTracker) isStartEndStruct(s *rshape) bool {
+func isStartEndStruct(s *rshape) bool {
 	if s == nil || s.kind != rkStruct || s.fields == nil {
 		return false
 	}
@@ -346,7 +348,7 @@ func (t *ctxRangeTracker) isStartEndStruct(s *rshape) bool {
 			names = append(names, id.Name)
 		}
 	}
-	return slices.Equal(names, []string{"Start", "End"})
+	return slices.Equal(names, []string{ctxFieldStart, ctxFieldEnd})
 }
 
 // checkAssign converts what is assigned to the Start or the End of a range to
@@ -378,7 +380,7 @@ func (t *ctxRangeTracker) checkLiteral(lit *ast.CompositeLit, stack []ast.Node) 
 
 	for _, elt := range lit.Elts {
 		if kv, ok := elt.(*ast.KeyValueExpr); ok {
-			if isIdentNamed(kv.Key, "Start") || isIdentNamed(kv.Key, "End") {
+			if isIdentNamed(kv.Key, ctxFieldStart) || isIdentNamed(kv.Key, ctxFieldEnd) {
 				t.checkInt64(kv.Value, stack)
 			}
 			continue

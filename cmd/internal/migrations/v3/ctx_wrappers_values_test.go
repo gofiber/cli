@@ -44,11 +44,11 @@ func (o *Own) ParamsInt(key string, defaultValue ...int) (int, error) { return 0
 
 func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
-func handler(p *Plain, h *Hiding, d *Deep) (int, int, int, error) {
+func handler(p *Plain, h *Hiding, d *Deep) (total int, err error) {
 	a, errA := p.ParamsInt("a")
 	b, _ := h.ParamsInt("b")
 	c, _ := d.ParamsInt("c", 3)
-	return a + b, c, 0, errA
+	return a + b + c, errA
 }
 `,
 			want: `package main
@@ -84,11 +84,11 @@ func (o *Own) ParamsInt(key string, defaultValue ...int) (int, error) { return 0
 
 func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
-func handler(p *Plain, h *Hiding, d *Deep) (int, int, int, error) {
+func handler(p *Plain, h *Hiding, d *Deep) (total int, err error) {
 	a, errA := strconv.Atoi(p.Ctx.Params("a"))
 	b, _ := strconv.Atoi(h.Ctx.Params("b"))
 	c, _ := fiber.Params[int](d.Hiding.Ctx, "c", 3), error(nil)
-	return a + b, c, 0, errA
+	return a + b + c, errA
 }
 `,
 			msg:   "Migrating generic helpers",

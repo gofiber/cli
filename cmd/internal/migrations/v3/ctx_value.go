@@ -154,7 +154,7 @@ func (b *ctxValueBuilder) redirect(method string) ctxValue {
 
 	body := fmt.Sprintf("%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n%[4]sreturn %[5]s.Redirect().Status(%[1]s).%[6]s(%[7]s)",
 		code, b.env.qual(ctxStatusFound), status, setup, b.recv.name, target.method, call)
-	return ctxValue{params: append(params, status+" "+ctxLitInts), results: "error", body: body}
+	return ctxValue{params: append(params, status+" "+ctxLitInts), results: ctxLitError, body: body}
 }
 
 // paramsInt writes ParamsInt: the first default and no error when the parameter
@@ -185,7 +185,7 @@ func (b *ctxValueBuilder) parser(method string) ctxValue {
 	out := b.name("out")
 	return ctxValue{
 		params:  []string{out + " interface{}"},
-		results: "error",
+		results: ctxLitError,
 		body:    fmt.Sprintf("return %s.Bind().%s(%s)", b.recv.name, ctxBinders[method], out),
 	}
 }
@@ -212,5 +212,5 @@ func (b *ctxValueBuilder) sendFile() ctxValue {
 	file, compress, cfg := b.name("file"), b.name("compress"), b.name("cfg")
 	body := fmt.Sprintf("%[1]s := %[2]s{ByteRange: true}\nif len(%[3]s) > 0 {\n%[1]s.Compress = %[3]s[0]\n}\nreturn %[4]s.SendFile(%[5]s, %[1]s)",
 		cfg, b.env.qual("SendFile"), compress, b.recv.name, file)
-	return ctxValue{params: []string{file + " " + ctxLitString, compress + " ...bool"}, results: "error", body: body}
+	return ctxValue{params: []string{file + " " + ctxLitString, compress + " ...bool"}, results: ctxLitError, body: body}
 }

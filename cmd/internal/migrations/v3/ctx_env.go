@@ -380,6 +380,7 @@ func (env *ctxEnv) typeOfAt(e ast.Expr, stack []ast.Node, depth int) ast.Expr {
 			return env.typeOfAt(x.X, stack, depth+1)
 		case token.ARROW:
 			return ctxElementType(env.typeOfAt(x.X, stack, depth+1))
+		default:
 		}
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
@@ -531,7 +532,7 @@ func (env *ctxEnv) callTypeOf(call *ast.CallExpr, stack []ast.Node, depth int) a
 			return ctxFirstFieldType(env.funcDecl[fun.Name].Type.Results)
 		case env.typeDecl[fun.Name] != nil:
 			return fun
-		case fun.Name == "new" && len(call.Args) == 1:
+		case fun.Name == mw3BuiltinNew && len(call.Args) == 1:
 			return call.Args[0]
 		}
 	case *ast.ParenExpr, *ast.StarExpr, *ast.ArrayType, *ast.MapType:

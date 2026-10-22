@@ -80,7 +80,7 @@ import (
 	byName map[string]fiber.RangeSet
 	feed   chan fiber.RangeSet
 	parse  func(int) (fiber.Range, error)
-	any    any
+	extra  any
 	n      int
 }
 
@@ -94,7 +94,7 @@ func handler(j *job, r fiber.Range, rs ...fiber.RangeSet) (fiber.RangeSet, error
 	probe(j.feed)
 	probe(<-j.feed)
 	probe(j.parse)
-	probe(j.any)
+	probe(j.extra)
 	probe(j.n)
 	probe(r)
 	probe(rs)
@@ -106,7 +106,7 @@ func handler(j *job, r fiber.Range, rs ...fiber.RangeSet) (fiber.RangeSet, error
 `,
 			want: map[string]string{
 				"j.ranges": "[]set", "j.all": "range", "j.all.Ranges": "[]set", "j.byName": "map[none]set", `j.byName["a"]`: "set",
-				"j.feed": "chan set", "<-j.feed": "set", "j.parse": "func(none) (range, none)", "j.any": "none", "j.n": "none",
+				"j.feed": "chan set", "<-j.feed": "set", "j.parse": "func(none) (range, none)", "j.extra": "none", "j.n": "none",
 				"r": "range", "rs": "[]set", "rs[0]": "set", "local": "[]range", "local[0].Ranges": "[]set",
 			},
 		},

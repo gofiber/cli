@@ -131,6 +131,7 @@ const (
 	ctxLitInt    = "int"
 	ctxLitInts   = "...int"
 	ctxLitKey    = "key"
+	ctxLitError  = "error"
 )
 
 // ctxOperand is a value that the call being rewritten evaluates before it runs.

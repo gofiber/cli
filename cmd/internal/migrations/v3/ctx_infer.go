@@ -114,7 +114,7 @@ func (t *ctxRangeTracker) instantiated(base ast.Expr, args []ast.Expr, subst map
 	case *ast.SelectorExpr:
 		// iter.Seq[V] and iter.Seq2[K, V] are functions that call a function with the values
 		if pkg, ok := b.X.(*ast.Ident); ok && t.imports[pkg.Name] == "iter" && (b.Sel.Name == "Seq" || b.Sel.Name == "Seq2") {
-			return t.sequence(shapes)
+			return sequenceOf(shapes)
 		}
 		if t.harmless[ctxRootName(b)] && !slices.ContainsFunc(shapes, func(s *rshape) bool { return s != nil && s.holdsRange() }) {
 			return rNone
@@ -124,7 +124,7 @@ func (t *ctxRangeTracker) instantiated(base ast.Expr, args []ast.Expr, subst map
 }
 
 // sequence is the shape of an iterator that yields values of the given shapes.
-func (t *ctxRangeTracker) sequence(yielded []*rshape) *rshape {
+func sequenceOf(yielded []*rshape) *rshape {
 	return rFuncOf([]*rshape{rFuncOf(yielded, []*rshape{rNone})}, nil)
 }
 
@@ -222,7 +222,7 @@ func (t *ctxRangeTracker) member(s *rshape, name string, depth int) *rshape {
 			return rNone
 		}
 	case rkSet:
-		if name == "Start" || name == "End" {
+		if name == ctxFieldStart || name == ctxFieldEnd {
 			return rNone
 		}
 	case rkStruct:
@@ -367,8 +367,9 @@ func (t *ctxRangeTracker) computeShape(e ast.Expr, stack []ast.Node, depth int) 
 				return ch.elem
 			}
 			return nil
+		default:
+			return rNone
 		}
-		return rNone
 	case *ast.Ident:
 		return t.identShape(x, stack, depth)
 	case *ast.SelectorExpr:
@@ -429,7 +430,7 @@ func (t *ctxRangeTracker) siteShape(site ctxSite, depth int) *rshape {
 	case site.typ != nil:
 		return t.typeShape(site.typ, nil, depth+1)
 	case site.over != nil:
-		return t.rangeVariable(t.shapeAt(site.over, site.stack, depth+1), site.key)
+		return rangeVariable(t.shapeAt(site.over, site.stack, depth+1), site.key)
 	case site.init != nil && site.index < 0:
 		return t.shapeAt(site.init, site.stack, depth+1)
 	case site.init != nil:
@@ -440,7 +441,7 @@ func (t *ctxRangeTracker) siteShape(site ctxSite, depth int) *rshape {
 
 // rangeVariable returns the shape of the key or of the value variable of a range
 // statement over a value of the shape over.
-func (t *ctxRangeTracker) rangeVariable(over *rshape, key bool) *rshape {
+func rangeVariable(over *rshape, key bool) *rshape {
 	if over == nil {
 		return nil
 	}
@@ -497,8 +498,7 @@ func (t *ctxRangeTracker) multiShape(init ast.Expr, index int, stack []ast.Node,
 // package.
 func (t *ctxRangeTracker) selectorShape(x *ast.SelectorExpr, stack []ast.Node, depth int) *rshape {
 	if t.isPackageName(x.X, stack) {
-		switch id, _ := x.X.(*ast.Ident); {
-		case slices.Contains(t.env.pkgNames, id.Name) || t.harmless[id.Name]:
+		if id, ok := x.X.(*ast.Ident); ok && (slices.Contains(t.env.pkgNames, id.Name) || t.harmless[id.Name]) {
 			return rNone
 		}
 		return nil
@@ -685,11 +685,11 @@ func (t *ctxRangeTracker) builtinResults(id *ast.Ident, call *ast.CallExpr, stac
 	}
 
 	switch id.Name {
-	case "append", "min", "max":
+	case mw3BuiltinAppend, "min", "max":
 		if len(call.Args) > 0 {
 			return []*rshape{t.shapeAt(call.Args[0], stack, depth+1)}, true
 		}
-	case "make", "new":
+	case mw3BuiltinMake, mw3BuiltinNew:
 		if len(call.Args) > 0 {
 			return []*rshape{t.typeShape(call.Args[0], nil, depth+1)}, true
 		}
@@ -733,7 +733,10 @@ func (t *ctxRangeTracker) isGenericType(e ast.Expr) bool {
 // package. Those of the packages that know nothing of ranges hold none, except for
 // the generic functions of the standard library that hand a value on.
 func (t *ctxRangeTracker) packageResults(sel *ast.SelectorExpr, call *ast.CallExpr, stack []ast.Node, depth int) []*rshape {
-	id, _ := sel.X.(*ast.Ident)
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return nil
+	}
 	if slices.Contains(t.env.pkgNames, id.Name) {
 		// fiber.Range(x) is a conversion, any other function of the package returns no range
 		return rNoneResults
@@ -742,11 +745,10 @@ func (t *ctxRangeTracker) packageResults(sel *ast.SelectorExpr, call *ast.CallEx
 		return nil
 	}
 
-	arg := func(i int) *rshape {
-		if i < len(call.Args) {
-			return t.shapeAt(call.Args[i], stack, depth+1)
-		}
-		return nil
+	// the shape of the first argument: what the functions that hand a value on hand on
+	var first *rshape
+	if len(call.Args) > 0 {
+		first = t.shapeAt(call.Args[0], stack, depth+1)
 	}
 	elementOf := func(s *rshape) *rshape {
 		if s != nil && s.kind == rkSlice {
@@ -758,31 +760,31 @@ func (t *ctxRangeTracker) packageResults(sel *ast.SelectorExpr, call *ast.CallEx
 	switch t.imports[id.Name] + "." + sel.Sel.Name {
 	case "slices.Clone", "slices.Compact", "slices.CompactFunc", "slices.Concat", "slices.Delete", "slices.DeleteFunc",
 		"slices.Insert", "slices.Replace", "slices.Grow", "slices.Clip", "maps.Clone", "cmp.Or":
-		return []*rshape{arg(0)}
+		return []*rshape{first}
 	case "slices.Max", "slices.Min", "slices.MaxFunc", "slices.MinFunc":
-		return []*rshape{elementOf(arg(0))}
+		return []*rshape{elementOf(first)}
 	case "slices.Values":
-		return []*rshape{t.sequence([]*rshape{elementOf(arg(0))})}
+		return []*rshape{sequenceOf([]*rshape{elementOf(first)})}
 	case "slices.All", "slices.Backward":
-		return []*rshape{t.sequence([]*rshape{rNone, elementOf(arg(0))})}
+		return []*rshape{sequenceOf([]*rshape{rNone, elementOf(first)})}
 	case "slices.Collect", "slices.Sorted":
-		if seq := arg(0); seq != nil && seq.kind == rkFunc && len(seq.params) == 1 && seq.params[0] != nil && len(seq.params[0].params) == 1 {
+		if seq := first; seq != nil && seq.kind == rkFunc && len(seq.params) == 1 && seq.params[0] != nil && len(seq.params[0].params) == 1 {
 			return []*rshape{rSliceOf(seq.params[0].params[0])}
 		}
 		return nil
 	case "maps.Keys":
-		if m := arg(0); m != nil && m.kind == rkMap {
-			return []*rshape{t.sequence([]*rshape{m.key})}
+		if m := first; m != nil && m.kind == rkMap {
+			return []*rshape{sequenceOf([]*rshape{m.key})}
 		}
 		return nil
 	case "maps.Values":
-		if m := arg(0); m != nil && m.kind == rkMap {
-			return []*rshape{t.sequence([]*rshape{m.elem})}
+		if m := first; m != nil && m.kind == rkMap {
+			return []*rshape{sequenceOf([]*rshape{m.elem})}
 		}
 		return nil
 	case "maps.All":
-		if m := arg(0); m != nil && m.kind == rkMap {
-			return []*rshape{t.sequence([]*rshape{m.key, m.elem})}
+		if m := first; m != nil && m.kind == rkMap {
+			return []*rshape{sequenceOf([]*rshape{m.key, m.elem})}
 		}
 		return nil
 	}
