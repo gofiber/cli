@@ -94,6 +94,9 @@ type clientFile struct {
 	copyClients bool
 }
 
+// clientMigrateContent migrates the requests of one file and returns its new
+// content. A dry run only scans the file for what it means for its package: it
+// reports nothing and returns the content as it is.
 func clientMigrateContent(content string, fi internal.FileInfo, pkgs *clientPackages, dry bool) string {
 	names := fiberNames(content)
 	names = slices.DeleteFunc(names, func(n string) bool { return n == "." })
