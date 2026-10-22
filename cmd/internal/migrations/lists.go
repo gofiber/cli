@@ -95,6 +95,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateBasicauthStorePassword,
 			v3migrations.MigrateReqHeaderParser,
 			MigrateGoVersion,
+			MigrateReplaceDirectives,
 		},
 	},
 	{
