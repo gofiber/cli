@@ -19,6 +19,7 @@ const (
 	nameDelete                         = "Delete"
 	nameDotGit                         = ".git"
 	nameDuration                       = "Duration"
+	nameFmt                            = "fmt"
 	nameFromForm                       = "FromForm"
 	nameFromHeader                     = "FromHeader"
 	nameFromParam                      = "FromParam"

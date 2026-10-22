@@ -530,8 +530,8 @@ func (e *clientEmit) errsPlan(it *clientItem, errs clientTermSide, define bool, 
 
 // clientFormatSinks are the functions that only format the errors they get.
 var clientFormatSinks = map[string][]string{
-	"fmt": {"Errorf", "Sprintf", "Sprint", "Sprintln", "Printf", "Print", "Println", "Fprintf", "Fprint", "Fprintln"},
-	"log": {"Printf", "Print", "Println", "Fatalf", "Fatal", "Fatalln", "Panicf", "Panic", "Panicln"},
+	nameFmt: {"Errorf", "Sprintf", "Sprint", "Sprintln", "Printf", "Print", "Println", "Fprintf", "Fprint", "Fprintln"},
+	"log":   {"Printf", "Print", "Println", "Fatalf", "Fatal", "Fatalln", "Panicf", "Panic", "Panicln"},
 }
 
 // errsRewrite returns the edit that makes one use of the []error variable work
@@ -657,7 +657,7 @@ func (f *clientFile) isFormatSink(call *ast.CallExpr, id *ast.Ident) bool {
 	}
 	switch {
 	case slices.Contains(f.fmt, pkg.Name):
-		return slices.Contains(clientFormatSinks["fmt"], sel.Sel.Name)
+		return slices.Contains(clientFormatSinks[nameFmt], sel.Sel.Name)
 	case slices.Contains(f.log, pkg.Name):
 		return slices.Contains(clientFormatSinks["log"], sel.Sel.Name)
 	}

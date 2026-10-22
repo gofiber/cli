@@ -91,7 +91,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	}
 	fmtName := ctxImportName(content, "fmt", "fmt")
 	if fmtName == "" {
-		fmtName = "fmt"
+		fmtName = nameFmt
 	}
 	needStrconv, needFmt := false, false
 	var plan ctxPlan

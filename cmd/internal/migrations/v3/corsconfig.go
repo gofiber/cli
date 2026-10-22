@@ -216,7 +216,7 @@ func (m *corsMigration) isSlice(e ast.Expr, stack []ast.Node, depth int) bool {
 			return true
 		}
 		if id, ok := x.Fun.(*ast.Ident); ok {
-			return id.Name == "append" || id.Name == "make" && len(x.Args) > 0 && isArrayType(x.Args[0])
+			return id.Name == "append" || id.Name == mw3BuiltinMake && len(x.Args) > 0 && isArrayType(x.Args[0])
 		}
 		pkg, fn, ok := mw1Selector(x.Fun)
 		if !ok {

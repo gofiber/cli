@@ -585,7 +585,7 @@ func (*sentryFile) loggerValue(sel *ast.SelectorExpr, stack []ast.Node) bool {
 		return p.X == ast.Expr(sel)
 	case *ast.CallExpr:
 		// an argument; new(sentry.Logger) and make name a type
-		if id, isIdent := p.Fun.(*ast.Ident); isIdent && (id.Name == modBuiltinNew || id.Name == "make") {
+		if id, isIdent := p.Fun.(*ast.Ident); isIdent && (id.Name == modBuiltinNew || id.Name == mw3BuiltinMake) {
 			return false
 		}
 		return slices.Contains(p.Args, ast.Expr(sel))

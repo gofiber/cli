@@ -513,7 +513,7 @@ func (f *appFile) callType(call *ast.CallExpr, idx, depth int) (ast.Expr, *appFi
 	if id, ok := call.Fun.(*ast.Ident); ok && len(call.Args) > 0 {
 		if _, bound := f.binding(id); !bound {
 			switch id.Name {
-			case "new", "make": // the type is the first argument
+			case "new", mw3BuiltinMake: // the type is the first argument
 				return call.Args[0], f
 			case mw3BuiltinAppend: // a slice of the type of its first argument
 				return f.valueType(call.Args[0], depth+1)

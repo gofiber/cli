@@ -382,7 +382,7 @@ func (f *appFile) readOnlyCall(call *ast.CallExpr) bool {
 			return false
 		}
 		path := f.importPathOf(id.Name)
-		if path == "fmt" {
+		if path == nameFmt {
 			return strings.HasPrefix(fun.Sel.Name, "Sprint") // Sprint, Sprintf and Sprintln
 		}
 		return slices.Contains(appReadOnlyPackages, path) || slices.Contains(appReadOnlyFuncs[path], fun.Sel.Name)
