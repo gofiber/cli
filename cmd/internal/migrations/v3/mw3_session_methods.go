@@ -43,25 +43,35 @@ func MigrateSessionMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 // mw3SessionMethodsPass is the rewrite of one file by MigrateSessionMethods.
 type mw3SessionMethodsPass struct {
-	f       *mw3SessionFile
-	fi      internal.FileInfo
+	f     *mw3SessionFile
+	fi    internal.FileInfo
+	types *mw3StoreTypes
+	// added are the functions that were given a context to pass on, by the name of
+	// the parameter.
+	added   map[*ast.FuncType]string
 	imports mw3ImportEdits
 	edits   editSet
 }
 
 func mw3SessionMethodsContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
-		return strings.Contains(src, ".SetExpiry(") || strings.Contains(src, ".Reset(") ||
-			strings.Contains(src, ".Delete(") || strings.Contains(src, ".Keys(")
+		return strings.Contains(src, "SetExpiry(") || strings.Contains(src, "Reset(") ||
+			strings.Contains(src, "Delete(") || strings.Contains(src, "Keys(")
 	})
 	if !ok {
 		return src
 	}
 
-	p := &mw3SessionMethodsPass{f: f, fi: fi}
+	// What stands in for the store is decided before any file is rewritten.
+	p := &mw3SessionMethodsPass{f: f, fi: fi, types: pkgs.storeTypes(fi), added: map[*ast.FuncType]string{}}
 	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			p.call(call, stack)
+		switch n := n.(type) {
+		case *ast.TypeSpec:
+			p.interfaceSpec(n, stack)
+		case *ast.FuncDecl:
+			p.standIn(n, stack)
+		case *ast.CallExpr:
+			p.call(n, stack)
 		}
 		return true
 	})
@@ -228,8 +238,11 @@ func (p *mw3SessionMethodsPass) context(call *ast.CallExpr, stack []ast.Node) st
 		}
 		// Only the function the call is in: a closure it starts may outlive
 		// the request, and the context with it.
+		if name := p.added[ft]; name != "" {
+			return name
+		}
 		for _, field := range ft.Params.List {
-			if !isFiberType(field.Type, p.f.fiber, "Ctx") {
+			if !isFiberType(field.Type, p.f.fiber, "Ctx") && !p.isContext(field.Type) {
 				continue
 			}
 			for _, name := range field.Names {
@@ -242,6 +255,85 @@ func (p *mw3SessionMethodsPass) context(call *ast.CallExpr, stack []ast.Node) st
 	}
 
 	return p.f.importAt(&p.imports, "context", call.Pos(), stack, nil, "context", "stdcontext") + ".Background()"
+}
+
+// isContext reports whether the type is context.Context.
+func (p *mw3SessionMethodsPass) isContext(t ast.Expr) bool {
+	sel, ok := t.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Context" {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == mw3ImportName(p.f.g.src, "context")
+}
+
+// interfaceSpec gives the methods of an interface that asks for the v2 session
+// store a context.
+func (p *mw3SessionMethodsPass) interfaceSpec(spec *ast.TypeSpec, stack []ast.Node) {
+	it, ok := spec.Type.(*ast.InterfaceType)
+	if !ok {
+		return
+	}
+	if _, store := p.types.ifaces[mw3TypeKey{p.f.pkgOf(), spec.Name.Name}]; !store {
+		return
+	}
+	for _, m := range it.Methods.List {
+		ft, isFunc := m.Type.(*ast.FuncType)
+		if !isFunc || len(m.Names) != 1 || !slices.Contains(mw3ContextMethods, m.Names[0].Name) ||
+			!mw3IsStoreMethod(m.Names[0].Name, ft, p.f.env) {
+			continue
+		}
+		p.addContext(ft, nil, stack)
+	}
+}
+
+// standIn gives the methods of a type that has the methods of the v2 session
+// store a context, as the interface has.
+func (p *mw3SessionMethodsPass) standIn(d *ast.FuncDecl, stack []ast.Node) {
+	if d.Recv == nil || len(d.Recv.List) != 1 || !slices.Contains(mw3ContextMethods, d.Name.Name) {
+		return
+	}
+	recv := mw3KindOfType(d.Recv.List[0].Type, nil)
+	if recv.base != mw3KindNamed {
+		return
+	}
+	key := mw3TypeKey{p.f.pkgOf(), recv.name}
+	if _, impl := p.types.impls[key]; !impl || !mw3IsStoreMethod(d.Name.Name, d.Type, p.f.env) {
+		return
+	}
+	p.addContext(d.Type, d.Recv, stack)
+}
+
+// addContext adds the parameter ctx context.Context in front of the parameters of
+// a method, or a context.Context in front of unnamed ones. recv is the receiver
+// of the method, whose name the parameter cannot have.
+func (p *mw3SessionMethodsPass) addContext(ft *ast.FuncType, recv *ast.FieldList, stack []ast.Node) {
+	g := p.f.g
+	pkg := p.f.importAt(&p.imports, "context", ft.Pos(), stack, nil, "context", "stdcontext")
+
+	named := len(ft.Params.List) == 0 || len(ft.Params.List[0].Names) > 0
+	name := ""
+	if named {
+		name = mw3FreeName(func(name string) bool {
+			_, inParams := declInFieldList(name, ft.Params)
+			_, inRecv := declInFieldList(name, recv)
+			return inParams || inRecv
+		}, "ctx", "sessionCtx")
+		p.added[ft] = name
+	}
+
+	text := pkg + ".Context"
+	if named {
+		text = name + " " + text
+	}
+	if len(ft.Params.List) > 0 {
+		text += ", "
+	}
+	at := g.offset(ft.Params.Opening) + 1
+	if len(ft.Params.List) > 0 {
+		at = g.offset(ft.Params.List[0].Pos())
+	}
+	p.edits.replace(at, at, text)
 }
 
 // mw3TypeIsShown reports whether the file shows what type the expression is

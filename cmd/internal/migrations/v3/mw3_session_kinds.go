@@ -213,8 +213,12 @@ type mw3SessionFacts struct {
 	structs     map[string]mw3Struct
 	// named are the types that are not structs and stand for something of interest.
 	named map[string]mw3Kind
-	// funcDecls are the functions of the package that return a config.
-	funcDecls map[string]mw3FuncDecl
+	// funcDecls are the functions of the package that return a config, and
+	// methodDecls its methods, by the name of the type.
+	funcDecls   map[string]mw3FuncDecl
+	methodDecls map[string]map[string]mw3FuncDecl
+	// ifaces are the interface types of the package.
+	ifaces map[string]mw3Iface
 	// mutated tells, by the name of a variable of the package level, whether the
 	// package assigns to it or to its lookup, read when first asked for.
 	mutated map[string]bool
@@ -240,6 +244,8 @@ func newMw3SessionFacts(owner *mw3Pkg) mw3SessionFacts {
 		structs:     map[string]mw3Struct{},
 		named:       map[string]mw3Kind{},
 		funcDecls:   map[string]mw3FuncDecl{},
+		methodDecls: map[string]map[string]mw3FuncDecl{},
+		ifaces:      map[string]mw3Iface{},
 		mutated:     map[string]bool{},
 	}
 }
@@ -285,6 +291,10 @@ func (f *mw3SessionFacts) scanFunc(d *ast.FuncDecl, env *mw3Env) {
 		if k := mw3KindOfType(d.Recv.List[0].Type, nil); k.base == mw3KindNamed {
 			recv = k.name
 			f.addMethod(recv, d.Name.Name)
+			if f.methodDecls[recv] == nil {
+				f.methodDecls[recv] = map[string]mw3FuncDecl{}
+			}
+			f.methodDecls[recv][d.Name.Name] = mw3FuncDecl{decl: d, env: env}
 		}
 	}
 
@@ -401,6 +411,7 @@ func (f *mw3SessionFacts) scanStruct(name string, st *ast.StructType, env *mw3En
 // embeds.
 func (f *mw3SessionFacts) scanInterface(name string, it *ast.InterfaceType, env *mw3Env) {
 	s := mw3Struct{fields: map[string]mw3Kind{}, own: map[string]struct{}{}}
+	iface := mw3Iface{methods: map[string]*ast.Field{}, env: env}
 	for _, m := range it.Methods.List {
 		if len(m.Names) == 0 {
 			// An embedded interface, or a constraint such as ~string | int.
@@ -410,11 +421,13 @@ func (f *mw3SessionFacts) scanInterface(name string, it *ast.InterfaceType, env 
 				continue
 			}
 			s.embedded = append(s.embedded, kind)
+			iface.embedded = append(iface.embedded, kind)
 			continue
 		}
 		for _, id := range m.Names {
 			s.own[id.Name] = struct{}{}
 			f.addMethod(name, id.Name)
+			iface.methods[id.Name] = m
 			ft, ok := m.Type.(*ast.FuncType)
 			if !ok {
 				continue
@@ -427,7 +440,19 @@ func (f *mw3SessionFacts) scanInterface(name string, it *ast.InterfaceType, env 
 			}
 		}
 	}
+	iface.opaque = s.opaque
+	f.ifaces[name] = iface
 	f.structs[name] = s
+}
+
+// mw3Iface is an interface type of the package: its own methods, as the fields
+// of the syntax tree that declare them, and the interfaces it embeds.
+type mw3Iface struct {
+	methods  map[string]*ast.Field
+	env      *mw3Env
+	embedded []mw3Kind
+	// opaque is set when it embeds something the source does not show.
+	opaque bool
 }
 
 // mw3IsLock reports whether an embedded type of another package is a lock of the

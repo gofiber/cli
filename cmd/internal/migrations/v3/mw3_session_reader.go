@@ -12,6 +12,9 @@ type mw3KindReader struct {
 	facts *mw3SessionFacts
 	env   *mw3Env
 	depth int
+	// noBind keeps the reader from asking which types stand in for the store, which
+	// it does while that is being decided.
+	noBind bool
 }
 
 // factsOf returns the facts of the package at the import path, which is empty for
@@ -345,6 +348,9 @@ const (
 	mw3ReleaseMethod = "Release"
 )
 
+// mw3StoreCalls are the methods of the store that a type standing in for it has.
+var mw3StoreCalls = []string{appMethodGet, mw3Reset, nameDelete}
+
 var (
 	mw3StoreMembers = mw3Names(appMethodGet, mw3GetByID, mw3Reset, nameDelete, mw3RegisterType, mw3Config)
 
@@ -437,7 +443,11 @@ func (r *mw3KindReader) lookup(k mw3Kind, member string) mw3Member {
 					continue
 				}
 				if f.declares(e.kind.name, member) {
-					found = append(found, mw3Member{user: true, owner: e.kind})
+					m := mw3Member{user: true, owner: e.kind}
+					if slices.Contains(mw3StoreCalls, member) && r.storeBound(e.kind) {
+						m.base = mw3KindStore // a method of a type that stands in for the store
+					}
+					found = append(found, m)
 					continue
 				}
 				s := f.structs[e.kind.name]

@@ -20,8 +20,10 @@ import (
 type mw3Pkgs struct {
 	pkgs map[string]*mw3Pkg
 	// sources is what each module (by the directory of its go.mod) does with the
-	// Source type of the session middleware.
+	// Source type of the session middleware, and stores the types that stand in
+	// for the session store.
 	sources map[string]*mw3SourceMode
+	stores  map[string]*mw3StoreTypes
 	// indexes give the view of the whole module, for the facts that reach into
 	// other packages of it.
 	indexes moduleIndexes
