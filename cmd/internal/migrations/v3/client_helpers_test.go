@@ -24,14 +24,31 @@ type clientRun struct {
 	notes []string
 }
 
-// clientRunMigration writes files (name to content) into a fresh directory,
-// runs MigrateClientUsage on it and returns what it did. The files are valid
+// clientModule is the go.mod of the projects the tests migrate, which the copy of the
+// Fiber v2 agent is added to.
+const clientModule = "module example.com/app\n\ngo 1.25\n"
+
+// clientShimImport is how the code that uses the copy imports it.
+const clientShimImport = "example.com/app/internal/fibermigrate"
+
+// clientRunMigration writes files (name to content) into a fresh directory with a
+// go.mod, runs MigrateClientUsage on it and returns what it did. The files are valid
 // Fiber v2 programs. MigrateGoPkgs moves the fiber import to v3 before the
 // client migration runs, so the same is done here to the input.
 func clientRunMigration(t *testing.T, files map[string]string) clientRun {
 	t.Helper()
+	return clientRunProject(t, files, true)
+}
+
+// clientRunProject is clientRunMigration for a project that has a go.mod or not. A
+// go.mod among the files is the one used.
+func clientRunProject(t *testing.T, files map[string]string, withModule bool) clientRun {
+	t.Helper()
 
 	dir := t.TempDir()
+	if _, own := files["go.mod"]; !own && withModule {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(clientModule), 0o600))
+	}
 	for name, content := range files {
 		content = strings.ReplaceAll(content, "github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v3")
 		path := filepath.Join(dir, name)
@@ -121,12 +138,12 @@ func clientRunCases(t *testing.T, cases []clientCase) {
 
 // clientShimNote ends the note of a request that stays on the copy of the Fiber v2
 // agent.
-const clientShimNote = "; this request still runs on the copy of the Fiber v2 agent in fiber_migrate_agent.go"
+const clientShimNote = "; this request still runs on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go"
 
 // clientShareNote is the note of a request that could be migrated but shares its
 // agent with code that cannot.
-const clientShareNote = "its agent is shared with code that stays on the copy of the Fiber v2 agent in fiber_migrate_agent.go, so this request does too"
+const clientShareNote = "its agent is shared with code that stays on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go, so this request does too"
 
 // clientShareClientNote is the note of a request that could be migrated but shares
 // its client with requests that cannot.
-const clientShareClientNote = "its client is shared with requests that stay on the copy of the Fiber v2 agent in fiber_migrate_agent.go, so this request does too"
+const clientShareClientNote = "its client is shared with requests that stay on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go, so this request does too"

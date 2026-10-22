@@ -43,7 +43,7 @@ func (f *clientFile) migrate(u *clientUnit) {
 		if f.dry {
 			f.bail(u, "it contains a request that stays on the copy")
 		} else {
-			f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimFile+", so this request does too")
+			f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimWhere+", so this request does too")
 		}
 		return
 	}
@@ -70,11 +70,11 @@ func (f *clientFile) bail(u *clientUnit, reason clientUnsupported) {
 	if f.shimOK() {
 		f.shimNoted = true
 		f.markCopied(u)
-		f.notef(line, "%s; this request still runs on the copy of the Fiber v2 agent in %s", reason, clientShimFile)
+		f.notef(line, "%s; this request still runs on the copy of the Fiber v2 agent in %s", reason, clientShimWhere)
 		return
 	}
 	f.notef(line, "left as Fiber v2 code: %s%s. Convert this request by hand to the client package (client.Get/client.Post with a client.Config, or client.C().R())",
-		reason, f.copyMissing(true, nil))
+		reason, f.copyMissing(true))
 	f.markBailed(u)
 }
 

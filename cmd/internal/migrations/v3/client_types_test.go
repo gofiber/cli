@@ -171,14 +171,15 @@ type holder struct {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3"
 )
 
-func newReq(url string) *fiberMigrateAgent {
-	return fiberMigrateGet(url).Set("Accept", "application/json")
+func newReq(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url).Set("Accept", "application/json")
 }
 
-func send(a *fiberMigrateAgent) ([]byte, error) {
+func send(a *fibermigrate.Agent) ([]byte, error) {
 	_, body, errs := a.Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
@@ -186,8 +187,8 @@ func send(a *fiberMigrateAgent) ([]byte, error) {
 	return body, nil
 }
 
-func build(method, url string) *fiberMigrateAgent {
-	a := fiberMigrateAcquireAgent()
+func build(method, url string) *fibermigrate.Agent {
+	a := fibermigrate.AcquireAgent()
 	req := a.Request()
 	req.Header.SetMethod(method)
 	req.SetRequestURI(url)
@@ -207,7 +208,7 @@ func useHelpers(url string) ([]byte, error) {
 	return body, nil
 }
 
-func viaParam(a *fiberMigrateAgent) (int, error) {
+func viaParam(a *fibermigrate.Agent) (int, error) {
 	a.Set("X-Trace", "1")
 	code, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -217,7 +218,7 @@ func viaParam(a *fiberMigrateAgent) (int, error) {
 }
 
 type holder struct {
-	agent *fiberMigrateAgent
+	agent *fibermigrate.Agent
 }
 `,
 			},

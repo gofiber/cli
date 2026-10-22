@@ -1,22 +1,23 @@
-// Package agentshim is the source of fiber_migrate_agent.go, the file that
-// "fiber migrate" adds to a project for the requests that the client package of
-// Fiber v3 cannot make the way the Fiber v2 agent did (a Host that differs from
-// the URL, SetResponse, RetryIf, ...).
+// Package agentshim is the source of agent.go of the package
+// <module>/internal/fibermigrate, the file that "fiber migrate" adds to a module
+// for the requests that the client package of Fiber v3 cannot make the way the
+// Fiber v2 agent did (a Host that differs from the URL, SetResponse, RetryIf, ...).
 //
 // The package exists so that the code is built, vetted, linted and tested together
 // with the CLI. The migration embeds agent.go and writes everything below the
-// package clause into the project, so the file must not import anything but the
-// standard library and fasthttp, and must declare nothing but names that start with
-// fiberMigrate and are unexported (see the tests of the migration).
+// package clause into the module, with the package clause replaced. The file must
+// compile on its own and import nothing but the standard library and fasthttp, and
+// its unexported top level names start with agent, because the files of the other
+// migrations share the package (module_shim_collision_internal_test.go checks it).
 package agentshim
 
 // The code below is the HTTP client of Fiber v2.52.15 (client.go) and behaves like
-// it. The differences are the names, which all start with fiberMigrate and are
-// unexported, imports included, so that this file cannot collide with a name of the
-// package it is added to; the aliases of fasthttp that the fiber package declared
-// (Args, Request, Response, RetryIfFunc and their pools), which are the fasthttp
-// types and functions themselves; and the helpers of fiber/utils, which are plain
-// conversions.
+// it, under the names the fiber package gave it: Agent, Client, FormFile, Get, Head,
+// Post, Put, Patch, Delete, AcquireAgent, ReleaseAgent, AcquireClient, ReleaseClient,
+// AcquireFormFile and ReleaseFormFile. What is not here are the aliases of fasthttp
+// that the fiber package declared (Args, Request, Response, RetryIfFunc and their
+// pools), which are the fasthttp types and functions themselves, and the helpers of
+// fiber/utils, which are plain conversions.
 //
 // The original code is licensed under the MIT license:
 //
@@ -43,39 +44,39 @@ package agentshim
 //	SOFTWARE.
 
 import (
-	fmbytes "bytes"
-	fmtls "crypto/tls"
-	fmjson "encoding/json"
-	fmxml "encoding/xml"
-	fmerrors "errors"
-	fmfmt "fmt"
-	fmio "io"
-	fmmultipart "mime/multipart"
-	fmos "os"
-	fmfilepath "path/filepath"
-	fmstrconv "strconv"
-	fmsync "sync"
-	fmtime "time"
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"os"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"time"
 
-	fmfasthttp "github.com/valyala/fasthttp"
+	"github.com/valyala/fasthttp"
 )
 
 // The media types the agent sets.
 const (
-	fiberMigrateMIMEApplicationJSON = "application/json"
-	fiberMigrateMIMEApplicationXML  = "application/xml"
-	fiberMigrateMIMEApplicationForm = "application/x-www-form-urlencoded"
+	agentMIMEApplicationJSON = "application/json"
+	agentMIMEApplicationXML  = "application/xml"
+	agentMIMEApplicationForm = "application/x-www-form-urlencoded"
 )
 
 // The user agent of a request that was not given one.
-const fiberMigrateDefaultUserAgent = "fiber"
+const agentDefaultUserAgent = "fiber"
 
-var fiberMigrateDefaultClient fiberMigrateClient
+var agentDefaultClient Client
 
-// fiberMigrateClient implements http client.
+// Client implements http client.
 //
-// It is safe calling fiberMigrateClient methods from concurrently running goroutines.
-type fiberMigrateClient struct {
+// It is safe calling Client methods from concurrently running goroutines.
+type Client struct {
 	// JSONEncoder is the implementation of JSONMarshal that requests use.
 	//
 	// Allowing for flexibility in using another json library for encoding
@@ -89,65 +90,65 @@ type fiberMigrateClient struct {
 	// UserAgent is used in User-Agent request header.
 	UserAgent string
 
-	mutex fmsync.RWMutex
+	mutex sync.RWMutex
 
 	// NoDefaultUserAgentHeader when set to true, causes the default
 	// User-Agent header to be excluded from the Request.
 	NoDefaultUserAgentHeader bool
 }
 
-// fiberMigrateGet returns an agent with http method GET.
-func fiberMigrateGet(url string) *fiberMigrateAgent { return fiberMigrateDefaultClient.Get(url) }
+// Get returns an agent with http method GET.
+func Get(url string) *Agent { return agentDefaultClient.Get(url) }
 
 // Get returns an agent with http method GET.
-func (c *fiberMigrateClient) Get(url string) *fiberMigrateAgent {
-	return c.createAgent(fmfasthttp.MethodGet, url)
+func (c *Client) Get(url string) *Agent {
+	return c.createAgent(fasthttp.MethodGet, url)
 }
-
-// fiberMigrateHead returns an agent with http method HEAD.
-func fiberMigrateHead(url string) *fiberMigrateAgent { return fiberMigrateDefaultClient.Head(url) }
 
 // Head returns an agent with http method HEAD.
-func (c *fiberMigrateClient) Head(url string) *fiberMigrateAgent {
-	return c.createAgent(fmfasthttp.MethodHead, url)
-}
+func Head(url string) *Agent { return agentDefaultClient.Head(url) }
 
-// fiberMigratePost sends POST request to the given URL.
-func fiberMigratePost(url string) *fiberMigrateAgent { return fiberMigrateDefaultClient.Post(url) }
+// Head returns an agent with http method HEAD.
+func (c *Client) Head(url string) *Agent {
+	return c.createAgent(fasthttp.MethodHead, url)
+}
 
 // Post sends POST request to the given URL.
-func (c *fiberMigrateClient) Post(url string) *fiberMigrateAgent {
-	return c.createAgent(fmfasthttp.MethodPost, url)
-}
+func Post(url string) *Agent { return agentDefaultClient.Post(url) }
 
-// fiberMigratePut sends PUT request to the given URL.
-func fiberMigratePut(url string) *fiberMigrateAgent { return fiberMigrateDefaultClient.Put(url) }
+// Post sends POST request to the given URL.
+func (c *Client) Post(url string) *Agent {
+	return c.createAgent(fasthttp.MethodPost, url)
+}
 
 // Put sends PUT request to the given URL.
-func (c *fiberMigrateClient) Put(url string) *fiberMigrateAgent {
-	return c.createAgent(fmfasthttp.MethodPut, url)
-}
+func Put(url string) *Agent { return agentDefaultClient.Put(url) }
 
-// fiberMigratePatch sends PATCH request to the given URL.
-func fiberMigratePatch(url string) *fiberMigrateAgent { return fiberMigrateDefaultClient.Patch(url) }
+// Put sends PUT request to the given URL.
+func (c *Client) Put(url string) *Agent {
+	return c.createAgent(fasthttp.MethodPut, url)
+}
 
 // Patch sends PATCH request to the given URL.
-func (c *fiberMigrateClient) Patch(url string) *fiberMigrateAgent {
-	return c.createAgent(fmfasthttp.MethodPatch, url)
-}
+func Patch(url string) *Agent { return agentDefaultClient.Patch(url) }
 
-// fiberMigrateDelete sends DELETE request to the given URL.
-func fiberMigrateDelete(url string) *fiberMigrateAgent {
-	return fiberMigrateDefaultClient.Delete(url)
+// Patch sends PATCH request to the given URL.
+func (c *Client) Patch(url string) *Agent {
+	return c.createAgent(fasthttp.MethodPatch, url)
 }
 
 // Delete sends DELETE request to the given URL.
-func (c *fiberMigrateClient) Delete(url string) *fiberMigrateAgent {
-	return c.createAgent(fmfasthttp.MethodDelete, url)
+func Delete(url string) *Agent {
+	return agentDefaultClient.Delete(url)
 }
 
-func (c *fiberMigrateClient) createAgent(method, url string) *fiberMigrateAgent {
-	a := fiberMigrateAcquireAgent()
+// Delete sends DELETE request to the given URL.
+func (c *Client) Delete(url string) *Agent {
+	return c.createAgent(fasthttp.MethodDelete, url)
+}
+
+func (c *Client) createAgent(method, url string) *Agent {
+	a := AcquireAgent()
 	a.req.Header.SetMethod(method)
 	a.req.SetRequestURI(url)
 
@@ -157,7 +158,7 @@ func (c *fiberMigrateClient) createAgent(method, url string) *fiberMigrateAgent 
 	a.jsonDecoder = c.JSONDecoder
 	a.jsonEncoder = c.JSONEncoder
 	if a.jsonDecoder == nil {
-		a.jsonDecoder = fmjson.Unmarshal
+		a.jsonDecoder = json.Unmarshal
 	}
 	c.mutex.RUnlock()
 
@@ -168,17 +169,17 @@ func (c *fiberMigrateClient) createAgent(method, url string) *fiberMigrateAgent 
 	return a
 }
 
-// fiberMigrateAgent is an object storing all request data for client.
-// fiberMigrateAgent instance MUST NOT be used from concurrently running goroutines.
-type fiberMigrateAgent struct {
+// Agent is an object storing all request data for client.
+// Agent instance MUST NOT be used from concurrently running goroutines.
+type Agent struct {
 	// HostClient is an embedded fasthttp HostClient
-	*fmfasthttp.HostClient
+	*fasthttp.HostClient
 
-	req         *fmfasthttp.Request
-	resp        *fmfasthttp.Response
-	args        *fmfasthttp.Args
-	debugWriter fmio.Writer
-	mw          fiberMigrateMultipartWriter
+	req         *fasthttp.Request
+	resp        *fasthttp.Response
+	args        *fasthttp.Args
+	debugWriter io.Writer
+	mw          agentMultipartWriter
 	jsonEncoder func(v any) ([]byte, error)
 	jsonDecoder func(data []byte, v any) error
 
@@ -188,9 +189,9 @@ type fiberMigrateAgent struct {
 	boundary  string
 	dest      []byte
 	errs      []error
-	formFiles []*fiberMigrateFormFile
+	formFiles []*FormFile
 
-	timeout           fmtime.Duration
+	timeout           time.Duration
 	maxRedirectsCount int
 
 	// NoDefaultUserAgentHeader when set to true, causes the default
@@ -202,7 +203,7 @@ type fiberMigrateAgent struct {
 }
 
 // Parse initializes URI and HostClient.
-func (a *fiberMigrateAgent) Parse() error {
+func (a *Agent) Parse() error {
 	if a.parsed {
 		return nil
 	}
@@ -212,19 +213,19 @@ func (a *fiberMigrateAgent) Parse() error {
 
 	var isTLS bool
 	scheme := uri.Scheme()
-	if fmbytes.Equal(scheme, []byte("https")) {
+	if bytes.Equal(scheme, []byte("https")) {
 		isTLS = true
-	} else if !fmbytes.Equal(scheme, []byte("http")) {
-		return fmfmt.Errorf("unsupported protocol %q. http and https are supported", scheme)
+	} else if !bytes.Equal(scheme, []byte("http")) {
+		return fmt.Errorf("unsupported protocol %q. http and https are supported", scheme)
 	}
 
 	name := a.Name
 	if name == "" && !a.NoDefaultUserAgentHeader {
-		name = fiberMigrateDefaultUserAgent
+		name = agentDefaultUserAgent
 	}
 
-	a.HostClient = &fmfasthttp.HostClient{
-		Addr:                     fmfasthttp.AddMissingPort(string(uri.Host()), isTLS),
+	a.HostClient = &fasthttp.HostClient{
+		Addr:                     fasthttp.AddMissingPort(string(uri.Host()), isTLS),
 		Name:                     name,
 		NoDefaultUserAgentHeader: a.NoDefaultUserAgentHeader,
 		IsTLS:                    isTLS,
@@ -238,7 +239,7 @@ func (a *fiberMigrateAgent) Parse() error {
 // Set sets the given 'key: value' header.
 //
 // Use Add for setting multiple header values under the same key.
-func (a *fiberMigrateAgent) Set(k, v string) *fiberMigrateAgent {
+func (a *Agent) Set(k, v string) *Agent {
 	a.req.Header.Set(k, v)
 
 	return a
@@ -247,7 +248,7 @@ func (a *fiberMigrateAgent) Set(k, v string) *fiberMigrateAgent {
 // SetBytesK sets the given 'key: value' header.
 //
 // Use AddBytesK for setting multiple header values under the same key.
-func (a *fiberMigrateAgent) SetBytesK(k []byte, v string) *fiberMigrateAgent {
+func (a *Agent) SetBytesK(k []byte, v string) *Agent {
 	a.req.Header.SetBytesK(k, v)
 
 	return a
@@ -256,7 +257,7 @@ func (a *fiberMigrateAgent) SetBytesK(k []byte, v string) *fiberMigrateAgent {
 // SetBytesV sets the given 'key: value' header.
 //
 // Use AddBytesV for setting multiple header values under the same key.
-func (a *fiberMigrateAgent) SetBytesV(k string, v []byte) *fiberMigrateAgent {
+func (a *Agent) SetBytesV(k string, v []byte) *Agent {
 	a.req.Header.SetBytesV(k, v)
 
 	return a
@@ -265,7 +266,7 @@ func (a *fiberMigrateAgent) SetBytesV(k string, v []byte) *fiberMigrateAgent {
 // SetBytesKV sets the given 'key: value' header.
 //
 // Use AddBytesKV for setting multiple header values under the same key.
-func (a *fiberMigrateAgent) SetBytesKV(k, v []byte) *fiberMigrateAgent {
+func (a *Agent) SetBytesKV(k, v []byte) *Agent {
 	a.req.Header.SetBytesKV(k, v)
 
 	return a
@@ -275,7 +276,7 @@ func (a *fiberMigrateAgent) SetBytesKV(k, v []byte) *fiberMigrateAgent {
 //
 // Multiple headers with the same key may be added with this function.
 // Use Set for setting a single header for the given key.
-func (a *fiberMigrateAgent) Add(k, v string) *fiberMigrateAgent {
+func (a *Agent) Add(k, v string) *Agent {
 	a.req.Header.Add(k, v)
 
 	return a
@@ -285,7 +286,7 @@ func (a *fiberMigrateAgent) Add(k, v string) *fiberMigrateAgent {
 //
 // Multiple headers with the same key may be added with this function.
 // Use SetBytesK for setting a single header for the given key.
-func (a *fiberMigrateAgent) AddBytesK(k []byte, v string) *fiberMigrateAgent {
+func (a *Agent) AddBytesK(k []byte, v string) *Agent {
 	a.req.Header.AddBytesK(k, v)
 
 	return a
@@ -295,7 +296,7 @@ func (a *fiberMigrateAgent) AddBytesK(k []byte, v string) *fiberMigrateAgent {
 //
 // Multiple headers with the same key may be added with this function.
 // Use SetBytesV for setting a single header for the given key.
-func (a *fiberMigrateAgent) AddBytesV(k string, v []byte) *fiberMigrateAgent {
+func (a *Agent) AddBytesV(k string, v []byte) *Agent {
 	a.req.Header.AddBytesV(k, v)
 
 	return a
@@ -305,56 +306,56 @@ func (a *fiberMigrateAgent) AddBytesV(k string, v []byte) *fiberMigrateAgent {
 //
 // Multiple headers with the same key may be added with this function.
 // Use SetBytesKV for setting a single header for the given key.
-func (a *fiberMigrateAgent) AddBytesKV(k, v []byte) *fiberMigrateAgent {
+func (a *Agent) AddBytesKV(k, v []byte) *Agent {
 	a.req.Header.AddBytesKV(k, v)
 
 	return a
 }
 
 // ConnectionClose sets 'Connection: close' header.
-func (a *fiberMigrateAgent) ConnectionClose() *fiberMigrateAgent {
+func (a *Agent) ConnectionClose() *Agent {
 	a.req.Header.SetConnectionClose()
 
 	return a
 }
 
 // UserAgent sets User-Agent header value.
-func (a *fiberMigrateAgent) UserAgent(userAgent string) *fiberMigrateAgent {
+func (a *Agent) UserAgent(userAgent string) *Agent {
 	a.req.Header.SetUserAgent(userAgent)
 
 	return a
 }
 
 // UserAgentBytes sets User-Agent header value.
-func (a *fiberMigrateAgent) UserAgentBytes(userAgent []byte) *fiberMigrateAgent {
+func (a *Agent) UserAgentBytes(userAgent []byte) *Agent {
 	a.req.Header.SetUserAgentBytes(userAgent)
 
 	return a
 }
 
 // Cookie sets one 'key: value' cookie.
-func (a *fiberMigrateAgent) Cookie(key, value string) *fiberMigrateAgent {
+func (a *Agent) Cookie(key, value string) *Agent {
 	a.req.Header.SetCookie(key, value)
 
 	return a
 }
 
 // CookieBytesK sets one 'key: value' cookie.
-func (a *fiberMigrateAgent) CookieBytesK(key []byte, value string) *fiberMigrateAgent {
+func (a *Agent) CookieBytesK(key []byte, value string) *Agent {
 	a.req.Header.SetCookieBytesK(key, value)
 
 	return a
 }
 
 // CookieBytesKV sets one 'key: value' cookie.
-func (a *fiberMigrateAgent) CookieBytesKV(key, value []byte) *fiberMigrateAgent {
+func (a *Agent) CookieBytesKV(key, value []byte) *Agent {
 	a.req.Header.SetCookieBytesKV(key, value)
 
 	return a
 }
 
 // Cookies sets multiple 'key: value' cookies.
-func (a *fiberMigrateAgent) Cookies(kv ...string) *fiberMigrateAgent {
+func (a *Agent) Cookies(kv ...string) *Agent {
 	for i := 1; i < len(kv); i += 2 {
 		a.req.Header.SetCookie(kv[i-1], kv[i])
 	}
@@ -363,7 +364,7 @@ func (a *fiberMigrateAgent) Cookies(kv ...string) *fiberMigrateAgent {
 }
 
 // CookiesBytesKV sets multiple 'key: value' cookies.
-func (a *fiberMigrateAgent) CookiesBytesKV(kv ...[]byte) *fiberMigrateAgent {
+func (a *Agent) CookiesBytesKV(kv ...[]byte) *Agent {
 	for i := 1; i < len(kv); i += 2 {
 		a.req.Header.SetCookieBytesKV(kv[i-1], kv[i])
 	}
@@ -372,28 +373,28 @@ func (a *fiberMigrateAgent) CookiesBytesKV(kv ...[]byte) *fiberMigrateAgent {
 }
 
 // Referer sets Referer header value.
-func (a *fiberMigrateAgent) Referer(referer string) *fiberMigrateAgent {
+func (a *Agent) Referer(referer string) *Agent {
 	a.req.Header.SetReferer(referer)
 
 	return a
 }
 
 // RefererBytes sets Referer header value.
-func (a *fiberMigrateAgent) RefererBytes(referer []byte) *fiberMigrateAgent {
+func (a *Agent) RefererBytes(referer []byte) *Agent {
 	a.req.Header.SetRefererBytes(referer)
 
 	return a
 }
 
 // ContentType sets Content-Type header value.
-func (a *fiberMigrateAgent) ContentType(contentType string) *fiberMigrateAgent {
+func (a *Agent) ContentType(contentType string) *Agent {
 	a.req.Header.SetContentType(contentType)
 
 	return a
 }
 
 // ContentTypeBytes sets Content-Type header value.
-func (a *fiberMigrateAgent) ContentTypeBytes(contentType []byte) *fiberMigrateAgent {
+func (a *Agent) ContentTypeBytes(contentType []byte) *Agent {
 	a.req.Header.SetContentTypeBytes(contentType)
 
 	return a
@@ -404,35 +405,35 @@ func (a *fiberMigrateAgent) ContentTypeBytes(contentType []byte) *fiberMigrateAg
 /************************** URI Setting **************************/
 
 // Host sets host for the URI.
-func (a *fiberMigrateAgent) Host(host string) *fiberMigrateAgent {
+func (a *Agent) Host(host string) *Agent {
 	a.req.URI().SetHost(host)
 
 	return a
 }
 
 // HostBytes sets host for the URI.
-func (a *fiberMigrateAgent) HostBytes(host []byte) *fiberMigrateAgent {
+func (a *Agent) HostBytes(host []byte) *Agent {
 	a.req.URI().SetHostBytes(host)
 
 	return a
 }
 
 // QueryString sets URI query string.
-func (a *fiberMigrateAgent) QueryString(queryString string) *fiberMigrateAgent {
+func (a *Agent) QueryString(queryString string) *Agent {
 	a.req.URI().SetQueryString(queryString)
 
 	return a
 }
 
 // QueryStringBytes sets URI query string.
-func (a *fiberMigrateAgent) QueryStringBytes(queryString []byte) *fiberMigrateAgent {
+func (a *Agent) QueryStringBytes(queryString []byte) *Agent {
 	a.req.URI().SetQueryStringBytes(queryString)
 
 	return a
 }
 
 // BasicAuth sets URI username and password.
-func (a *fiberMigrateAgent) BasicAuth(username, password string) *fiberMigrateAgent {
+func (a *Agent) BasicAuth(username, password string) *Agent {
 	a.req.URI().SetUsername(username)
 	a.req.URI().SetPassword(password)
 
@@ -440,7 +441,7 @@ func (a *fiberMigrateAgent) BasicAuth(username, password string) *fiberMigrateAg
 }
 
 // BasicAuthBytes sets URI username and password.
-func (a *fiberMigrateAgent) BasicAuthBytes(username, password []byte) *fiberMigrateAgent {
+func (a *Agent) BasicAuthBytes(username, password []byte) *Agent {
 	a.req.URI().SetUsernameBytes(username)
 	a.req.URI().SetPasswordBytes(password)
 
@@ -452,14 +453,14 @@ func (a *fiberMigrateAgent) BasicAuthBytes(username, password []byte) *fiberMigr
 /************************** Request Setting **************************/
 
 // BodyString sets request body.
-func (a *fiberMigrateAgent) BodyString(bodyString string) *fiberMigrateAgent {
+func (a *Agent) BodyString(bodyString string) *Agent {
 	a.req.SetBodyString(bodyString)
 
 	return a
 }
 
 // Body sets request body.
-func (a *fiberMigrateAgent) Body(body []byte) *fiberMigrateAgent {
+func (a *Agent) Body(body []byte) *Agent {
 	a.req.SetBody(body)
 
 	return a
@@ -476,22 +477,22 @@ func (a *fiberMigrateAgent) Body(body []byte) *fiberMigrateAgent {
 // if it implements io.Closer.
 //
 // Note that GET and HEAD requests cannot have body.
-func (a *fiberMigrateAgent) BodyStream(bodyStream fmio.Reader, bodySize int) *fiberMigrateAgent {
+func (a *Agent) BodyStream(bodyStream io.Reader, bodySize int) *Agent {
 	a.req.SetBodyStream(bodyStream, bodySize)
 
 	return a
 }
 
 // JSON sends a JSON request.
-func (a *fiberMigrateAgent) JSON(v any, ctype ...string) *fiberMigrateAgent {
+func (a *Agent) JSON(v any, ctype ...string) *Agent {
 	if a.jsonEncoder == nil {
-		a.jsonEncoder = fmjson.Marshal
+		a.jsonEncoder = json.Marshal
 	}
 
 	if len(ctype) > 0 {
 		a.req.Header.SetContentType(ctype[0])
 	} else {
-		a.req.Header.SetContentType(fiberMigrateMIMEApplicationJSON)
+		a.req.Header.SetContentType(agentMIMEApplicationJSON)
 	}
 
 	if body, err := a.jsonEncoder(v); err != nil {
@@ -504,10 +505,10 @@ func (a *fiberMigrateAgent) JSON(v any, ctype ...string) *fiberMigrateAgent {
 }
 
 // XML sends an XML request.
-func (a *fiberMigrateAgent) XML(v any) *fiberMigrateAgent {
-	a.req.Header.SetContentType(fiberMigrateMIMEApplicationXML)
+func (a *Agent) XML(v any) *Agent {
+	a.req.Header.SetContentType(agentMIMEApplicationXML)
 
-	if body, err := fmxml.Marshal(v); err != nil {
+	if body, err := xml.Marshal(v); err != nil {
 		a.errs = append(a.errs, err)
 	} else {
 		a.req.SetBody(body)
@@ -520,8 +521,8 @@ func (a *fiberMigrateAgent) XML(v any) *fiberMigrateAgent {
 //
 // It is recommended obtaining args via AcquireArgs and release it
 // manually in performance-critical code.
-func (a *fiberMigrateAgent) Form(args *fmfasthttp.Args) *fiberMigrateAgent {
-	a.req.Header.SetContentType(fiberMigrateMIMEApplicationForm)
+func (a *Agent) Form(args *fasthttp.Args) *Agent {
+	a.req.Header.SetContentType(agentMIMEApplicationForm)
 
 	if args != nil {
 		a.req.SetBody(args.QueryString())
@@ -530,8 +531,8 @@ func (a *fiberMigrateAgent) Form(args *fmfasthttp.Args) *fiberMigrateAgent {
 	return a
 }
 
-// fiberMigrateFormFile represents multipart form file
-type fiberMigrateFormFile struct {
+// FormFile represents multipart form file
+type FormFile struct {
 	// Fieldname is form file's field name
 	Fieldname string
 	// Name is form file's name
@@ -547,27 +548,27 @@ type fiberMigrateFormFile struct {
 //
 // It is recommended obtaining formFile via AcquireFormFile and release it
 // manually in performance-critical code.
-func (a *fiberMigrateAgent) FileData(formFiles ...*fiberMigrateFormFile) *fiberMigrateAgent {
+func (a *Agent) FileData(formFiles ...*FormFile) *Agent {
 	a.formFiles = append(a.formFiles, formFiles...)
 
 	return a
 }
 
 // SendFile reads file and appends it to multipart form request.
-func (a *fiberMigrateAgent) SendFile(filename string, fieldname ...string) *fiberMigrateAgent {
-	content, err := fmos.ReadFile(fmfilepath.Clean(filename))
+func (a *Agent) SendFile(filename string, fieldname ...string) *Agent {
+	content, err := os.ReadFile(filepath.Clean(filename))
 	if err != nil {
 		a.errs = append(a.errs, err)
 		return a
 	}
 
-	ff := fiberMigrateAcquireFormFile()
+	ff := AcquireFormFile()
 	if len(fieldname) > 0 && fieldname[0] != "" {
 		ff.Fieldname = fieldname[0]
 	} else {
-		ff.Fieldname = "file" + fmstrconv.Itoa(len(a.formFiles)+1)
+		ff.Fieldname = "file" + strconv.Itoa(len(a.formFiles)+1)
 	}
-	ff.Name = fmfilepath.Base(filename)
+	ff.Name = filepath.Base(filename)
 	ff.Content = append(ff.Content, content...)
 	ff.autoRelease = true
 
@@ -581,7 +582,7 @@ func (a *fiberMigrateAgent) SendFile(filename string, fieldname ...string) *fibe
 // Examples:
 //
 //	SendFile("/path/to/file1", "fieldname1", "/path/to/file2")
-func (a *fiberMigrateAgent) SendFiles(filenamesAndFieldnames ...string) *fiberMigrateAgent {
+func (a *Agent) SendFiles(filenamesAndFieldnames ...string) *Agent {
 	pairs := len(filenamesAndFieldnames)
 	if pairs&1 == 1 {
 		filenamesAndFieldnames = append(filenamesAndFieldnames, "")
@@ -595,7 +596,7 @@ func (a *fiberMigrateAgent) SendFiles(filenamesAndFieldnames ...string) *fiberMi
 }
 
 // Boundary sets boundary for multipart form request.
-func (a *fiberMigrateAgent) Boundary(boundary string) *fiberMigrateAgent {
+func (a *Agent) Boundary(boundary string) *Agent {
 	a.boundary = boundary
 
 	return a
@@ -605,9 +606,9 @@ func (a *fiberMigrateAgent) Boundary(boundary string) *fiberMigrateAgent {
 //
 // It is recommended obtaining args via AcquireArgs and release it
 // manually in performance-critical code.
-func (a *fiberMigrateAgent) MultipartForm(args *fmfasthttp.Args) *fiberMigrateAgent {
+func (a *Agent) MultipartForm(args *fasthttp.Args) *Agent {
 	if a.mw == nil {
-		a.mw = fmmultipart.NewWriter(a.req.BodyWriter())
+		a.mw = multipart.NewWriter(a.req.BodyWriter())
 	}
 
 	if a.boundary != "" {
@@ -620,11 +621,11 @@ func (a *fiberMigrateAgent) MultipartForm(args *fmfasthttp.Args) *fiberMigrateAg
 	a.req.Header.SetMultipartFormBoundary(a.mw.Boundary())
 
 	if args != nil {
-		args.VisitAll(func(key, value []byte) { //nolint:staticcheck // VisitAll exists in every fasthttp version, All only in the newer ones
+		for key, value := range args.All() {
 			if err := a.mw.WriteField(string(key), string(value)); err != nil {
 				a.errs = append(a.errs, err)
 			}
-		})
+		}
 	}
 
 	for _, ff := range a.formFiles {
@@ -650,8 +651,8 @@ func (a *fiberMigrateAgent) MultipartForm(args *fmfasthttp.Args) *fiberMigrateAg
 /************************** Agent Setting **************************/
 
 // Debug mode enables logging request and response detail
-func (a *fiberMigrateAgent) Debug(w ...fmio.Writer) *fiberMigrateAgent {
-	a.debugWriter = fmos.Stdout
+func (a *Agent) Debug(w ...io.Writer) *Agent {
+	a.debugWriter = os.Stdout
 	if len(w) > 0 {
 		a.debugWriter = w[0]
 	}
@@ -660,7 +661,7 @@ func (a *fiberMigrateAgent) Debug(w ...fmio.Writer) *fiberMigrateAgent {
 }
 
 // Timeout sets request timeout duration.
-func (a *fiberMigrateAgent) Timeout(timeout fmtime.Duration) *fiberMigrateAgent {
+func (a *Agent) Timeout(timeout time.Duration) *Agent {
 	a.timeout = timeout
 
 	return a
@@ -670,7 +671,7 @@ func (a *fiberMigrateAgent) Timeout(timeout fmtime.Duration) *fiberMigrateAgent 
 //
 // If agent is reusable, then it should be released manually when it is no
 // longer used.
-func (a *fiberMigrateAgent) Reuse() *fiberMigrateAgent {
+func (a *Agent) Reuse() *Agent {
 	a.reuse = true
 
 	return a
@@ -678,46 +679,45 @@ func (a *fiberMigrateAgent) Reuse() *fiberMigrateAgent {
 
 // InsecureSkipVerify controls whether the Agent verifies the server
 // certificate chain and host name.
-func (a *fiberMigrateAgent) InsecureSkipVerify() *fiberMigrateAgent {
+func (a *Agent) InsecureSkipVerify() *Agent {
 	if a.HostClient.TLSConfig == nil {
-		a.HostClient.TLSConfig = &fmtls.Config{InsecureSkipVerify: true} //nolint:gosec // We explicitly let the user set insecure mode here
-	} else {
-		a.HostClient.TLSConfig.InsecureSkipVerify = true
+		a.HostClient.TLSConfig = new(tls.Config)
 	}
+	a.HostClient.TLSConfig.InsecureSkipVerify = true
 
 	return a
 }
 
 // TLSConfig sets tls config.
-func (a *fiberMigrateAgent) TLSConfig(config *fmtls.Config) *fiberMigrateAgent {
+func (a *Agent) TLSConfig(config *tls.Config) *Agent {
 	a.HostClient.TLSConfig = config
 
 	return a
 }
 
 // MaxRedirectsCount sets max redirect count for GET and HEAD.
-func (a *fiberMigrateAgent) MaxRedirectsCount(count int) *fiberMigrateAgent {
+func (a *Agent) MaxRedirectsCount(count int) *Agent {
 	a.maxRedirectsCount = count
 
 	return a
 }
 
 // JSONEncoder sets custom json encoder.
-func (a *fiberMigrateAgent) JSONEncoder(jsonEncoder func(v any) ([]byte, error)) *fiberMigrateAgent {
+func (a *Agent) JSONEncoder(jsonEncoder func(v any) ([]byte, error)) *Agent {
 	a.jsonEncoder = jsonEncoder
 
 	return a
 }
 
 // JSONDecoder sets custom json decoder.
-func (a *fiberMigrateAgent) JSONDecoder(jsonDecoder func(data []byte, v any) error) *fiberMigrateAgent {
+func (a *Agent) JSONDecoder(jsonDecoder func(data []byte, v any) error) *Agent {
 	a.jsonDecoder = jsonDecoder
 
 	return a
 }
 
 // Request returns Agent request instance.
-func (a *fiberMigrateAgent) Request() *fmfasthttp.Request {
+func (a *Agent) Request() *fasthttp.Request {
 	return a.req
 }
 
@@ -725,7 +725,7 @@ func (a *fiberMigrateAgent) Request() *fmfasthttp.Request {
 //
 // It is recommended obtaining custom response via AcquireResponse and release it
 // manually in performance-critical code.
-func (a *fiberMigrateAgent) SetResponse(customResp *fmfasthttp.Response) *fiberMigrateAgent {
+func (a *Agent) SetResponse(customResp *fasthttp.Response) *Agent {
 	a.resp = customResp
 
 	return a
@@ -735,7 +735,7 @@ func (a *fiberMigrateAgent) SetResponse(customResp *fmfasthttp.Response) *fiberM
 //
 // The contents of dest will be replaced by the response body, if the dest
 // is too small a new slice will be allocated.
-func (a *fiberMigrateAgent) Dest(dest []byte) *fiberMigrateAgent {
+func (a *Agent) Dest(dest []byte) *Agent {
 	a.dest = dest
 
 	return a
@@ -744,8 +744,18 @@ func (a *fiberMigrateAgent) Dest(dest []byte) *fiberMigrateAgent {
 // RetryIf controls whether a retry should be attempted after an error.
 //
 // By default, will use isIdempotent function from fasthttp
-func (a *fiberMigrateAgent) RetryIf(retryIf fmfasthttp.RetryIfFunc) *fiberMigrateAgent {
-	a.HostClient.RetryIf = retryIf //nolint:staticcheck // the agent of Fiber v2 set the field that fasthttp deprecated later, the request behaves as before
+func (a *Agent) RetryIf(retryIf fasthttp.RetryIfFunc) *Agent {
+	if retryIf == nil {
+		a.RetryIfErr = nil
+		return a
+	}
+
+	// fasthttp asks RetryIfErr instead of the RetryIf field it deprecated, with the
+	// same answer: whether the request is retried, whatever the error was.
+	a.RetryIfErr = func(req *fasthttp.Request, _ int, _ error) (resetTimeout, retry bool) {
+		return false, retryIf(req)
+	}
+
 	return a
 }
 
@@ -754,24 +764,24 @@ func (a *fiberMigrateAgent) RetryIf(retryIf fmfasthttp.RetryIfFunc) *fiberMigrat
 // Bytes returns the status code, bytes body and errors of url.
 //
 // it's not safe to use Agent after calling [Agent.Bytes]
-func (a *fiberMigrateAgent) Bytes() (int, []byte, []error) {
+func (a *Agent) Bytes() (int, []byte, []error) {
 	defer a.release()
 	return a.send()
 }
 
-func (a *fiberMigrateAgent) send() (code int, body []byte, errs []error) {
+func (a *Agent) send() (code int, body []byte, errs []error) {
 	if errs = append(errs, a.errs...); len(errs) > 0 {
 		return code, body, errs
 	}
 
 	var (
 		req     = a.req
-		resp    *fmfasthttp.Response
+		resp    *fasthttp.Response
 		nilResp bool
 	)
 
 	if a.resp == nil {
-		resp = fmfasthttp.AcquireResponse()
+		resp = fasthttp.AcquireResponse()
 		nilResp = true
 	} else {
 		resp = a.resp
@@ -779,17 +789,17 @@ func (a *fiberMigrateAgent) send() (code int, body []byte, errs []error) {
 
 	defer func() {
 		if a.debugWriter != nil {
-			fiberMigratePrintDebugInfo(req, resp, a.debugWriter)
+			agentPrintDebugInfo(req, resp, a.debugWriter)
 		}
 
 		if len(errs) == 0 {
 			code = resp.StatusCode()
 		}
 
-		body = append(a.dest, resp.Body()...) //nolint:gocritic // The body is appended to the dest of the request, as in Fiber v2.
+		body = agentAppend(a.dest, resp.Body())
 
 		if nilResp {
-			fmfasthttp.ReleaseResponse(resp)
+			fasthttp.ReleaseResponse(resp)
 		}
 	}()
 
@@ -798,7 +808,7 @@ func (a *fiberMigrateAgent) send() (code int, body []byte, errs []error) {
 			errs = append(errs, err)
 			return code, body, errs
 		}
-	} else if a.maxRedirectsCount > 0 && (string(req.Header.Method()) == fmfasthttp.MethodGet || string(req.Header.Method()) == fmfasthttp.MethodHead) {
+	} else if a.maxRedirectsCount > 0 && (string(req.Header.Method()) == fasthttp.MethodGet || string(req.Header.Method()) == fasthttp.MethodHead) {
 		if err := a.DoRedirects(req, resp, a.maxRedirectsCount); err != nil {
 			errs = append(errs, err)
 			return code, body, errs
@@ -810,17 +820,30 @@ func (a *fiberMigrateAgent) send() (code int, body []byte, errs []error) {
 	return code, body, errs
 }
 
-func fiberMigratePrintDebugInfo(req *fmfasthttp.Request, resp *fmfasthttp.Response, w fmio.Writer) {
-	msg := fmfmt.Sprintf("Connected to %s(%s)\r\n\r\n", req.URI().Host(), resp.RemoteAddr())
-	_, _ = w.Write([]byte(msg)) //nolint:errcheck // This will never fail
-	_, _ = req.WriteTo(w)       //nolint:errcheck // This will never fail
-	_, _ = resp.WriteTo(w)      //nolint:errcheck // This will never fail
+// agentAppend appends src to dst, which is what the agent does with the body of a
+// response and the slice the caller gave it for it: the array of dst is used when
+// it is big enough.
+func agentAppend(dst, src []byte) []byte {
+	return append(dst, src...)
+}
+
+// agentIgnore takes the errors that nothing can be done about.
+func agentIgnore(...error) {}
+
+func agentPrintDebugInfo(req *fasthttp.Request, resp *fasthttp.Response, w io.Writer) {
+	msg := fmt.Sprintf("Connected to %s(%s)\r\n\r\n", req.URI().Host(), resp.RemoteAddr())
+	// The dump is a debugging aid: a writer that fails does not fail the request,
+	// and the three parts are written whatever happens to the ones before.
+	_, errMsg := w.Write([]byte(msg))
+	_, errReq := req.WriteTo(w)
+	_, errResp := resp.WriteTo(w)
+	agentIgnore(errMsg, errReq, errResp)
 }
 
 // String returns the status code, string body and errors of url.
 //
 // it's not safe to use Agent after calling [Agent.String]
-func (a *fiberMigrateAgent) String() (int, string, []error) {
+func (a *Agent) String() (int, string, []error) {
 	defer a.release()
 	code, body, errs := a.send()
 	return code, string(body), errs
@@ -830,7 +853,7 @@ func (a *fiberMigrateAgent) String() (int, string, []error) {
 // And bytes body will be unmarshalled to given v.
 //
 // it's not safe to use Agent after calling [Agent.Struct]
-func (a *fiberMigrateAgent) Struct(v any) (int, []byte, []error) {
+func (a *Agent) Struct(v any) (int, []byte, []error) {
 	defer a.release()
 
 	code, body, errs := a.send()
@@ -839,7 +862,7 @@ func (a *fiberMigrateAgent) Struct(v any) (int, []byte, []error) {
 	}
 
 	if a.jsonDecoder == nil {
-		a.jsonDecoder = fmjson.Unmarshal
+		a.jsonDecoder = json.Unmarshal
 	}
 
 	if err := a.jsonDecoder(body, v); err != nil {
@@ -849,15 +872,15 @@ func (a *fiberMigrateAgent) Struct(v any) (int, []byte, []error) {
 	return code, body, errs
 }
 
-func (a *fiberMigrateAgent) release() {
+func (a *Agent) release() {
 	if !a.reuse {
-		fiberMigrateReleaseAgent(a)
+		ReleaseAgent(a)
 	} else {
 		a.errs = a.errs[:0]
 	}
 }
 
-func (a *fiberMigrateAgent) reset() {
+func (a *Agent) reset() {
 	a.HostClient = nil
 	a.req.Reset()
 	a.resp = nil
@@ -875,7 +898,7 @@ func (a *fiberMigrateAgent) reset() {
 	a.NoDefaultUserAgentHeader = false
 	for i, ff := range a.formFiles {
 		if ff.autoRelease {
-			fiberMigrateReleaseFormFile(ff)
+			ReleaseFormFile(ff)
 		}
 		a.formFiles[i] = nil
 	}
@@ -883,99 +906,99 @@ func (a *fiberMigrateAgent) reset() {
 }
 
 var (
-	fiberMigrateClientPool fmsync.Pool
-	fiberMigrateAgentPool  = fmsync.Pool{
+	agentClientPool sync.Pool
+	agentPool       = sync.Pool{
 		New: func() any {
-			return &fiberMigrateAgent{req: &fmfasthttp.Request{}}
+			return &Agent{req: &fasthttp.Request{}}
 		},
 	}
-	fiberMigrateFormFilePool fmsync.Pool
+	agentFormFilePool sync.Pool
 )
 
-// fiberMigrateAcquireClient returns an empty Client instance from client pool.
+// AcquireClient returns an empty Client instance from client pool.
 //
 // The returned Client instance may be passed to ReleaseClient when it is
 // no longer needed. This allows Client recycling, reduces GC pressure
 // and usually improves performance.
-func fiberMigrateAcquireClient() *fiberMigrateClient {
-	v := fiberMigrateClientPool.Get()
+func AcquireClient() *Client {
+	v := agentClientPool.Get()
 	if v == nil {
-		return &fiberMigrateClient{}
+		return &Client{}
 	}
-	c, ok := v.(*fiberMigrateClient)
+	c, ok := v.(*Client)
 	if !ok {
-		panic(fmerrors.New("failed to type-assert to *Client"))
+		panic(errors.New("failed to type-assert to *Client"))
 	}
 	return c
 }
 
-// fiberMigrateReleaseClient returns c acquired via AcquireClient to client pool.
+// ReleaseClient returns c acquired via AcquireClient to client pool.
 //
 // It is forbidden accessing req and/or it's members after returning
 // it to client pool.
-func fiberMigrateReleaseClient(c *fiberMigrateClient) {
+func ReleaseClient(c *Client) {
 	c.UserAgent = ""
 	c.NoDefaultUserAgentHeader = false
 	c.JSONEncoder = nil
 	c.JSONDecoder = nil
 
-	fiberMigrateClientPool.Put(c)
+	agentClientPool.Put(c)
 }
 
-// fiberMigrateAcquireAgent returns an empty Agent instance from Agent pool.
+// AcquireAgent returns an empty Agent instance from Agent pool.
 //
 // The returned Agent instance may be passed to ReleaseAgent when it is
 // no longer needed. This allows Agent recycling, reduces GC pressure
 // and usually improves performance.
-func fiberMigrateAcquireAgent() *fiberMigrateAgent {
-	a, ok := fiberMigrateAgentPool.Get().(*fiberMigrateAgent)
+func AcquireAgent() *Agent {
+	a, ok := agentPool.Get().(*Agent)
 	if !ok {
-		panic(fmerrors.New("failed to type-assert to *Agent"))
+		panic(errors.New("failed to type-assert to *Agent"))
 	}
 	return a
 }
 
-// fiberMigrateReleaseAgent returns an acquired via AcquireAgent to Agent pool.
+// ReleaseAgent returns an acquired via AcquireAgent to Agent pool.
 //
 // It is forbidden accessing req and/or it's members after returning
 // it to Agent pool.
-func fiberMigrateReleaseAgent(a *fiberMigrateAgent) {
+func ReleaseAgent(a *Agent) {
 	a.reset()
-	fiberMigrateAgentPool.Put(a)
+	agentPool.Put(a)
 }
 
-// fiberMigrateAcquireFormFile returns an empty FormFile object from the pool.
+// AcquireFormFile returns an empty FormFile object from the pool.
 //
 // The returned FormFile may be returned to the pool with ReleaseFormFile
 // when no longer needed. This allows reducing GC load.
-func fiberMigrateAcquireFormFile() *fiberMigrateFormFile {
-	v := fiberMigrateFormFilePool.Get()
+func AcquireFormFile() *FormFile {
+	v := agentFormFilePool.Get()
 	if v == nil {
-		return &fiberMigrateFormFile{}
+		return &FormFile{}
 	}
-	ff, ok := v.(*fiberMigrateFormFile)
+	ff, ok := v.(*FormFile)
 	if !ok {
-		panic(fmerrors.New("failed to type-assert to *FormFile"))
+		panic(errors.New("failed to type-assert to *FormFile"))
 	}
 	return ff
 }
 
-// fiberMigrateReleaseFormFile returns the object acquired via AcquireFormFile to the pool.
+// ReleaseFormFile returns the object acquired via AcquireFormFile to the pool.
 //
 // String not access the released FormFile object, otherwise data races may occur.
-func fiberMigrateReleaseFormFile(ff *fiberMigrateFormFile) {
+func ReleaseFormFile(ff *FormFile) {
 	ff.Fieldname = ""
 	ff.Name = ""
 	ff.Content = ff.Content[:0]
 	ff.autoRelease = false
 
-	fiberMigrateFormFilePool.Put(ff)
+	agentFormFilePool.Put(ff)
 }
 
-type fiberMigrateMultipartWriter interface {
+type agentMultipartWriter interface {
 	Boundary() string
 	SetBoundary(boundary string) error
-	CreateFormFile(fieldname, filename string) (fmio.Writer, error)
+	CreateFormFile(fieldname, filename string) (io.Writer, error)
 	WriteField(fieldname, value string) error
 	Close() error
 }

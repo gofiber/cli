@@ -366,6 +366,7 @@ import (
 	"log"
 	"sync"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3/client"
 )
 
@@ -440,7 +441,7 @@ func branches(flag bool, u1, u2 string) ([]byte, error) {
 }
 
 func captured(url string) {
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	run := func() {
 		_, _, _ = a.Bytes()
 	}
@@ -521,6 +522,7 @@ func parameterNamedFiber(fiber string) string {
 import (
 	"fmt"
 
+	"example.com/app/internal/fibermigrate"
 	fiberclient "github.com/gofiber/fiber/v3/client"
 )
 
@@ -571,7 +573,7 @@ func deferred(url string) (body []byte) {
 }
 
 func functionValue() {
-	get := fiberMigrateGet
+	get := fibermigrate.Get
 	_ = get
 }
 
@@ -581,7 +583,7 @@ func parameterNamedFiber(fiber string) string {
 `,
 			},
 			notes: []string{
-				"main.go:52: `fiber.Get` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in fiber_migrate_agent.go",
+				"main.go:52: `fiber.Get` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
 			},
 		},
 		{
@@ -964,6 +966,7 @@ func requestArgs(url string) ([]byte, error) {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
 )
@@ -1000,7 +1003,7 @@ func replacesQuery(base string) ([]byte, error) {
 }
 
 func notALiteral(base, qs string) ([]byte, error) {
-	a := fiberMigrateGet(base)
+	a := fibermigrate.Get(base)
 	a.QueryString(qs)
 	_, body, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1229,20 +1232,24 @@ func newFetcher(url string) fetcher {
 			want: map[string]string{
 				"main.go": `package main
 
+import (
+	"example.com/app/internal/fibermigrate"
+)
+
 type fetcher struct {
-	agent *fiberMigrateAgent
+	agent *fibermigrate.Agent
 }
 
-func passed(url string, use func(*fiberMigrateAgent)) {
-	use(fiberMigrateGet(url))
+func passed(url string, use func(*fibermigrate.Agent)) {
+	use(fibermigrate.Get(url))
 }
 
 func returnedTerminal(url string) (int, []byte, []error) {
-	return fiberMigrateGet(url).Bytes()
+	return fibermigrate.Get(url).Bytes()
 }
 
 func hostClient(url string) {
-	a := fiberMigrateAcquireAgent()
+	a := fibermigrate.AcquireAgent()
 	a.Request().SetRequestURI(url)
 	if err := a.Parse(); err != nil {
 		return
@@ -1252,7 +1259,7 @@ func hostClient(url string) {
 }
 
 func newFetcher(url string) fetcher {
-	return fetcher{agent: fiberMigrateGet(url)}
+	return fetcher{agent: fibermigrate.Get(url)}
 }
 `,
 			},
@@ -1834,11 +1841,12 @@ func nameOfFiberGet(url string) error {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/valyala/fasthttp"
 )
 
 func host(url string) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Host("virtual.example.com").Bytes()
+	_, body, errs := fibermigrate.Get(url).Host("virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1846,7 +1854,7 @@ func host(url string) ([]byte, error) {
 }
 
 func hostHeader(url string) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Set("Host", "virtual.example.com").Bytes()
+	_, body, errs := fibermigrate.Get(url).Set("Host", "virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1856,7 +1864,7 @@ func hostHeader(url string) ([]byte, error) {
 func response(url string) error {
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	a.SetResponse(resp)
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1866,7 +1874,7 @@ func response(url string) error {
 }
 
 func dest(url string, dst []byte) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Dest(dst).Bytes()
+	_, body, errs := fibermigrate.Get(url).Dest(dst).Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1874,7 +1882,7 @@ func dest(url string, dst []byte) ([]byte, error) {
 }
 
 func jsonContentType(url string, v any) error {
-	_, _, errs := fiberMigratePost(url).JSON(v, "application/vnd.api+json").Bytes()
+	_, _, errs := fibermigrate.Post(url).JSON(v, "application/vnd.api+json").Bytes()
 	if len(errs) > 0 {
 		return errs[0]
 	}
@@ -1882,7 +1890,7 @@ func jsonContentType(url string, v any) error {
 }
 
 func nameOfFiberGet(url string) error {
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	a.Name = "svc"
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {

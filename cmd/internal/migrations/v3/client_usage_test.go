@@ -65,9 +65,9 @@ func get(url string) error {
 	assert.Contains(t, run.output, "Migrating client usage")
 	assert.Len(t, run.notes, 1)
 
-	// Nothing is printed for a request that is only reported, because its package
+	// Nothing is printed for a request that is only reported, because its module
 	// cannot have the copy.
-	run = clientRunMigration(t, map[string]string{"main_test.go": `package main_test
+	run = clientRunProject(t, map[string]string{"main.go": `package main
 
 import "github.com/gofiber/fiber/v2"
 
@@ -78,7 +78,7 @@ func get(url string) error {
 	}
 	return nil
 }
-`})
+`}, false)
 	assert.Empty(t, run.output)
 	assert.Len(t, run.notes, 1)
 }
@@ -233,22 +233,22 @@ func get(url string) error {
 }
 `)
 	got := run.files["main.go"]
-	assert.Contains(t, got, "a := fiberMigrateAcquireAgent()")
-	assert.Contains(t, got, "defer fiberMigrateReleaseAgent(a)")
+	assert.Contains(t, got, "a := fibermigrate.AcquireAgent()")
+	assert.Contains(t, got, "defer fibermigrate.ReleaseAgent(a)")
 	assert.Contains(t, got, "a.Host(\"virtual\")")
 	assert.Contains(t, got, "_, _, errs := a.Bytes()")
 	assert.NotContains(t, got, "client.")
 	assert.NotContains(t, got, "gofiber")
 	assert.Len(t, run.notes, 1)
-	assert.Contains(t, run.notes[0], "this request still runs on the copy of the Fiber v2 agent in fiber_migrate_agent.go")
+	assert.Contains(t, run.notes[0], "this request still runs on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go")
 }
 
 func Test_MigrateClientUsage_LeftAloneRequestKeepsItsRelease(t *testing.T) {
 	t.Parallel()
 
-	// Where the package cannot have the copy, the request is not touched,
-	// deferred release included.
-	run := clientRunMigration(t, map[string]string{"main_test.go": `package main_test
+	// Where the module cannot have the copy, the request is not touched, deferred
+	// release included.
+	run := clientRunProject(t, map[string]string{"main.go": `package main
 
 import "github.com/gofiber/fiber/v2"
 
@@ -267,16 +267,16 @@ func get(url string) error {
 	}
 	return nil
 }
-`})
-	got := run.files["main_test.go"]
+`}, false)
+	got := run.files["main.go"]
 	assert.Contains(t, got, "defer fiber.ReleaseAgent(a)")
 	assert.Contains(t, got, "a.Host(\"virtual\")")
 	assert.Contains(t, got, "_, _, errs := a.Bytes()")
 	assert.NotContains(t, got, "client.")
-	assert.NotContains(t, got, "fiberMigrate")
+	assert.NotContains(t, got, "fibermigrate")
 	assert.Len(t, run.notes, 1)
 	assert.Contains(t, run.notes[0], "left as Fiber v2 code")
-	assert.Contains(t, run.notes[0], "external test package")
+	assert.Contains(t, run.notes[0], "not in a Go module")
 }
 
 func clientGofmtSource(t *testing.T, src string) string {

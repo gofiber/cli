@@ -75,12 +75,13 @@ func formFileResult() *fiber.FormFile {
 import (
 	"fmt"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/valyala/fasthttp"
 )
 
 // The files are only written to the body by MultipartForm.
 func notSent(api string) error {
-	a := fiberMigratePost(api)
+	a := fibermigrate.Post(api)
 	a.SendFile("./go.mod", "f")
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -93,7 +94,7 @@ func notSent(api string) error {
 func fieldsOnly(api string) error {
 	args := fasthttp.AcquireArgs()
 	args.Set("k", "v")
-	a := fiberMigratePost(api)
+	a := fibermigrate.Post(api)
 	a.MultipartForm(args)
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -104,17 +105,17 @@ func fieldsOnly(api string) error {
 
 // A FormFile that two requests send.
 func shared(api string, data []byte) error {
-	ff := fiberMigrateAcquireFormFile()
+	ff := fibermigrate.AcquireFormFile()
 	ff.Fieldname = "f"
 	ff.Name = "n"
 	ff.Content = data
-	a := fiberMigratePost(api)
+	a := fibermigrate.Post(api)
 	a.FileData(ff)
 	a.MultipartForm(nil)
 	if _, _, errs := a.Bytes(); len(errs) > 0 {
 		return errs[0]
 	}
-	b := fiberMigratePost(api)
+	b := fibermigrate.Post(api)
 	b.FileData(ff)
 	b.MultipartForm(nil)
 	if _, _, errs := b.Bytes(); len(errs) > 0 {
@@ -123,8 +124,8 @@ func shared(api string, data []byte) error {
 	return nil
 }
 
-func formFileResult() *fiberMigrateFormFile {
-	return fiberMigrateAcquireFormFile()
+func formFileResult() *fibermigrate.FormFile {
+	return fibermigrate.AcquireFormFile()
 }
 `,
 			},

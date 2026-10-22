@@ -1,25 +1,29 @@
 package v3
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	_ "embed" // the source of the copy of the Fiber v2 agent
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 // The copy of the Fiber v2 agent that the requests with no counterpart in the
 // client package of Fiber v3 keep running on. Its source is agentshim/agent.go,
 // a package of its own so that it is built, vetted, linted and tested with the
-// CLI; everything below its package clause is written to the project.
+// CLI; everything below its package clause is written to agent.go of the module
+// package <module>/internal/fibermigrate, which the packages of the project
+// import. The copy declares the members of the fiber package under their own
+// names (fibermigrate.Get, fibermigrate.Agent, ...), so the migration only has to
+// point the qualifier at the new package.
 const (
-	clientShimFile   = "fiber_migrate_agent.go"
+	// clientShimFile is the name of the file in the module package.
+	clientShimFile = "agent.go"
+	// clientShimWhere is how the notes call the file.
+	clientShimWhere  = moduleShimDir + "/" + clientShimFile
 	clientShimMarker = `This file was added by "fiber migrate": a copy of the HTTP client agent of Fiber v2`
-	clientShimPrefix = "fiberMigrate"
 	// clientShimPackage is the package clause of the source file.
 	clientShimPackage = "\npackage agentshim\n"
 )
@@ -46,50 +50,12 @@ var clientShimBody = sync.OnceValue(func() string {
 	return body
 })
 
-// clientShimIdents are the names the copy declares in the package it is added to:
-// its top level declarations and the names it gives its imports. A package that
-// declares one of them cannot have the copy.
-var clientShimIdents = sync.OnceValue(func() []string {
-	file, err := parser.ParseFile(token.NewFileSet(), "agent.go", clientShimSource, parser.SkipObjectResolution)
-	if err != nil {
-		return nil
-	}
-
-	var names []string
-	for _, spec := range file.Imports {
-		if spec.Name != nil {
-			names = append(names, spec.Name.Name)
-		}
-	}
-	for _, d := range file.Decls {
-		switch decl := d.(type) {
-		case *ast.FuncDecl:
-			if decl.Recv == nil {
-				names = append(names, decl.Name.Name)
-			}
-		case *ast.GenDecl:
-			for _, spec := range decl.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					names = append(names, s.Name.Name)
-				case *ast.ValueSpec:
-					for _, id := range s.Names {
-						names = append(names, id.Name)
-					}
-				}
-			}
-		}
-	}
-	return names
-})
-
-// clientShimGenerated describes the file with the copy.
-func clientShimGenerated() generatedFile {
-	return generatedFile{
+// clientShimModuleFile describes the file with the copy.
+func clientShimModuleFile() moduleShimFile {
+	return moduleShimFile{
 		name:   clientShimFile,
 		marker: clientShimMarker,
-		source: clientShimHeader + "package " + generatedPkgPlaceholder + "\n" + clientShimBody(),
-		idents: clientShimIdents(),
+		source: clientShimHeader + "package " + moduleShimPkg + "\n" + clientShimBody(),
 	}
 }
 
@@ -108,7 +74,7 @@ const (
 )
 
 // clientShimMembers lists the members of the fiber package that the copy stands
-// in for. It declares each as clientShimPrefix + the member.
+// in for. The copy declares each under the same name.
 var clientShimMembers = map[string]clientShimDomain{
 	clientMethodGet: clientDomainAgent, nameHead: clientDomainAgent, namePost: clientDomainAgent,
 	namePut: clientDomainAgent, namePatch: clientDomainAgent, nameDelete: clientDomainAgent,
@@ -117,42 +83,44 @@ var clientShimMembers = map[string]clientShimDomain{
 	nameAcquireFormFile: clientDomainFile, nameReleaseFormFile: clientDomainFile, clientMemberFormFile: clientDomainFile,
 }
 
-// clientShimState is what a file knows about the copy of its package.
+// clientShimState is what a file knows about the copy of its module.
 type clientShimState struct {
-	// why tells the reason the package cannot have the copy.
+	// path is the import path of the module package that has the copy.
+	path string
+	// why tells the reason the module cannot have the copy.
 	why string
-	// tried says the package was asked for the copy.
+	// tried says the module was asked for the copy.
 	tried bool
-	// ok says the package has it.
+	// ok says the module has it.
 	ok bool
 }
 
-// shimOK makes sure the package of the file has the copy of the agent, adding
-// it on first use, and reports whether it does.
+// shimOK makes sure the module of the file has the copy of the agent, adding it on
+// first use, and reports whether it does.
 func (f *clientFile) shimOK() bool {
 	if f.dry {
 		return true
 	}
 	if !f.shim.tried {
 		f.shim.tried = true
-		pkg := f.g.file.Name.Name
-		f.shim.ok = ensureGeneratedFile(f.fi, pkg, clientShimGenerated())
+		f.shim.path, f.shim.ok = ensureModuleShim(f.fi, clientShimModuleFile())
 		if !f.shim.ok {
-			f.shim.why = clientShimMissing(f.dir(), pkg)
+			f.shim.why = clientShimMissing(f.fi)
 		}
 	}
 	return f.shim.ok
 }
 
-// clientShimMissing is the reason a package cannot have the copy, for the
-// notes of the code that stays as it was.
-func clientShimMissing(dir, pkg string) string {
-	switch _, err := os.Stat(filepath.Join(dir, clientShimFile)); {
-	case strings.HasSuffix(pkg, "_test"):
-		return "the files of an external test package cannot use what the package declares"
-	case err == nil:
-		return "the package has a " + clientShimFile + " that this migration did not write"
+// clientShimMissing is the reason a module cannot have the copy, for the notes of
+// the code that stays as it was.
+func clientShimMissing(fi internal.FileInfo) string {
+	mod, ok := moduleOf(fi.Path, fi.Root)
+	switch {
+	case !ok:
+		return "the file is not in a Go module (there is no go.mod to add " + moduleShimDir + " to)"
+	case !moduleShimDirIsOurs(filepath.Join(mod.root, filepath.FromSlash(moduleShimDir))):
+		return moduleShimDir + " holds a Go file that this migration did not write"
 	default:
-		return "the package declares a name that the copy needs"
+		return moduleShimDir + " has an " + clientShimFile + " that this migration did not write"
 	}
 }

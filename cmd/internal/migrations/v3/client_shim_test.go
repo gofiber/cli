@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,8 +14,8 @@ import (
 )
 
 // clientShimFile is the file the migration adds for the requests that run on the
-// copy of the Fiber v2 agent.
-const clientShimFile = "fiber_migrate_agent.go"
+// copy of the Fiber v2 agent, in the directory of the module.
+const clientShimFile = "internal/fibermigrate/agent.go"
 
 func Test_MigrateClientUsage_Copy(t *testing.T) {
 	t.Parallel()
@@ -41,8 +40,10 @@ func get(url string) ([]byte, error) {
 			want: map[string]string{
 				"main.go": `package main
 
+import "example.com/app/internal/fibermigrate"
+
 func get(url string) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Host("virtual.example.com").Bytes()
+	_, body, errs := fibermigrate.Get(url).Host("virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -90,6 +91,7 @@ func plainAgain(url string) {
 import (
 	"fmt"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3/client"
 )
 
@@ -103,7 +105,7 @@ func plain(url string) {
 }
 
 func virtual(url string) {
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	a.Host("virtual.example.com")
 	a.Set("X-Id", "2")
 	_, body, errs := a.Bytes()
@@ -163,9 +165,11 @@ func virtual(url string) {
 
 import (
 	"fmt"
+
+	"example.com/app/internal/fibermigrate"
 )
 
-var httpClient = &fiberMigrateClient{UserAgent: "svc/1.0"}
+var httpClient = &fibermigrate.Client{UserAgent: "svc/1.0"}
 
 func plain(url string) {
 	_, body, errs := httpClient.Get(url).Bytes()
@@ -173,8 +177,8 @@ func plain(url string) {
 }
 
 func virtual(url string) {
-	c := fiberMigrateAcquireClient()
-	defer fiberMigrateReleaseClient(c)
+	c := fibermigrate.AcquireClient()
+	defer fibermigrate.ReleaseClient(c)
 	c.UserAgent = "virtual/1.0"
 	_, body, errs := c.Get(url).Host("virtual.example.com").Bytes()
 	fmt.Println(string(body), errs)
@@ -214,9 +218,11 @@ func plain(url string) {
 
 import (
 	"fmt"
+
+	"example.com/app/internal/fibermigrate"
 )
 
-var httpClient = &fiberMigrateClient{UserAgent: "svc/1.0"}
+var httpClient = &fibermigrate.Client{UserAgent: "svc/1.0"}
 
 func show(url string) {
 	fmt.Println(httpClient.Get(url).String())
@@ -258,8 +264,10 @@ func fetch(url string) ([]byte, error) {
 			want: map[string]string{
 				"helper.go": `package main
 
-func newReq(url string) *fiberMigrateAgent {
-	return fiberMigrateGet(url).Set("Accept", "application/json")
+import "example.com/app/internal/fibermigrate"
+
+func newReq(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url).Set("Accept", "application/json")
 }
 `,
 				// The file does not use the package of Fiber, so the migration does not
@@ -305,8 +313,10 @@ var build = newReq
 			want: map[string]string{
 				"main.go": `package main
 
-func newReq(url string) *fiberMigrateAgent {
-	return fiberMigrateGet(url).Set("Accept", "application/json")
+import "example.com/app/internal/fibermigrate"
+
+func newReq(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url).Set("Accept", "application/json")
 }
 
 func chained(url string) ([]byte, error) {
@@ -355,15 +365,16 @@ func unrelated(url string) {
 import (
 	"fmt"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3/client"
 )
 
 type holder struct {
-	agent *fiberMigrateAgent
+	agent *fibermigrate.Agent
 }
 
 func (h *holder) set(url string) {
-	h.agent = fiberMigrateGet(url)
+	h.agent = fibermigrate.Get(url)
 }
 
 func unrelated(url string) {
@@ -377,7 +388,7 @@ func unrelated(url string) {
 `,
 			},
 			notes: []string{
-				"main.go:10: `fiber.Agent` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in fiber_migrate_agent.go",
+				"main.go:10: `fiber.Agent` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
 			},
 		},
 		{
@@ -465,8 +476,10 @@ func fetch(s sender, url string) {
 			want: map[string]string{
 				"agents.go": `package main
 
-func newReq(url string) *fiberMigrateAgent {
-	return fiberMigrateGet(url)
+import "example.com/app/internal/fibermigrate"
+
+func newReq(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url)
 }
 `,
 			},
@@ -507,6 +520,7 @@ func inArgument(u1, u2 string) {
 import (
 	"fmt"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3/client"
 )
 
@@ -520,14 +534,14 @@ func nested(u1, u2 string) {
 	}
 	if err == nil {
 		fmt.Println(code, string(body))
-		_, body2, errs2 := fiberMigrateGet(u2).Host("virtual.example.com").Bytes()
+		_, body2, errs2 := fibermigrate.Get(u2).Host("virtual.example.com").Bytes()
 		fmt.Println(string(body2), errs2)
 	}
 }
 
 func inArgument(u1, u2 string) {
-	fmt.Println(fiberMigrateGet(u1).Set("X-A", func() string {
-		_, b, _ := fiberMigrateGet(u2).Host("h").String()
+	fmt.Println(fibermigrate.Get(u1).Set("X-A", func() string {
+		_, b, _ := fibermigrate.Get(u2).Host("h").String()
 		return b
 	}()).String())
 }
@@ -586,6 +600,7 @@ func after(url string) ([]byte, error) {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
 )
@@ -604,8 +619,8 @@ func before(url string) ([]byte, error) {
 }
 
 func after(url string) ([]byte, error) {
-	a := fiberMigrateAcquireAgent()
-	defer fiberMigrateReleaseAgent(a)
+	a := fibermigrate.AcquireAgent()
+	defer fibermigrate.ReleaseAgent(a)
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)
@@ -648,25 +663,29 @@ func release(ff *fiber.FormFile) {
 			want: map[string]string{
 				"main.go": `package main
 
-func newFile(name string, data []byte) *fiberMigrateFormFile {
-	ff := fiberMigrateAcquireFormFile()
+import "example.com/app/internal/fibermigrate"
+
+func newFile(name string, data []byte) *fibermigrate.FormFile {
+	ff := fibermigrate.AcquireFormFile()
 	ff.Fieldname = "file"
 	ff.Name = name
 	ff.Content = data
 	return ff
 }
 
-func release(ff *fiberMigrateFormFile) {
-	fiberMigrateReleaseFormFile(ff)
+func release(ff *fibermigrate.FormFile) {
+	fibermigrate.ReleaseFormFile(ff)
 }
 `,
 			},
 			notes: []string{
-				"main.go:5: `fiber.FormFile` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in fiber_migrate_agent.go",
+				"main.go:5: `fiber.FormFile` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
 			},
 		},
 		{
-			name: "an_embedded_agent_is_left_alone",
+			// The copy declares the type under the name the fiber package gave it, so an
+			// embedded field keeps the name it has.
+			name: "an_embedded_agent",
 			files: map[string]string{
 				"main.go": `package main
 
@@ -679,25 +698,34 @@ type api struct {
 func newAPI(url string) api {
 	return api{Agent: fiber.Get(url)}
 }
+
+func (a api) fetch() ([]byte, []error) {
+	_, body, errs := a.Set("X-Id", "1").Bytes()
+	return body, errs
+}
 `,
 			},
 			want: map[string]string{
 				"main.go": `package main
 
-import "github.com/gofiber/fiber/v3"
+import "example.com/app/internal/fibermigrate"
 
 type api struct {
-	*fiber.Agent
+	*fibermigrate.Agent
 }
 
 func newAPI(url string) api {
-	return api{Agent: fiberMigrateGet(url)}
+	return api{Agent: fibermigrate.Get(url)}
+}
+
+func (a api) fetch() ([]byte, []error) {
+	_, body, errs := a.Set("X-Id", "1").Bytes()
+	return body, errs
 }
 `,
 			},
 			notes: []string{
-				"main.go:6: `fiber.Agent` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...) (an embedded field is named after its type: give it a name of its own and the type fiberMigrate...)",
-				"main.go:10: `fiber.Get` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in fiber_migrate_agent.go",
+				"main.go:6: `fiber.Agent` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
 			},
 		},
 	})
@@ -877,20 +905,22 @@ func use(url string) {
 			want: map[string]string{
 				"httpx.go": `package httpx
 
+import "example.com/app/internal/fibermigrate"
+
 // New builds the request.
-func New(url string) *fiberMigrateAgent {
-	return fiberMigrateGet(url).Set("X-Project", "sample")
+func New(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url).Set("X-Project", "sample")
 }
 
 // Virtual builds a request with a Host that the client package cannot send.
-func Virtual(url string) *fiberMigrateAgent {
-	a := fiberMigrateGet(url)
+func Virtual(url string) *fibermigrate.Agent {
+	a := fibermigrate.Get(url)
 	a.Host("virtual.example.com")
 	return a
 }
 
 // Client is the client of the project.
-var Client = &fiberMigrateClient{UserAgent: "sample/1.0"}
+var Client = &fibermigrate.Client{UserAgent: "sample/1.0"}
 
 func use(url string) {
 	_, _, _ = Client.Get(url).Host("virtual.example.com").Bytes()
@@ -910,7 +940,7 @@ func use(url string) {
 func clientShimRead(t *testing.T, dir string) string {
 	t.Helper()
 
-	b, err := os.ReadFile(filepath.Join(dir, clientShimFile)) // #nosec G304 -- a temporary directory of the test
+	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(clientShimFile))) // #nosec G304 -- a temporary directory of the test
 	require.NoError(t, err)
 	return string(b)
 }
@@ -928,25 +958,31 @@ func %s(url string) {
 `
 	source := func(pkg, fn string) string { return fmt.Sprintf(host, pkg, fn) }
 
-	t.Run("one file per package, named after it", func(t *testing.T) {
+	t.Run("one file for the module, shared by its packages", func(t *testing.T) {
 		t.Parallel()
 
 		run := clientRunMigration(t, map[string]string{
-			"a.go":          source("app", "first"),
-			"b.go":          source("app", "second"),
-			"sub/c.go":      source("other", "third"),
-			"sub/c_test.go": source("other", "fourth"),
+			"a.go":                 source("app", "first"),
+			"b.go":                 source("app", "second"),
+			"sub/c.go":             source("other", "third"),
+			"sub/c_test.go":        source("other", "fourth"),
+			"sub/c_extern_test.go": source("other_test", "fifth"),
 		})
 
 		shim := clientShimRead(t, run.dir)
-		assert.Contains(t, shim, "\npackage app\n")
+		assert.Contains(t, shim, "\npackage fibermigrate\n")
 		assert.Contains(t, shim, `This file was added by "fiber migrate"`)
-		assert.Contains(t, shim, "func fiberMigrateGet(url string) *fiberMigrateAgent")
-		assert.Contains(t, clientShimRead(t, filepath.Join(run.dir, "sub")), "\npackage other\n")
-		assert.Len(t, run.notes, 4)
-		for _, name := range []string{"a.go", "b.go", "sub/c.go", "sub/c_test.go"} {
+		assert.Contains(t, shim, "func Get(url string) *Agent")
+		assert.Regexp(t, `^// Code generated by "fiber migrate"; DO NOT EDIT\.\n`, shim)
+		entries, err := os.ReadDir(filepath.Join(run.dir, "internal", "fibermigrate"))
+		require.NoError(t, err)
+		assert.Len(t, entries, 1, "the module has the one file, whatever its packages are")
+
+		assert.Len(t, run.notes, 5)
+		for _, name := range []string{"a.go", "b.go", "sub/c.go", "sub/c_test.go", "sub/c_extern_test.go"} {
 			assert.NotContains(t, run.files[name], "fiber.", name)
-			assert.Contains(t, run.files[name], "fiberMigrateGet(url)", name)
+			assert.Contains(t, run.files[name], "fibermigrate.Get(url)", name)
+			assert.Contains(t, run.files[name], `"`+clientShimImport+`"`, name)
 		}
 	})
 
@@ -964,8 +1000,8 @@ func %s(url string) {
 		t.Parallel()
 
 		run := clientRunMigration(t, map[string]string{"main_test.go": source("main", "TestGet")})
-		assert.Contains(t, clientShimRead(t, run.dir), "\npackage main\n")
-		assert.Contains(t, run.files["main_test.go"], "fiberMigrateGet(url)")
+		assert.Contains(t, clientShimRead(t, run.dir), "\npackage fibermigrate\n")
+		assert.Contains(t, run.files["main_test.go"], "fibermigrate.Get(url)")
 	})
 
 	t.Run("none when every request is migrated", func(t *testing.T) {
@@ -979,29 +1015,56 @@ func get(url string) {
 	_, _, _ = fiber.Get(url).Bytes()
 }
 `)
-		assert.NoFileExists(t, filepath.Join(run.dir, clientShimFile))
+		assert.NoFileExists(t, filepath.Join(run.dir, filepath.FromSlash(clientShimFile)))
 		assert.Empty(t, run.notes)
 	})
 
-	t.Run("an external test package cannot have it", func(t *testing.T) {
+	t.Run("an external test package uses it as well", func(t *testing.T) {
 		t.Parallel()
 
 		run := clientRunMigration(t, map[string]string{
 			"main.go":             source("main", "get"),
 			"main_extern_test.go": source("main_test", "getExtern"),
 		})
-		assert.FileExists(t, filepath.Join(run.dir, clientShimFile), "the package itself has it")
-		assert.Contains(t, run.files["main.go"], "fiberMigrateGet(url)")
-		assert.Contains(t, run.files["main_extern_test.go"], "fiber.Get(url)", "the external test package keeps the Fiber v2 code")
-		require.Len(t, run.notes, 2)
-		assert.Contains(t, strings.Join(run.notes, "\n"), "left as Fiber v2 code: Host()")
-		assert.Contains(t, strings.Join(run.notes, "\n"), "an external test package")
+		assert.FileExists(t, filepath.Join(run.dir, filepath.FromSlash(clientShimFile)))
+		assert.Contains(t, run.files["main.go"], "fibermigrate.Get(url)")
+		assert.Contains(t, run.files["main_extern_test.go"], "fibermigrate.Get(url)")
+		assert.NotContains(t, run.files["main_extern_test.go"], "fiber.Get(url)")
+		assert.Len(t, run.notes, 2)
 	})
 
-	t.Run("a file of the project of that name stays", func(t *testing.T) {
+	t.Run("the names of the project do not matter", func(t *testing.T) {
 		t.Parallel()
 
-		mine := "package main\n\n// my own file\n"
+		// The copy is a package of its own: the declarations of the packages that use
+		// it (a Get, an Agent, a json) cannot clash with it.
+		run := clientRunMigration(t, map[string]string{
+			"main.go":  source("main", "get"),
+			"other.go": "package main\n\nvar Get, Agent, json, bytes, tls, time, fibermigrate = 1, 2, 3, 4, 5, 6, 7\n",
+		})
+		assert.Contains(t, clientShimRead(t, run.dir), "\npackage fibermigrate\n")
+		assert.Contains(t, run.files["main.go"], `fibermigratepkg "`+clientShimImport+`"`, "a package level fibermigrate is not the package")
+		assert.Contains(t, run.files["main.go"], "fibermigratepkg.Get(url)")
+	})
+
+	t.Run("a nested module has a copy of its own", func(t *testing.T) {
+		t.Parallel()
+
+		run := clientRunMigration(t, map[string]string{
+			"main.go":       source("main", "get"),
+			"tools/go.mod":  "module example.com/tools\n\ngo 1.25\n",
+			"tools/main.go": source("main", "get"),
+		})
+		assert.Contains(t, run.files["main.go"], `"example.com/app/internal/fibermigrate"`)
+		assert.Contains(t, run.files["tools/main.go"], `"example.com/tools/internal/fibermigrate"`)
+		assert.FileExists(t, filepath.Join(run.dir, "internal", "fibermigrate", "agent.go"))
+		assert.FileExists(t, filepath.Join(run.dir, "tools", "internal", "fibermigrate", "agent.go"))
+	})
+
+	t.Run("a file of that name that the migration did not write stays", func(t *testing.T) {
+		t.Parallel()
+
+		mine := "package fibermigrate\n\n// my own file\n"
 		run := clientRunMigration(t, map[string]string{
 			"main.go":      source("main", "get"),
 			clientShimFile: mine,
@@ -1010,34 +1073,45 @@ func get(url string) {
 		assert.Contains(t, run.files["main.go"], "fiber.Get(url)")
 		require.Len(t, run.notes, 1)
 		assert.Contains(t, run.notes[0], "left as Fiber v2 code")
-		assert.Contains(t, run.notes[0], "that this migration did not write")
+		assert.Contains(t, run.notes[0], "holds a Go file that this migration did not write")
 	})
 
-	t.Run("a name of the project stays", func(t *testing.T) {
+	t.Run("a file of that name that another migration wrote stays", func(t *testing.T) {
 		t.Parallel()
 
-		for _, name := range []string{"fiberMigrateAgent", "fmjson", "fiberMigrateGet"} {
-			run := clientRunMigration(t, map[string]string{
-				"main.go":  source("main", "get"),
-				"other.go": "package main\n\nvar " + name + " = 1\n",
-			})
-			assert.NoFileExists(t, filepath.Join(run.dir, clientShimFile), name)
-			assert.Contains(t, run.files["main.go"], "fiber.Get(url)", name)
-			require.Len(t, run.notes, 1, name)
-			assert.Contains(t, run.notes[0], "declares a name that the copy needs", name)
-		}
-	})
-
-	t.Run("a name that only a file imports does not matter", func(t *testing.T) {
-		t.Parallel()
-
-		// The copy renames its imports, so a package level json of the project does
-		// not clash with the one it would import.
+		other := "// This file was added by \"fiber migrate\": something else.\n\npackage fibermigrate\n"
 		run := clientRunMigration(t, map[string]string{
-			"main.go":  source("main", "get"),
-			"other.go": "package main\n\nvar json, bytes, tls, time = 1, 2, 3, 4\n",
+			"main.go":      source("main", "get"),
+			clientShimFile: other,
 		})
-		assert.Contains(t, clientShimRead(t, run.dir), "\npackage main\n")
-		assert.Contains(t, run.files["main.go"], "fiberMigrateGet(url)")
+		assert.Equal(t, other, run.files[clientShimFile])
+		assert.Contains(t, run.files["main.go"], "fiber.Get(url)")
+		require.Len(t, run.notes, 1)
+		assert.Contains(t, run.notes[0], "has an agent.go that this migration did not write")
+	})
+
+	t.Run("a package of the project of that name stays", func(t *testing.T) {
+		t.Parallel()
+
+		run := clientRunMigration(t, map[string]string{
+			"main.go":                        source("main", "get"),
+			"internal/fibermigrate/other.go": "package fibermigrate\n\nvar X = 1\n",
+		})
+		assert.NoFileExists(t, filepath.Join(run.dir, filepath.FromSlash(clientShimFile)))
+		assert.Contains(t, run.files["main.go"], "fiber.Get(url)")
+		require.Len(t, run.notes, 1)
+		assert.Contains(t, run.notes[0], "left as Fiber v2 code")
+		assert.Contains(t, run.notes[0], "holds a Go file that this migration did not write")
+	})
+
+	t.Run("a project without a go.mod cannot have it", func(t *testing.T) {
+		t.Parallel()
+
+		run := clientRunProject(t, map[string]string{"main.go": source("main", "get")}, false)
+		assert.NoFileExists(t, filepath.Join(run.dir, filepath.FromSlash(clientShimFile)))
+		assert.Contains(t, run.files["main.go"], "fiber.Get(url)")
+		require.Len(t, run.notes, 1)
+		assert.Contains(t, run.notes[0], "left as Fiber v2 code")
+		assert.Contains(t, run.notes[0], "not in a Go module")
 	})
 }

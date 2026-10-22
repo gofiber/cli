@@ -222,12 +222,13 @@ func escapes(url string, use func(*fiber.Agent)) {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3"
 )
 
 func hostHeader(url string) ([]byte, error) {
-	a := fiberMigrateAcquireAgent()
-	defer fiberMigrateReleaseAgent(a)
+	a := fibermigrate.AcquireAgent()
+	defer fibermigrate.ReleaseAgent(a)
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)
@@ -243,7 +244,7 @@ func hostHeader(url string) ([]byte, error) {
 }
 
 func parseOnly(url string) error {
-	a := fiberMigrateAcquireAgent()
+	a := fibermigrate.AcquireAgent()
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)
@@ -253,9 +254,9 @@ func parseOnly(url string) error {
 	return nil
 }
 
-func escapes(url string, use func(*fiberMigrateAgent)) {
-	a := fiberMigrateAcquireAgent()
-	defer fiberMigrateReleaseAgent(a)
+func escapes(url string, use func(*fibermigrate.Agent)) {
+	a := fibermigrate.AcquireAgent()
+	defer fibermigrate.ReleaseAgent(a)
 	req := a.Request()
 	req.SetRequestURI(url)
 	go use(a)
@@ -710,6 +711,7 @@ func parseReadLater(url string) ([]byte, error) {
 import (
 	"errors"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
 )
@@ -745,8 +747,8 @@ func inlineRequest(url string) ([]byte, error) {
 }
 
 func parseReadLater(url string) ([]byte, error) {
-	a := fiberMigrateAcquireAgent()
-	defer fiberMigrateReleaseAgent(a)
+	a := fibermigrate.AcquireAgent()
+	defer fibermigrate.ReleaseAgent(a)
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)

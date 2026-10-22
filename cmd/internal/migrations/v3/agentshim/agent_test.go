@@ -125,13 +125,13 @@ func Test_Agent_Methods(t *testing.T) {
 	t.Parallel()
 
 	rec := newRecorder(t, nil)
-	for method, newAgent := range map[string]func(string) *fiberMigrateAgent{
-		http.MethodGet:    fiberMigrateGet,
-		http.MethodHead:   fiberMigrateHead,
-		http.MethodPost:   fiberMigratePost,
-		http.MethodPut:    fiberMigratePut,
-		http.MethodPatch:  fiberMigratePatch,
-		http.MethodDelete: fiberMigrateDelete,
+	for method, newAgent := range map[string]func(string) *Agent{
+		http.MethodGet:    Get,
+		http.MethodHead:   Head,
+		http.MethodPost:   Post,
+		http.MethodPut:    Put,
+		http.MethodPatch:  Patch,
+		http.MethodDelete: Delete,
 	} {
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
@@ -151,7 +151,7 @@ func Test_Agent_Methods(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		code, body, errs := fiberMigrateGet(rec.srv.URL + "/path?x=1&y=2").String()
+		code, body, errs := Get(rec.srv.URL + "/path?x=1&y=2").String()
 		require.Empty(t, errs)
 		assert.Equal(t, http.StatusAccepted, code)
 		assert.Equal(t, "pong", body)
@@ -171,8 +171,8 @@ func Test_Agent_Client(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		c := &fiberMigrateClient{}
-		for method, newAgent := range map[string]func(string) *fiberMigrateAgent{
+		c := &Client{}
+		for method, newAgent := range map[string]func(string) *Agent{
 			http.MethodGet:    c.Get,
 			http.MethodHead:   c.Head,
 			http.MethodPost:   c.Post,
@@ -190,7 +190,7 @@ func Test_Agent_Client(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		c := &fiberMigrateClient{UserAgent: "svc/1.0"}
+		c := &Client{UserAgent: "svc/1.0"}
 		_, _, errs := c.Get(rec.srv.URL).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "svc/1.0", rec.request().header.Get("User-Agent"))
@@ -200,7 +200,7 @@ func Test_Agent_Client(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		c := &fiberMigrateClient{NoDefaultUserAgentHeader: true}
+		c := &Client{NoDefaultUserAgentHeader: true}
 		_, _, errs := c.Get(rec.srv.URL).Bytes()
 		require.Empty(t, errs)
 		assert.NotContains(t, rec.request().header, "User-Agent")
@@ -214,7 +214,7 @@ func Test_Agent_Client(t *testing.T) {
 			assert.NoError(t, err)
 		})
 		var encoded, decoded atomic.Bool
-		c := &fiberMigrateClient{
+		c := &Client{
 			JSONEncoder: func(v any) ([]byte, error) { encoded.Store(true); return json.Marshal(v) },
 			JSONDecoder: func(data []byte, v any) error { decoded.Store(true); return json.Unmarshal(data, v) },
 		}
@@ -231,19 +231,19 @@ func Test_Agent_Client(t *testing.T) {
 	t.Run("pool", func(t *testing.T) {
 		t.Parallel()
 
-		c := fiberMigrateAcquireClient()
+		c := AcquireClient()
 		c.UserAgent = "x"
 		c.NoDefaultUserAgentHeader = true
 		c.JSONEncoder = json.Marshal
 		c.JSONDecoder = json.Unmarshal
-		fiberMigrateReleaseClient(c)
+		ReleaseClient(c)
 
 		assert.Empty(t, c.UserAgent)
 		assert.False(t, c.NoDefaultUserAgentHeader)
 		assert.Nil(t, c.JSONEncoder)
 		assert.Nil(t, c.JSONDecoder)
 
-		again := fiberMigrateAcquireClient()
+		again := AcquireClient()
 		assert.NotNil(t, again)
 	})
 }
@@ -252,7 +252,7 @@ func Test_Agent_Headers(t *testing.T) {
 	t.Parallel()
 
 	rec := newRecorder(t, nil)
-	_, _, errs := fiberMigrateGet(rec.srv.URL).
+	_, _, errs := Get(rec.srv.URL).
 		Set("X-Set", "1").
 		SetBytesK([]byte("X-Set-K"), "2").
 		SetBytesV("X-Set-V", []byte("3")).
@@ -283,7 +283,7 @@ func Test_Agent_Headers(t *testing.T) {
 	assert.Equal(t, "https://referer.example/", got.header.Get("Referer"))
 	assert.Equal(t, "text/plain", got.header.Get("Content-Type"))
 
-	_, _, errs = fiberMigrateGet(rec.srv.URL).
+	_, _, errs = Get(rec.srv.URL).
 		UserAgentBytes([]byte("bytes/1.0")).
 		RefererBytes([]byte("https://bytes.example/")).
 		ContentTypeBytes([]byte("text/csv")).
@@ -300,7 +300,7 @@ func Test_Agent_Cookies(t *testing.T) {
 	t.Parallel()
 
 	rec := newRecorder(t, nil)
-	_, _, errs := fiberMigrateGet(rec.srv.URL).
+	_, _, errs := Get(rec.srv.URL).
 		Cookie("a", "1").
 		CookieBytesK([]byte("b"), "2").
 		CookieBytesKV([]byte("c"), []byte("3")).
@@ -323,12 +323,12 @@ func Test_Agent_BasicAuth(t *testing.T) {
 	t.Parallel()
 
 	rec := newRecorder(t, nil)
-	_, _, errs := fiberMigrateGet(rec.srv.URL).BasicAuth("user", "pass").Bytes()
+	_, _, errs := Get(rec.srv.URL).BasicAuth("user", "pass").Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, "user:pass", rec.request().userinfo)
 	assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")), rec.request().header.Get("Authorization"))
 
-	_, _, errs = fiberMigrateGet(rec.srv.URL).BasicAuthBytes([]byte("bytes"), []byte("secret")).Bytes()
+	_, _, errs = Get(rec.srv.URL).BasicAuthBytes([]byte("bytes"), []byte("secret")).Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, "bytes:secret", rec.request().userinfo)
 }
@@ -338,11 +338,11 @@ func Test_Agent_Query(t *testing.T) {
 
 	rec := newRecorder(t, nil)
 	// The query string replaces the one of the URL and is sent as it is.
-	_, _, errs := fiberMigrateGet(rec.srv.URL + "/p?old=1").QueryString("a=1&b=two+words").Bytes()
+	_, _, errs := Get(rec.srv.URL + "/p?old=1").QueryString("a=1&b=two+words").Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, "/p?a=1&b=two+words", rec.request().uri)
 
-	_, _, errs = fiberMigrateGet(rec.srv.URL + "/p?old=1").QueryStringBytes([]byte("c=3")).Bytes()
+	_, _, errs = Get(rec.srv.URL + "/p?old=1").QueryStringBytes([]byte("c=3")).Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, "/p?c=3", rec.request().uri)
 }
@@ -352,18 +352,18 @@ func Test_Agent_Host(t *testing.T) {
 
 	rec := newRecorder(t, nil)
 	// The request goes to the server of the URL, the Host header is the one given.
-	code, _, errs := fiberMigrateGet(rec.srv.URL + "/virtual").Host("example.com").Bytes()
+	code, _, errs := Get(rec.srv.URL + "/virtual").Host("example.com").Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, http.StatusAccepted, code)
 	assert.Equal(t, "example.com", rec.request().host)
 	assert.Equal(t, "/virtual", rec.request().uri)
 
-	_, _, errs = fiberMigrateGet(rec.srv.URL).HostBytes([]byte("bytes.example.com:8080")).Bytes()
+	_, _, errs = Get(rec.srv.URL).HostBytes([]byte("bytes.example.com:8080")).Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, "bytes.example.com:8080", rec.request().host)
 
 	// The same through the request.
-	a := fiberMigrateGet(rec.srv.URL)
+	a := Get(rec.srv.URL)
 	a.Request().URI().SetHost("request.example.com")
 	_, _, errs = a.Bytes()
 	require.Empty(t, errs)
@@ -381,15 +381,15 @@ func Test_Agent_Bodies(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).Body([]byte("raw")).Bytes()
+		_, _, errs := Post(rec.srv.URL).Body([]byte("raw")).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "raw", string(rec.request().body))
 
-		_, _, errs = fiberMigratePost(rec.srv.URL).BodyString("text").Bytes()
+		_, _, errs = Post(rec.srv.URL).BodyString("text").Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "text", string(rec.request().body))
 
-		_, _, errs = fiberMigratePost(rec.srv.URL).BodyStream(strings.NewReader("streamed"), len("streamed")).Bytes()
+		_, _, errs = Post(rec.srv.URL).BodyStream(strings.NewReader("streamed"), len("streamed")).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "streamed", string(rec.request().body))
 	})
@@ -398,7 +398,7 @@ func Test_Agent_Bodies(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).JSON(payload{Name: "n"}).Bytes()
+		_, _, errs := Post(rec.srv.URL).JSON(payload{Name: "n"}).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "application/json", rec.request().header.Get("Content-Type"))
 		assert.JSONEq(t, `{"name":"n"}`, string(rec.request().body))
@@ -408,7 +408,7 @@ func Test_Agent_Bodies(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).JSON(payload{Name: "n"}, "application/vnd.api+json").Bytes()
+		_, _, errs := Post(rec.srv.URL).JSON(payload{Name: "n"}, "application/vnd.api+json").Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "application/vnd.api+json", rec.request().header.Get("Content-Type"))
 		assert.JSONEq(t, `{"name":"n"}`, string(rec.request().body))
@@ -418,7 +418,7 @@ func Test_Agent_Bodies(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).
+		_, _, errs := Post(rec.srv.URL).
 			JSONEncoder(func(any) ([]byte, error) { return []byte(`{"custom":true}`), nil }).
 			JSON(payload{Name: "ignored"}).
 			Bytes()
@@ -430,7 +430,7 @@ func Test_Agent_Bodies(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		code, body, errs := fiberMigratePost(rec.srv.URL).JSON(make(chan int)).Bytes()
+		code, body, errs := Post(rec.srv.URL).JSON(make(chan int)).Bytes()
 		require.Len(t, errs, 1)
 		var unsupported *json.UnsupportedTypeError
 		require.ErrorAs(t, errs[0], &unsupported)
@@ -443,12 +443,12 @@ func Test_Agent_Bodies(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).XML(payload{Name: "n"}).Bytes()
+		_, _, errs := Post(rec.srv.URL).XML(payload{Name: "n"}).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "application/xml", rec.request().header.Get("Content-Type"))
 		assert.Equal(t, `<payload><name>n</name></payload>`, string(rec.request().body))
 
-		_, _, errs = fiberMigratePost(rec.srv.URL).XML(make(chan int)).Bytes()
+		_, _, errs = Post(rec.srv.URL).XML(make(chan int)).Bytes()
 		require.Len(t, errs, 1)
 	})
 
@@ -461,14 +461,14 @@ func Test_Agent_Bodies(t *testing.T) {
 		args.Set("a", "1")
 		args.Add("b", "two words")
 
-		_, _, errs := fiberMigratePost(rec.srv.URL).Form(args).Bytes()
+		_, _, errs := Post(rec.srv.URL).Form(args).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "application/x-www-form-urlencoded", rec.request().header.Get("Content-Type"))
 		assert.Equal(t, "a=1&b=two+words", string(rec.request().body))
 		assert.Equal(t, url.Values{"a": {"1"}, "b": {"two words"}}, rec.request().form)
 
 		// A nil form sets the content type only.
-		_, _, errs = fiberMigratePost(rec.srv.URL).Form(nil).Bytes()
+		_, _, errs = Post(rec.srv.URL).Form(nil).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "application/x-www-form-urlencoded", rec.request().header.Get("Content-Type"))
 		assert.Empty(t, rec.request().body)
@@ -494,11 +494,11 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		ff := fiberMigrateAcquireFormFile()
+		ff := AcquireFormFile()
 		ff.Fieldname, ff.Name, ff.Content = "doc", "doc.txt", []byte("content")
-		defer fiberMigrateReleaseFormFile(ff)
+		defer ReleaseFormFile(ff)
 
-		_, _, errs := fiberMigratePost(rec.srv.URL).FileData(ff).SendFile(first, "up").SendFile(second).MultipartForm(args()).Bytes()
+		_, _, errs := Post(rec.srv.URL).FileData(ff).SendFile(first, "up").SendFile(second).MultipartForm(args()).Bytes()
 		require.Empty(t, errs)
 
 		got := rec.request()
@@ -514,7 +514,7 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).SendFiles(first, "a", second).MultipartForm(nil).Bytes()
+		_, _, errs := Post(rec.srv.URL).SendFiles(first, "a", second).MultipartForm(nil).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, map[string]string{"a|first.txt": "one", "file2|second.txt": "two"}, rec.request().files)
 	})
@@ -523,7 +523,7 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).MultipartForm(args()).Bytes()
+		_, _, errs := Post(rec.srv.URL).MultipartForm(args()).Bytes()
 		require.Empty(t, errs)
 
 		mediaType, params, err := mime.ParseMediaType(rec.request().header.Get("Content-Type"))
@@ -538,14 +538,14 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).Boundary("myboundary").MultipartForm(args()).Bytes()
+		_, _, errs := Post(rec.srv.URL).Boundary("myboundary").MultipartForm(args()).Bytes()
 		require.Empty(t, errs)
 
 		_, params, err := mime.ParseMediaType(rec.request().header.Get("Content-Type"))
 		require.NoError(t, err)
 		assert.Equal(t, "myboundary", params["boundary"])
 
-		_, _, errs = fiberMigratePost(rec.srv.URL).Boundary("bad boundary!").MultipartForm(args()).Bytes()
+		_, _, errs = Post(rec.srv.URL).Boundary("bad boundary!").MultipartForm(args()).Bytes()
 		require.Len(t, errs, 1, "an invalid boundary is an error of the request")
 	})
 
@@ -553,7 +553,7 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).SendFile(first, "up").Bytes()
+		_, _, errs := Post(rec.srv.URL).SendFile(first, "up").Bytes()
 		require.Empty(t, errs)
 
 		got := rec.request()
@@ -566,7 +566,7 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		_, _, errs := fiberMigratePost(rec.srv.URL).SendFile(filepath.Join(dir, "missing.txt")).MultipartForm(nil).Bytes()
+		_, _, errs := Post(rec.srv.URL).SendFile(filepath.Join(dir, "missing.txt")).MultipartForm(nil).Bytes()
 		require.Len(t, errs, 1)
 		require.ErrorIs(t, errs[0], os.ErrNotExist)
 		assert.Zero(t, rec.hits.Load())
@@ -576,9 +576,9 @@ func Test_Agent_Multipart(t *testing.T) {
 		t.Parallel()
 
 		rec := newRecorder(t, nil)
-		ff := &fiberMigrateFormFile{Fieldname: "f", Name: "n.txt", Content: []byte("shared")}
+		ff := &FormFile{Fieldname: "f", Name: "n.txt", Content: []byte("shared")}
 		for range 2 {
-			_, _, errs := fiberMigratePost(rec.srv.URL).FileData(ff).MultipartForm(nil).Bytes()
+			_, _, errs := Post(rec.srv.URL).FileData(ff).MultipartForm(nil).Bytes()
 			require.Empty(t, errs)
 			assert.Equal(t, map[string]string{"f|n.txt": "shared"}, rec.request().files)
 		}
@@ -595,7 +595,7 @@ func Test_Agent_Response(t *testing.T) {
 		resp := fasthttp.AcquireResponse()
 		defer fasthttp.ReleaseResponse(resp)
 
-		code, body, errs := fiberMigrateGet(rec.srv.URL).SetResponse(resp).Bytes()
+		code, body, errs := Get(rec.srv.URL).SetResponse(resp).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, http.StatusAccepted, code)
 		assert.Equal(t, "pong", string(body))
@@ -609,12 +609,12 @@ func Test_Agent_Response(t *testing.T) {
 
 		rec := newRecorder(t, nil)
 		dest := make([]byte, 0, 64)
-		_, body, errs := fiberMigrateGet(rec.srv.URL).Dest(dest).Bytes()
+		_, body, errs := Get(rec.srv.URL).Dest(dest).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "pong", string(body))
 		assert.Same(t, &dest[:1][0], &body[0], "the body is appended to dest")
 
-		_, body, errs = fiberMigrateGet(rec.srv.URL).Dest([]byte("prefix:")).Bytes()
+		_, body, errs = Get(rec.srv.URL).Dest([]byte("prefix:")).Bytes()
 		require.Empty(t, errs)
 		assert.Equal(t, "prefix:pong", string(body))
 	})
@@ -630,7 +630,7 @@ func Test_Agent_Response(t *testing.T) {
 			Name  string `json:"name"`
 			Count int    `json:"count"`
 		}
-		code, body, errs := fiberMigrateGet(rec.srv.URL).Struct(&out)
+		code, body, errs := Get(rec.srv.URL).Struct(&out)
 		require.Empty(t, errs)
 		assert.Equal(t, http.StatusOK, code)
 		assert.JSONEq(t, `{"name":"n","count":2}`, string(body))
@@ -638,7 +638,7 @@ func Test_Agent_Response(t *testing.T) {
 		assert.Equal(t, 2, out.Count)
 
 		decoded := false
-		_, _, errs = fiberMigrateGet(rec.srv.URL).
+		_, _, errs = Get(rec.srv.URL).
 			JSONDecoder(func(data []byte, v any) error { decoded = true; return json.Unmarshal(data, v) }).
 			Struct(&out)
 		require.Empty(t, errs)
@@ -650,7 +650,7 @@ func Test_Agent_Response(t *testing.T) {
 
 		rec := newRecorder(t, nil)
 		var out map[string]any
-		code, body, errs := fiberMigrateGet(rec.srv.URL).Struct(&out)
+		code, body, errs := Get(rec.srv.URL).Struct(&out)
 		require.Len(t, errs, 1)
 		var syntax *json.SyntaxError
 		require.ErrorAs(t, errs[0], &syntax)
@@ -661,18 +661,18 @@ func Test_Agent_Response(t *testing.T) {
 	t.Run("string and bytes of a failed request", func(t *testing.T) {
 		t.Parallel()
 
-		code, body, errs := fiberMigrateGet("http://127.0.0.1:1").Bytes()
+		code, body, errs := Get("http://127.0.0.1:1").Bytes()
 		require.Len(t, errs, 1)
 		assert.Zero(t, code)
 		assert.Empty(t, body)
 
-		code, str, errs := fiberMigrateGet("http://127.0.0.1:1").String()
+		code, str, errs := Get("http://127.0.0.1:1").String()
 		require.Len(t, errs, 1)
 		assert.Zero(t, code)
 		assert.Empty(t, str)
 
 		var out map[string]any
-		code, body, errs = fiberMigrateGet("http://127.0.0.1:1").Struct(&out)
+		code, body, errs = Get("http://127.0.0.1:1").Struct(&out)
 		require.Len(t, errs, 1, "there is nothing to decode")
 		assert.Zero(t, code)
 		assert.Empty(t, body)
@@ -686,7 +686,7 @@ func Test_Agent_Parse(t *testing.T) {
 	t.Run("unsupported protocol", func(t *testing.T) {
 		t.Parallel()
 
-		a := fiberMigrateGet("ftp://example.com/file")
+		a := Get("ftp://example.com/file")
 		_, _, errs := a.Bytes()
 		require.Len(t, errs, 1)
 		assert.EqualError(t, errs[0], `unsupported protocol "ftp". http and https are supported`)
@@ -695,8 +695,8 @@ func Test_Agent_Parse(t *testing.T) {
 	t.Run("a second parse changes nothing", func(t *testing.T) {
 		t.Parallel()
 
-		a := fiberMigrateAcquireAgent()
-		defer fiberMigrateReleaseAgent(a)
+		a := AcquireAgent()
+		defer ReleaseAgent(a)
 		a.Request().Header.SetMethod(http.MethodGet)
 		a.Request().SetRequestURI("http://example.com:8080/")
 
@@ -715,8 +715,8 @@ func Test_Agent_Parse(t *testing.T) {
 	t.Run("the name of the agent is the user agent", func(t *testing.T) {
 		t.Parallel()
 
-		a := fiberMigrateAcquireAgent()
-		defer fiberMigrateReleaseAgent(a)
+		a := AcquireAgent()
+		defer ReleaseAgent(a)
 		a.Name = "named"
 		a.Request().SetRequestURI("https://example.com/")
 
@@ -758,7 +758,7 @@ func Test_Agent_Retry(t *testing.T) {
 		t.Parallel()
 
 		srv, hits := flaky(t)
-		_, _, errs := fiberMigratePost(srv.URL).Bytes()
+		_, _, errs := Post(srv.URL).Bytes()
 		require.Len(t, errs, 1)
 		assert.EqualValues(t, 1, hits.Load())
 	})
@@ -768,7 +768,7 @@ func Test_Agent_Retry(t *testing.T) {
 
 		srv, hits := flaky(t)
 		var asked atomic.Int32
-		code, body, errs := fiberMigratePost(srv.URL).
+		code, body, errs := Post(srv.URL).
 			RetryIf(func(*fasthttp.Request) bool { asked.Add(1); return true }).
 			Bytes()
 		require.Empty(t, errs)
@@ -782,11 +782,41 @@ func Test_Agent_Retry(t *testing.T) {
 		t.Parallel()
 
 		srv, hits := flaky(t)
-		_, _, errs := fiberMigrateGet(srv.URL).
+		_, _, errs := Get(srv.URL).
 			RetryIf(func(*fasthttp.Request) bool { return false }).
 			Bytes()
 		require.Len(t, errs, 1)
 		assert.EqualValues(t, 1, hits.Load(), "a get is retried by default, RetryIf replaces the default")
+	})
+
+	t.Run("retry if gets the request", func(t *testing.T) {
+		t.Parallel()
+
+		srv, hits := flaky(t)
+		var method, uri string
+		_, _, errs := Post(srv.URL + "/path?x=1").
+			RetryIf(func(req *fasthttp.Request) bool {
+				method, uri = string(req.Header.Method()), string(req.URI().PathOriginal())
+				return true
+			}).
+			Bytes()
+		require.Empty(t, errs)
+		assert.EqualValues(t, 2, hits.Load())
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/path", uri)
+	})
+
+	t.Run("no function brings back the default", func(t *testing.T) {
+		t.Parallel()
+
+		srv, hits := flaky(t)
+		_, body, errs := Get(srv.URL).
+			RetryIf(func(*fasthttp.Request) bool { return false }).
+			RetryIf(nil).
+			Bytes()
+		require.Empty(t, errs)
+		assert.Equal(t, "second", string(body))
+		assert.EqualValues(t, 2, hits.Load(), "a get is retried by default")
 	})
 }
 
@@ -807,7 +837,7 @@ func Test_Agent_Timeout(t *testing.T) {
 	})
 
 	start := time.Now()
-	_, _, errs := fiberMigrateGet(srv.URL).Timeout(50 * time.Millisecond).Bytes()
+	_, _, errs := Get(srv.URL).Timeout(50 * time.Millisecond).Bytes()
 	require.Len(t, errs, 1)
 	require.ErrorIs(t, errs[0], fasthttp.ErrTimeout)
 	assert.Less(t, time.Since(start), 3*time.Second)
@@ -831,21 +861,21 @@ func Test_Agent_Redirects(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	code, body, errs := fiberMigrateGet(srv.URL + "/a").Bytes()
+	code, body, errs := Get(srv.URL + "/a").Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, http.StatusFound, code, "redirects are not followed by default")
 	assert.Contains(t, string(body), "/b")
 
-	code, body, errs = fiberMigrateGet(srv.URL + "/a").MaxRedirectsCount(5).Bytes()
+	code, body, errs = Get(srv.URL + "/a").MaxRedirectsCount(5).Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "landed on c", string(body))
 
-	_, _, errs = fiberMigrateGet(srv.URL + "/a").MaxRedirectsCount(1).Bytes()
+	_, _, errs = Get(srv.URL + "/a").MaxRedirectsCount(1).Bytes()
 	require.Len(t, errs, 1, "too many redirects")
 
 	// MaxRedirectsCount only applies to GET and HEAD.
-	code, _, errs = fiberMigratePost(srv.URL + "/a").MaxRedirectsCount(5).Bytes()
+	code, _, errs = Post(srv.URL + "/a").MaxRedirectsCount(5).Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, http.StatusFound, code)
 }
@@ -862,18 +892,18 @@ func Test_Agent_TLS(t *testing.T) {
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 
-	_, _, errs := fiberMigrateGet(srv.URL).Bytes()
+	_, _, errs := Get(srv.URL).Bytes()
 	require.Len(t, errs, 1, "the certificate of the test server is not trusted")
 	var unknown x509.UnknownAuthorityError
 	require.ErrorAs(t, errs[0], &unknown)
 
-	code, body, errs := fiberMigrateGet(srv.URL).InsecureSkipVerify().Bytes()
+	code, body, errs := Get(srv.URL).InsecureSkipVerify().Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "secure", string(body))
 
 	// A configuration that was set is kept and made insecure.
-	a := fiberMigrateGet(srv.URL).TLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
+	a := Get(srv.URL).TLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
 	a.InsecureSkipVerify()
 	assert.True(t, a.HostClient.TLSConfig.InsecureSkipVerify)
 	assert.EqualValues(t, tls.VersionTLS12, a.HostClient.TLSConfig.MinVersion)
@@ -883,7 +913,7 @@ func Test_Agent_TLS(t *testing.T) {
 
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
-	_, body, errs = fiberMigrateGet(srv.URL).TLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}).Bytes()
+	_, body, errs = Get(srv.URL).TLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}).Bytes()
 	require.Empty(t, errs)
 	assert.Equal(t, "secure", string(body))
 }
@@ -894,7 +924,7 @@ func Test_Agent_Debug(t *testing.T) {
 	rec := newRecorder(t, nil)
 
 	var buf bytes.Buffer
-	_, _, errs := fiberMigratePost(rec.srv.URL + "/dump").BodyString("payload").Debug(&buf).Bytes()
+	_, _, errs := Post(rec.srv.URL + "/dump").BodyString("payload").Debug(&buf).Bytes()
 	require.Empty(t, errs)
 
 	dump := buf.String()
@@ -906,7 +936,7 @@ func Test_Agent_Debug(t *testing.T) {
 	assert.Contains(t, dump, "pong")
 
 	// Without a writer the dump goes to the standard output.
-	a := fiberMigrateGet(rec.srv.URL).Debug()
+	a := Get(rec.srv.URL).Debug()
 	assert.Same(t, os.Stdout, a.debugWriter)
 	assert.NotNil(t, a)
 }
@@ -915,8 +945,8 @@ func Test_Agent_Reuse(t *testing.T) {
 	t.Parallel()
 
 	rec := newRecorder(t, nil)
-	a := fiberMigrateGet(rec.srv.URL+"/reused").Reuse().Set("X-Once", "1")
-	defer fiberMigrateReleaseAgent(a)
+	a := Get(rec.srv.URL+"/reused").Reuse().Set("X-Once", "1")
+	defer ReleaseAgent(a)
 
 	for range 2 {
 		code, body, errs := a.Bytes()
@@ -929,8 +959,8 @@ func Test_Agent_Reuse(t *testing.T) {
 	assert.EqualValues(t, 2, rec.hits.Load())
 
 	// The errors of a request do not stay for the next one.
-	b := fiberMigratePost(rec.srv.URL).Reuse().JSON(make(chan int))
-	defer fiberMigrateReleaseAgent(b)
+	b := Post(rec.srv.URL).Reuse().JSON(make(chan int))
+	defer ReleaseAgent(b)
 	_, _, errs := b.Bytes()
 	assert.Len(t, errs, 1)
 	_, _, errs = b.Bytes()
@@ -943,15 +973,15 @@ func Test_Agent_Pools(t *testing.T) {
 	t.Run("agent", func(t *testing.T) {
 		t.Parallel()
 
-		a := fiberMigrateAcquireAgent()
+		a := AcquireAgent()
 		a.Name = "x"
 		a.NoDefaultUserAgentHeader = true
 		a.Request().SetRequestURI("http://example.com/")
 		a.Timeout(time.Second).MaxRedirectsCount(3).Boundary("b").Reuse().Debug()
-		a.FileData(&fiberMigrateFormFile{Fieldname: "f"})
+		a.FileData(&FormFile{Fieldname: "f"})
 		a.SetResponse(fasthttp.AcquireResponse()).Dest([]byte("d"))
 		require.NoError(t, a.Parse())
-		fiberMigrateReleaseAgent(a)
+		ReleaseAgent(a)
 
 		assert.Empty(t, a.Name)
 		assert.False(t, a.NoDefaultUserAgentHeader)
@@ -972,10 +1002,10 @@ func Test_Agent_Pools(t *testing.T) {
 	t.Run("form file", func(t *testing.T) {
 		t.Parallel()
 
-		ff := fiberMigrateAcquireFormFile()
+		ff := AcquireFormFile()
 		ff.Fieldname, ff.Name, ff.Content = "f", "n", []byte("content")
 		ff.autoRelease = true
-		fiberMigrateReleaseFormFile(ff)
+		ReleaseFormFile(ff)
 
 		assert.Empty(t, ff.Fieldname)
 		assert.Empty(t, ff.Name)
@@ -989,13 +1019,13 @@ func Test_Agent_Pools(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "f.txt")
 		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
 
-		a := fiberMigrateAcquireAgent()
+		a := AcquireAgent()
 		a.SendFile(path)
 		require.Len(t, a.formFiles, 1)
 		ff := a.formFiles[0]
 		assert.True(t, ff.autoRelease)
 		assert.Equal(t, "file1", ff.Fieldname)
-		fiberMigrateReleaseAgent(a)
+		ReleaseAgent(a)
 		assert.Empty(t, ff.Name, "the file of SendFile is released with the agent")
 	})
 }
@@ -1007,7 +1037,7 @@ func Test_Agent_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Go(func() {
-			_, body, errs := fiberMigratePost(rec.srv.URL).BodyString(strings.Repeat("x", i)).Bytes()
+			_, body, errs := Post(rec.srv.URL).BodyString(strings.Repeat("x", i)).Bytes()
 			assert.Empty(t, errs)
 			assert.Equal(t, "pong", string(body))
 		})
@@ -1022,7 +1052,7 @@ func Test_Agent_Request(t *testing.T) {
 	rec := newRecorder(t, nil)
 	// An agent from the pool is filled through its request, as the code that
 	// the migration leaves alone does.
-	a := fiberMigrateAcquireAgent()
+	a := AcquireAgent()
 	req := a.Request()
 	req.Header.SetMethod(http.MethodPut)
 	req.SetRequestURI(rec.srv.URL + "/put")
@@ -1044,7 +1074,7 @@ func Test_Agent_HostClient(t *testing.T) {
 	t.Parallel()
 
 	// The embedded fasthttp client is reachable, as it was in Fiber v2.
-	a := fiberMigrateGet("http://127.0.0.1:9/")
+	a := Get("http://127.0.0.1:9/")
 	a.MaxConns = 7
 	assert.Equal(t, 7, a.MaxConns)
 
@@ -1112,10 +1142,10 @@ func Test_Agent_MultipartErrors(t *testing.T) {
 			t.Parallel()
 
 			rec := newRecorder(t, nil)
-			a := fiberMigratePost(rec.srv.URL)
+			a := Post(rec.srv.URL)
 			a.mw = tt.mw
 			a.Boundary("custom")
-			a.FileData(&fiberMigrateFormFile{Fieldname: "f", Name: "n", Content: []byte("c")})
+			a.FileData(&FormFile{Fieldname: "f", Name: "n", Content: []byte("c")})
 			a.MultipartForm(args)
 
 			_, _, errs := a.Bytes()
@@ -1134,7 +1164,7 @@ func Test_Agent_StructOfAnAgentWithoutDecoder(t *testing.T) {
 	})
 
 	// An agent that no client made has no decoder.
-	a := &fiberMigrateAgent{req: &fasthttp.Request{}}
+	a := &Agent{req: &fasthttp.Request{}}
 	a.Request().SetRequestURI(rec.srv.URL)
 	require.NoError(t, a.Parse())
 
