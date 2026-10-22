@@ -287,7 +287,7 @@ func importsTypeBase(e ast.Expr) ast.Expr {
 
 // importsIsFiberStorage reports whether the selector names the Storage interface of Fiber.
 func importsIsFiberStorage(sel importsSelector) bool {
-	return sel.name == "Storage" && reFiberCorePath.MatchString(sel.path)
+	return sel.name == cacheStorage && reFiberCorePath.MatchString(sel.path)
 }
 
 // importsStorageModule is the module of the storage drivers of Fiber: every type of
@@ -514,11 +514,11 @@ func (p importsStoragePackages) addMethods(content string, fi internal.FileInfo,
 
 		var text string
 		if typ.isStorage() {
-			text = p.storageMethods(g, fi, fn, typ, ctx)
+			text = storageMethods(g, fi, fn, typ, ctx)
 			seen[name] = text != "" || fn.Name.Name == nameSet
 		} else {
 			seen[name] = true
-			text = p.wrapperMethods(g, fi, pkg, typ, name, ctx, index)
+			text = p.wrapperMethods(g, fi, pkg, typ, ctx, index)
 		}
 		if text == "" {
 			continue
@@ -554,11 +554,11 @@ func (p importsStoragePackages) addMethods(content string, fi internal.FileInfo,
 
 // importsOldMethods are the methods of Fiber v2's Storage that v3 gave a twin that
 // takes a context.
-var importsOldMethods = []string{"Get", "Set", "Delete", "Reset"}
+var importsOldMethods = []string{appMethodGet, nameSet, nameDelete, "Reset"}
 
 // storageMethods renders the context methods a type with the five methods of
 // Fiber v2's Storage lacks, when fn is its Set method.
-func (p importsStoragePackages) storageMethods(g *goSource, fi internal.FileInfo, fn *ast.FuncDecl, typ *importsStorageType, ctx string) string {
+func storageMethods(g *goSource, fi internal.FileInfo, fn *ast.FuncDecl, typ *importsStorageType, ctx string) string {
 	if fn.Name.Name != nameSet {
 		return ""
 	}
@@ -577,7 +577,7 @@ func (p importsStoragePackages) storageMethods(g *goSource, fi internal.FileInfo
 // that is one); a type that embeds something the scan can say nothing about is
 // taken for one when it declares two of the methods, which is not a pair of
 // methods a type without a storage in it has by chance.
-func (p importsStoragePackages) wrapperMethods(g *goSource, fi internal.FileInfo, pkg map[string]*importsStorageType, typ *importsStorageType, name, ctx string, ix func() *moduleIndex) string {
+func (p importsStoragePackages) wrapperMethods(g *goSource, fi internal.FileInfo, pkg map[string]*importsStorageType, typ *importsStorageType, ctx string, ix func() *moduleIndex) string {
 	declared, lacking := typ.v2Methods()
 	if declared == 0 || len(lacking) == 0 {
 		return ""

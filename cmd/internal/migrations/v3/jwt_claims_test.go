@@ -40,6 +40,15 @@ require (
 	return dir
 }
 
+// jwtAllNotes returns the messages of the notes, one after the other.
+func jwtAllNotes(dir string) string {
+	var out []string
+	for _, n := range internal.DrainNotes(dir) {
+		out = append(out, n.Message)
+	}
+	return strings.Join(out, "\n")
+}
+
 // jwtNotesAbout returns the messages of the notes that hold the text.
 func jwtNotesAbout(dir, text string) []string {
 	var out []string
@@ -145,6 +154,38 @@ func IssuerOf(c Claims) string { return c.StandardClaims.Issuer }
 	assert.Contains(t, notes[0].Message, "Token is expired")
 	assert.Contains(t, notes[1].Message, "Claims embeds the StandardClaims of the old library")
 	assert.Contains(t, notes[1].Message, "its Id is called ID")
+}
+
+// The fields of the standard claims that a program reads have other types in v5: the
+// first read of each file is told, and a field of something that is no claims is not.
+func Test_MigrateJWTClaims_ReadsOfTheStandardFields(t *testing.T) {
+	dir := jwtModule(t, map[string]string{
+		"main.go": jwtMainFile,
+		"helper/helper.go": `package helper
+
+import (
+	"time"
+
+	"github.com/golang-jwt/jwt/v4"
+)
+
+const Issuer = "app"
+
+type Claims struct{ jwt.StandardClaims }
+
+type User struct{ Id int }
+
+func expired(claims *Claims, u User) bool {
+	return claims.ExpiresAt < time.Now().Unix() || claims.StandardClaims.NotBefore > 0 || u.Id == 0
+}
+`,
+	})
+
+	helper := readFile(t, filepath.Join(dir, "helper", "helper.go"))
+	assert.Contains(t, helper, "claims.RegisteredClaims.NotBefore")
+	notes := jwtNotesAbout(dir, "the times of the claims")
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "claims.ExpiresAt: in v5 the times of the claims")
 }
 
 func Test_MigrateJWTClaims_SecondRunChangesNothing(t *testing.T) {
@@ -290,10 +331,7 @@ func list() jwt.Claims { return jwt.StandardClaims{"web", 1, "id", 2, "iss", 3, 
 	for _, n := range internal.DrainNotes(dir) {
 		messages = append(messages, n.Message)
 	}
-	joined := ""
-	for _, m := range messages {
-		joined += m + "\n"
-	}
+	joined := strings.Join(messages, "\n")
 	assert.Contains(t, joined, "NotBefore of jwt.RegisteredClaims is a *jwt.NumericDate in v5")
 	assert.Contains(t, joined, "the fields of jwt.StandardClaims are not all named here")
 }
@@ -448,10 +486,7 @@ func valid(token *jwt.Token) error { return token.Claims.Valid() }
 	assert.Contains(t, helper, "return jwt.NewValidator(jwt.WithIssuedAt()).Validate(token.Claims)")
 	assert.Contains(t, helper, "jwt.TimeFunc = ", "left in place so that the build tells")
 
-	var messages string
-	for _, n := range internal.DrainNotes(dir) {
-		messages += n.Message + "\n"
-	}
+	messages := jwtAllNotes(dir)
 	assert.Contains(t, messages, "jwt.TimeFunc is gone in v5")
 	assert.Contains(t, messages, "v5 has no jwt.ValidationError")
 	assert.Contains(t, messages, "errors.Is(err, jwt.ErrTokenExpired)")
@@ -526,10 +561,7 @@ const Issuer = "app"
 
 	helper := readFile(t, filepath.Join(dir, "helper", "helper.go"))
 	assert.Contains(t, helper, `"github.com/dgrijalva/jwt-go/cmd/jwt"`)
-	var messages string
-	for _, n := range internal.DrainNotes(dir) {
-		messages += n.Message + "\n"
-	}
+	messages := jwtAllNotes(dir)
 	assert.Contains(t, messages, "github.com/dgrijalva/jwt-go/cmd/jwt has no counterpart")
 }
 

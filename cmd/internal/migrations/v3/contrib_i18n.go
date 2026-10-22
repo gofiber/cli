@@ -97,7 +97,13 @@ type i18nLegacyUse struct {
 
 // i18nLegacyTargets are the methods of the translator that take the place of the
 // functions of v1.
-var i18nLegacyTargets = map[string]string{"GetMessage": "Localize", "MustGetMessage": "MustLocalize"}
+var i18nLegacyTargets = map[string]string{"GetMessage": i18nLocalize, "MustGetMessage": i18nMustLocalize}
+
+// The methods of the translator.
+const (
+	i18nLocalize     = "Localize"
+	i18nMustLocalize = "MustLocalize"
+)
 
 // i18nPackage is what the files of one Go package do with the i18n package.
 type i18nPackage struct {
@@ -363,7 +369,7 @@ func i18nAnalyze(g *goSource) i18nUsage {
 			id, ok := x.X.(*ast.Ident)
 			switch {
 			case !ok || !slices.Contains(u.names, id.Name):
-			case x.Sel.Name == "Localize" || x.Sel.Name == "MustLocalize":
+			case x.Sel.Name == i18nLocalize || x.Sel.Name == i18nMustLocalize:
 				u.calls = append(u.calls, x)
 			case i18nLegacyTargets[x.Sel.Name] != "":
 				u.legacy = append(u.legacy, i18nLegacyOf(x, fiber, stack))
@@ -495,7 +501,7 @@ func i18nIsTranslatorVar(g *goSource, call *ast.CallExpr, stack []ast.Node) bool
 	ast.Inspect(g.file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.SelectorExpr:
-			if isIdentNamed(x.X, name) && (x.Sel.Name == "Localize" || x.Sel.Name == "MustLocalize") {
+			if isIdentNamed(x.X, name) && (x.Sel.Name == i18nLocalize || x.Sel.Name == i18nMustLocalize) {
 				translator = true
 			}
 		case *ast.CallExpr:

@@ -27,6 +27,7 @@ const (
 	jwtPackageName      = "jwt"
 	jwtRequestPackage   = "request"
 	jwtParserType       = "Parser"
+	jwtValidMethod      = "Valid"
 )
 
 // jwtClaimsMentionRe finds the files that can import one of the libraries.
@@ -190,11 +191,11 @@ func jwtImportsPath(file *ast.File, path string) bool {
 // jwtImport is an import of a package of one of the libraries.
 type jwtImport struct {
 	spec *ast.ImportSpec
-	lib  jwtLib
 	// target is the import path in v5, "" for a package v5 does not have.
 	target string
 	// name is the identifier the file binds the package to.
 	name string
+	lib  jwtLib
 	// base is set for the package of the library itself and not a sub-package.
 	base bool
 }
@@ -294,13 +295,13 @@ func (r *jwtClaimsRun) report(cwd string) {
 
 // jwtClaimsPass is the rewrite of one file.
 type jwtClaimsPass struct {
-	fi      internal.FileInfo
-	g       *goSource
-	mod     *jwtModule
-	edits   editSet
-	imports []jwtImport
+	g   *goSource
+	mod *jwtModule
 	// said holds the reports made already, by kind.
-	said map[string]bool
+	said    map[string]bool
+	imports []jwtImport
+	fi      internal.FileInfo
+	edits   editSet
 }
 
 // run moves the imports and rewrites the use of the packages.
@@ -349,7 +350,7 @@ func (p *jwtClaimsPass) notef(pos token.Pos, format string, args ...any) {
 }
 
 // notefOnce reports a kind of construct at its first place in the file.
-func (p *jwtClaimsPass) notefOnce(kind string, pos token.Pos, format string, args ...any) {
+func (p *jwtClaimsPass) notefOncef(kind string, pos token.Pos, format string, args ...any) {
 	if p.said[kind] {
 		return
 	}
@@ -393,6 +394,10 @@ const jwtValidationErrorAdvice = "v5 has no jwt.ValidationError and no Validatio
 	"ErrTokenInvalidAudience, ErrTokenInvalidIssuer, ErrTokenInvalidId and ErrTokenInvalidClaims, so ve.Errors&jwt.ValidationErrorExpired != 0 " +
 	"is errors.Is(err, jwt.ErrTokenExpired)"
 
+// jwtChangedFields are the fields of the standard claims whose type or name changed
+// in RegisteredClaims.
+var jwtChangedFields = map[string]bool{"ExpiresAt": true, "IssuedAt": true, "NotBefore": true, "Audience": true, "Id": true}
+
 // jwtVerifyMethods are the methods of the claims that v5 took away.
 var jwtVerifyMethods = []string{"VerifyExpiresAt", "VerifyIssuedAt", "VerifyNotBefore", "VerifyAudience", "VerifyIssuer"}
 
@@ -405,10 +410,10 @@ func (p *jwtClaimsPass) selector(sel *ast.SelectorExpr, libs map[string]jwtLib, 
 			p.edits.replaceNode(p.g, sel.Sel, jwtRegisteredClaims)
 			p.embedded(sel, stack)
 		case strings.HasPrefix(name, "ValidationError") || name == "NewValidationError":
-			p.notefOnce("validation", sel.Pos(), "%s", jwtValidationErrorAdvice)
+			p.notefOncef("validation", sel.Pos(), "%s", jwtValidationErrorAdvice)
 		default:
 			if advice, removed := jwtRemoved[name]; removed {
-				p.notefOnce(name, sel.Pos(), "%s", advice)
+				p.notefOncef(name, sel.Pos(), "%s", advice)
 			}
 		}
 		return
@@ -418,9 +423,12 @@ func (p *jwtClaimsPass) selector(sel *ast.SelectorExpr, libs map[string]jwtLib, 
 	case name == jwtStandardClaims && p.mod.embeds:
 		// The embedded field of a claims struct is called after its type.
 		p.edits.replaceNode(p.g, sel.Sel, jwtRegisteredClaims)
-	case name == "Valid" && len(libs) > 0 && p.tokenClaimsValid(sel, libs, stack):
+	case jwtChangedFields[name] && len(libs) > 0 && p.mod.embeds && strings.Contains(strings.ToLower(p.g.text(sel.X)), "claim"):
+		p.notefOncef("fields", sel.Pos(), "%s: in v5 the times of the claims (ExpiresAt, IssuedAt, NotBefore) are *jwt.NumericDate, nil for none, "+
+			"with the time in .Time and Unix() on it (v4: int64 seconds, 0 for none), Audience is a jwt.ClaimStrings and Id is called ID", p.g.text(sel))
+	case name == jwtValidMethod && len(libs) > 0 && p.tokenClaimsValid(sel, libs, stack):
 	case slices.Contains(jwtVerifyMethods, name) && jwtIsCalled(sel, stack) && len(libs) > 0:
-		p.notefOnce("verify", sel.Pos(), "%s: v5 took the Verify methods of the claims away; the parser checks exp, nbf and (with "+
+		p.notefOncef("verify", sel.Pos(), "%s: v5 took the Verify methods of the claims away; the parser checks exp, nbf and (with "+
 			"jwt.WithIssuedAt()) iat, jwt.WithAudience(aud) and jwt.WithIssuer(iss) check the other two, and the claim of a time "+
 			"is read with GetExpirationTime(), GetIssuedAt() or GetNotBefore()", p.g.text(sel))
 	}
@@ -436,8 +444,8 @@ func (p *jwtClaimsPass) tokenClaimsValid(sel *ast.SelectorExpr, libs map[string]
 	if !ok || claims.Sel.Name != "Claims" || !jwtIsCalled(sel, stack) {
 		return false
 	}
-	call, _ := stack[len(stack)-1].(*ast.CallExpr)
-	if len(call.Args) != 0 {
+	call, isCall := stack[len(stack)-1].(*ast.CallExpr)
+	if !isCall || len(call.Args) != 0 {
 		return false
 	}
 
@@ -470,7 +478,7 @@ func (p *jwtClaimsPass) embedded(sel *ast.SelectorExpr, stack []ast.Node) {
 			break
 		}
 	}
-	p.notefOnce("embedded", sel.Pos(), "%s embeds the StandardClaims of the old library, which is jwt.RegisteredClaims in v5: its ExpiresAt, "+
+	p.notefOncef("embedded", sel.Pos(), "%s embeds the StandardClaims of the old library, which is jwt.RegisteredClaims in v5: its ExpiresAt, "+
 		"IssuedAt and NotBefore are *jwt.NumericDate (v4: the Unix seconds as an int64, 0 for none), its Audience is a jwt.ClaimStrings and "+
 		"its Id is called ID. Code that reads or sets these fields through a %s has to follow; the compiler lists it", typ, typ)
 }
@@ -658,7 +666,7 @@ func (p *jwtClaimsPass) parserOption(elt ast.Expr, pkg string) (option string, o
 // Validate() error method v5 calls. The standard claims need no check of their
 // own any more: the parser checks them before it asks the claims.
 func (p *jwtClaimsPass) validMethod(fn *ast.FuncDecl, libs map[string]jwtLib) {
-	if len(libs) == 0 || fn.Name.Name != "Valid" || fn.Recv == nil || fn.Body == nil || len(fn.Recv.List) != 1 ||
+	if len(libs) == 0 || fn.Name.Name != jwtValidMethod || fn.Recv == nil || fn.Body == nil || len(fn.Recv.List) != 1 ||
 		fn.Type.Params.NumFields() != 0 || fn.Type.Results.NumFields() != 1 || !isIdentNamed(fn.Type.Results.List[0].Type, "error") {
 		return
 	}
@@ -670,12 +678,13 @@ func (p *jwtClaimsPass) validMethod(fn *ast.FuncDecl, libs map[string]jwtLib) {
 	// The standard claims are checked by the parser: the call that asked them first goes.
 	body := fn.Body.List
 	switch {
-	case len(body) > 0 && p.isStandardCheck(body[0]):
+	case len(body) > 0 && isStandardCheck(body[0]):
 		mw3DeleteStatement(p.g, &p.edits, body[0])
-	case len(body) == 1 && p.isStandardReturn(body[0]):
-		ret, _ := body[0].(*ast.ReturnStmt)
-		p.edits.replaceNode(p.g, ret.Results[0], "nil")
-	case p.callsStandardValid(fn):
+	case len(body) == 1 && isStandardReturn(body[0]):
+		if ret, isRet := body[0].(*ast.ReturnStmt); isRet {
+			p.edits.replaceNode(p.g, ret.Results[0], "nil")
+		}
+	case callsStandardValid(fn):
 		p.notef(fn.Pos(), "%s calls Valid() of its standard claims in a way this migration does not rewrite; v5 calls Validate() error on "+
 			"claims that have it, after the parser checked exp, nbf and the other registered claims, and jwt.RegisteredClaims has no Valid()",
 			p.g.text(fn.Name))
@@ -723,7 +732,7 @@ func (p *jwtClaimsPass) claimsEmbedded(typ string, libs map[string]jwtLib) strin
 // isStandardCheck reports whether the statement is
 //
 //	if err := x.StandardClaims.Valid(); err != nil { return err }
-func (p *jwtClaimsPass) isStandardCheck(stmt ast.Stmt) bool {
+func isStandardCheck(stmt ast.Stmt) bool {
 	ifs, ok := stmt.(*ast.IfStmt)
 	if !ok || ifs.Else != nil || ifs.Init == nil {
 		return false
@@ -748,7 +757,7 @@ func (p *jwtClaimsPass) isStandardCheck(stmt ast.Stmt) bool {
 }
 
 // isStandardReturn reports whether the statement is return x.StandardClaims.Valid().
-func (p *jwtClaimsPass) isStandardReturn(stmt ast.Stmt) bool {
+func isStandardReturn(stmt ast.Stmt) bool {
 	ret, ok := stmt.(*ast.ReturnStmt)
 	return ok && len(ret.Results) == 1 && isStandardValid(ret.Results[0])
 }
@@ -761,7 +770,7 @@ func isStandardValid(e ast.Expr) bool {
 		return false
 	}
 	valid, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || valid.Sel.Name != "Valid" {
+	if !ok || valid.Sel.Name != jwtValidMethod {
 		return false
 	}
 	std, ok := valid.X.(*ast.SelectorExpr)
@@ -770,7 +779,7 @@ func isStandardValid(e ast.Expr) bool {
 
 // callsStandardValid reports whether the method calls Valid() of its standard
 // claims anywhere.
-func (p *jwtClaimsPass) callsStandardValid(fn *ast.FuncDecl) bool {
+func callsStandardValid(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if e, ok := n.(ast.Expr); ok && isStandardValid(e) {
