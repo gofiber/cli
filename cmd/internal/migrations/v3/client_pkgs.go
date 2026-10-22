@@ -27,6 +27,43 @@ type clientPackage struct {
 	// params are the kinds of value that the parameters of the functions of the
 	// package take.
 	params map[string][]clientShimDomain
+	// facts are the kinds of value that the package shares with the other packages
+	// of the module. They are worked out once, when first asked for.
+	facts *clientFacts
+	// imports are the import paths of the files of the package.
+	imports []string
+	// exports are the kinds of value that the exported declarations of the package
+	// use.
+	exports clientDomainSet
+}
+
+// clientFacts are the kinds of value that a package shares with the other packages
+// of the module, and why.
+type clientFacts struct {
+	// via names, for each kind, the package that makes the package share it: the
+	// path of an import, empty when the package exports it itself.
+	via   map[clientShimDomain]string
+	kinds clientDomainSet
+}
+
+// add records that the kinds are shared, because of the package at path.
+func (cf *clientFacts) add(kinds clientDomainSet, path string) {
+	for _, d := range clientKindOrder {
+		if kinds.has(d) && !cf.kinds.has(d) {
+			cf.kinds = cf.kinds.with(d)
+			cf.via[d] = path
+		}
+	}
+}
+
+// clientDirExports are the kinds of value that the packages of a directory export.
+type clientDirExports struct {
+	// pub are the kinds that the files of the packages that others can import
+	// export.
+	pub clientDomainSet
+	// test are the kinds that the test files of those packages export, which only
+	// the external test package of the directory can use.
+	test clientDomainSet
 }
 
 // clientPackages knows the package level names of the packages being
@@ -35,11 +72,25 @@ type clientPackage struct {
 // variables are fiber clients.
 type clientPackages struct {
 	pkgs map[string]*clientPackage
-	mu   sync.Mutex
+	// dirs are the exports of the directories packages are imported from.
+	dirs map[string]clientDirExports
+	// root is the directory the migration runs in: modules are looked for below it.
+	root string
+	// taints counts the kinds of value the scans found out that packages share, so
+	// that a scan can tell it learned something.
+	taints int
+	mu     sync.Mutex
 }
 
-func clientNewPackages() *clientPackages {
-	return &clientPackages{pkgs: map[string]*clientPackage{}}
+func clientNewPackages(root string) *clientPackages {
+	return &clientPackages{pkgs: map[string]*clientPackage{}, dirs: map[string]clientDirExports{}, root: root}
+}
+
+// learned returns how many facts the scans found out so far.
+func (p *clientPackages) learned() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.taints
 }
 
 // get returns the package pkg of the directory dir.
@@ -75,16 +126,118 @@ func (p *clientPackages) taint(dir, pkg string, domain clientShimDomain) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	cp.tainted[domain] = true
+	if !cp.tainted[domain] {
+		cp.tainted[domain] = true
+		p.taints++
+	}
 }
 
-// tainted reports whether the package was tainted for a kind of value.
+// tainted reports whether the values of a kind stay on the copy of the v2 agent in
+// the package: the code of the package hands them around in ways the migration
+// does not follow, or the package shares them with other packages of the module
+// (see clientFacts).
 func (p *clientPackages) tainted(dir, pkg string, domain clientShimDomain) bool {
 	cp := p.get(dir, pkg)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return cp.tainted[domain]
+	return cp.tainted[domain] || p.factsOf(dir, pkg, cp).kinds.has(domain)
+}
+
+// sharedVia returns the import path of the package that makes the package share
+// the values of a kind; it is empty when the package exports them itself.
+func (p *clientPackages) sharedVia(dir, pkg string, domain clientShimDomain) string {
+	cp := p.get(dir, pkg)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.factsOf(dir, pkg, cp).via[domain]
+}
+
+// factsOf works out which kinds of value the package shares with the others. The
+// lock is held.
+//
+// A package shares the values its own exported declarations use, and the values of
+// the packages of the module it imports, because it can be handed one of theirs. The
+// external test package of a directory imports the package under test, even though
+// no import says so. Only the packages the files import are looked at: a package
+// that imports a package that imports an exporter is not.
+func (p *clientPackages) factsOf(dir, pkg string, cp *clientPackage) *clientFacts {
+	if cp.facts != nil {
+		return cp.facts
+	}
+	cf := &clientFacts{via: map[clientShimDomain]string{}}
+	cp.facts = cf
+	cf.add(cp.exports, "")
+
+	mod, ok := moduleOf(filepath.Join(dir, "x.go"), p.root)
+	if !ok {
+		return cf
+	}
+	for _, imp := range cp.imports {
+		rel, within := strings.CutPrefix(imp, mod.path)
+		if !within || (rel != "" && !strings.HasPrefix(rel, "/")) {
+			continue
+		}
+		cf.add(p.dirExports(filepath.Join(mod.root, filepath.FromSlash(strings.TrimPrefix(rel, "/")))).pub, imp)
+	}
+
+	if strings.HasSuffix(pkg, "_test") {
+		d := p.dirExports(dir)
+		path := mod.path
+		if rel, err := filepath.Rel(mod.root, dir); err == nil && rel != "." {
+			path = mod.path + "/" + filepath.ToSlash(rel)
+		}
+		cf.add(d.pub|d.test, path)
+	}
+	return cf
+}
+
+// dirExports returns the kinds of value that the packages of a directory export.
+// The lock is held.
+func (p *clientPackages) dirExports(dir string) clientDirExports {
+	if d, ok := p.dirs[dir]; ok {
+		return d
+	}
+	var d clientDirExports
+	p.dirs[dir] = d // a directory that imports itself is not looked at twice
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return d
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, e.Name()), nil, parser.SkipObjectResolution)
+		if err != nil || file.Name.Name == appMainPackage || strings.HasSuffix(file.Name.Name, "_test") {
+			continue
+		}
+		var kinds clientDomainSet
+		for _, ex := range clientFileExports(file, clientAgentFuncs(file)) {
+			kinds |= ex.kinds
+		}
+		if strings.HasSuffix(e.Name(), "_test.go") {
+			d.test |= kinds
+		} else {
+			d.pub |= kinds
+		}
+	}
+	p.dirs[dir] = d
+	return d
+}
+
+// clientAgentFuncs returns the functions of a file that return a *fiber.Agent.
+func clientAgentFuncs(file *ast.File) map[string]bool {
+	funcs := map[string]bool{}
+	names := clientFiberNames(file)
+	for _, d := range file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && clientReturnsAgent(fn.Type, names) {
+			funcs[fn.Name.Name] = true
+		}
+	}
+	return funcs
 }
 
 // clientReturnsAgent reports whether a function type has exactly one result, a
@@ -110,7 +263,7 @@ func clientScanPackage(dir, pkg string) *clientPackage {
 	if err != nil {
 		return cp
 	}
-	var foreign []*ast.File
+	var foreign, files []*ast.File
 	fset := token.NewFileSet()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
@@ -119,6 +272,12 @@ func clientScanPackage(dir, pkg string) *clientPackage {
 		file, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, parser.SkipObjectResolution)
 		if err != nil || file.Name.Name != pkg {
 			continue
+		}
+		files = append(files, file)
+		for _, spec := range file.Imports {
+			if path, err := strconv.Unquote(spec.Path.Value); err == nil && !slices.Contains(cp.imports, path) {
+				cp.imports = append(cp.imports, path)
+			}
 		}
 		fiberNames := clientFiberNames(file)
 		if len(fiberNames) == 0 {
@@ -136,6 +295,16 @@ func clientScanPackage(dir, pkg string) *clientPackage {
 				}
 			case *ast.GenDecl:
 				cp.scanGenDecl(x, fiberNames)
+			}
+		}
+	}
+
+	// What the exported declarations of an importable package use is shared with the
+	// packages that import it.
+	if pkg != appMainPackage && !strings.HasSuffix(pkg, "_test") {
+		for _, file := range files {
+			for _, ex := range clientFileExports(file, cp.agentFuncs) {
+				cp.exports |= ex.kinds
 			}
 		}
 	}

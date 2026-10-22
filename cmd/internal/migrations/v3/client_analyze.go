@@ -33,18 +33,14 @@ func (f *clientFile) migrate(u *clientUnit) {
 		f.bail(u, reason)
 		return
 	}
-	if reason := f.sharedWithCopy(u); reason != "" {
-		f.bailShared(u, reason)
+	if note := f.sharedWithCopy(u); note != "" {
+		f.bailShared(u, note)
 		return
 	}
 	if f.holdsBailed(u) && f.shimOK() {
 		// The code that is replaced holds a request that stays on the copy: its
 		// names cannot be changed inside the new code.
-		if f.dry {
-			f.bail(u, "it contains a request that stays on the copy")
-		} else {
-			f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimWhere+", so this request does too")
-		}
+		f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimWhere+", so this request does too")
 		return
 	}
 	f.emit(u)
@@ -79,11 +75,28 @@ func (f *clientFile) bail(u *clientUnit, reason clientUnsupported) {
 }
 
 // bailShared keeps a request that could be migrated on the copy of the v2 agent
-// because it shares its agent or its client with requests that cannot.
+// because it shares its agent or its client with requests that cannot. A scan only
+// records what the request means for the rest of the package, as for any request that
+// stays on the copy. Where the module cannot have the copy, the request is left as
+// it is.
 func (f *clientFile) bailShared(u *clientUnit, note string) {
+	if f.dry || !f.shimOK() {
+		f.bail(u, "it is shared with code that cannot move to the client package")
+		return
+	}
 	f.shimNoted = true
 	f.markCopied(u)
+	if f.inExported(u.rootNode()) {
+		return // the note of the exported function says it
+	}
 	f.notef(f.line(u.rootNode()), "%s", note)
+}
+
+// inExported reports whether n is in a function that a note says uses the copy.
+func (f *clientFile) inExported(n ast.Node) bool {
+	return slices.ContainsFunc(f.exported, func(decl ast.Node) bool {
+		return decl.Pos() <= n.Pos() && n.End() <= decl.End()
+	})
 }
 
 // markCopied records the fiber members of a request that stays on the copy.

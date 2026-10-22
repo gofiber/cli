@@ -621,11 +621,11 @@ func (a *Agent) MultipartForm(args *fasthttp.Args) *Agent {
 	a.req.Header.SetMultipartFormBoundary(a.mw.Boundary())
 
 	if args != nil {
-		for key, value := range args.All() {
+		args.VisitAll(func(key, value []byte) { //nolint:staticcheck // VisitAll exists in every fasthttp version, All only in the newer ones
 			if err := a.mw.WriteField(string(key), string(value)); err != nil {
 				a.errs = append(a.errs, err)
 			}
-		}
+		})
 	}
 
 	for _, ff := range a.formFiles {
@@ -745,16 +745,7 @@ func (a *Agent) Dest(dest []byte) *Agent {
 //
 // By default, will use isIdempotent function from fasthttp
 func (a *Agent) RetryIf(retryIf fasthttp.RetryIfFunc) *Agent {
-	if retryIf == nil {
-		a.RetryIfErr = nil
-		return a
-	}
-
-	// fasthttp asks RetryIfErr instead of the RetryIf field it deprecated, with the
-	// same answer: whether the request is retried, whatever the error was.
-	a.RetryIfErr = func(req *fasthttp.Request, _ int, _ error) (resetTimeout, retry bool) {
-		return false, retryIf(req)
-	}
+	a.HostClient.RetryIf = retryIf //nolint:staticcheck // RetryIf exists in every fasthttp version, RetryIfErr only in the newer ones
 
 	return a
 }

@@ -28,11 +28,13 @@ func (f *clientFile) taint(domain clientShimDomain) {
 	}
 }
 
-// shimmed reports whether the values of a kind are the copy's in the package of
-// the file. The migration then keeps their types and everything that makes or
-// uses one on the copy.
-func (f *clientFile) shimmed(domain clientShimDomain) bool {
-	return !f.dry && f.pkgs.tainted(f.dir(), f.pkgName(), domain) && f.shimOK()
+// kept reports whether the values of a kind stay as they are in the package of the
+// file, on the copy of the v2 agent: the code of the package hands them around in
+// ways the migration does not follow, or shares them with other packages of the
+// module. The migration then keeps their types and everything that makes or uses
+// one that way.
+func (f *clientFile) kept(domain clientShimDomain) bool {
+	return f.pkgs.tainted(f.dir(), f.pkgName(), domain)
 }
 
 // connected reports whether the agent of the request is handed to or taken from
@@ -74,12 +76,23 @@ func (f *clientFile) agentFlows(u *clientUnit) bool {
 // that does.
 func (f *clientFile) sharedWithCopy(u *clientUnit) string {
 	switch {
-	case u.connected() && f.shimmed(clientDomainAgent):
-		return "its agent is shared with code that stays on the copy of the Fiber v2 agent in " + clientShimWhere + ", so this request does too"
-	case u.viaClient() && f.shimmed(clientDomainClient):
-		return "its client is shared with requests that stay on the copy of the Fiber v2 agent in " + clientShimWhere + ", so this request does too"
+	case u.connected() && f.kept(clientDomainAgent):
+		return f.sharedNote(clientDomainAgent, "its agent is shared with code that stays")
+	case u.viaClient() && f.kept(clientDomainClient):
+		return f.sharedNote(clientDomainClient, "its client is shared with requests that stay")
 	}
 	return ""
+}
+
+// sharedNote says why a request shares the values of a kind with code that stays on
+// the copy: other code of the package does, or a package of the module that the
+// package imports exports them.
+func (f *clientFile) sharedNote(domain clientShimDomain, local string) string {
+	word := clientKindWord(domain)
+	if path := f.pkgs.sharedVia(f.dir(), f.pkgName(), domain); path != "" {
+		return "its " + word + " may meet the " + word + "s of " + path + ", which stay on the copy of the Fiber v2 agent in " + clientShimWhere + ", so this request does too"
+	}
+	return local + " on the copy of the Fiber v2 agent in " + clientShimWhere + ", so this request does too"
 }
 
 // leftovers deals with the members of the v2 client that are still used once the

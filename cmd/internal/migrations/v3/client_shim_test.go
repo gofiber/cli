@@ -731,12 +731,14 @@ func (a api) fetch() ([]byte, []error) {
 	})
 }
 
+// clientExportNote is the start of the note at an exported declaration that uses the
+// agent, the client or the form file of Fiber v2.
+const clientExportNote = " is exported and uses the Fiber v2 "
+
 func Test_MigrateClientUsage_ExportedAgentsAndClients(t *testing.T) {
 	t.Parallel()
 
-	const exportNote = " is exported and is now a *"
-	const otherPackages = ": code in other packages that calls the methods of the Fiber v2 agent or client on it " +
-		"(Set, Bytes, String, Get(url).Bytes(), ...) was not migrated, because the migration reads one package at a time"
+	const stays = " stay on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go, so that the packages that import this one keep compiling"
 
 	clientRunCases(t, []clientCase{
 		{
@@ -780,45 +782,135 @@ func lower(url string) *fiber.Agent { return fiber.Get(url) }
 			want: map[string]string{
 				"httpx.go": `package httpx
 
-import "github.com/gofiber/fiber/v3/client"
+import "example.com/app/internal/fibermigrate"
 
 // New builds the request.
-func New(url string) *client.Request {
-	return client.C().R().SetMethod("GET").SetURL(url).SetHeader("X-Project", "sample")
+func New(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url).Set("X-Project", "sample")
 }
 
 // Client is the client of the project.
-var Client = client.New().SetUserAgent("sample/1.0")
+var Client = &fibermigrate.Client{UserAgent: "sample/1.0"}
 
 // API holds a client.
 type API struct {
-	Client *client.Client
-	hidden *client.Client
+	Client *fibermigrate.Client
+	hidden *fibermigrate.Client
 }
 
 // NewClient makes a client.
-func NewClient() *client.Client { return client.New() }
+func NewClient() *fibermigrate.Client { return &fibermigrate.Client{} }
 
 // Shared is a method of an exported type.
-func (a *API) Shared() *client.Client { return a.Client }
+func (a *API) Shared() *fibermigrate.Client { return a.Client }
 
-func (a *API) private() *client.Client { return a.hidden }
+func (a *API) private() *fibermigrate.Client { return a.hidden }
 
-func (a api) Hidden() *client.Client { return nil }
+func (a api) Hidden() *fibermigrate.Client { return nil }
 
 type api struct{}
 
-var unexported = client.New()
+var unexported = &fibermigrate.Client{}
 
-func lower(url string) *client.Request { return client.C().R().SetMethod("GET").SetURL(url) }
+func lower(url string) *fibermigrate.Agent { return fibermigrate.Get(url) }
 `,
 			},
 			notes: []string{
-				"httpx.go:6: New" + exportNote + "client.Request" + otherPackages,
-				"httpx.go:11: Client" + exportNote + "client.Client" + otherPackages,
-				"httpx.go:15: API.Client" + exportNote + "client.Client" + otherPackages,
-				"httpx.go:20: NewClient" + exportNote + "client.Client" + otherPackages,
-				"httpx.go:23: Shared" + exportNote + "client.Client" + otherPackages,
+				"httpx.go:6: New" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:11: Client" + clientExportNote + "client: the clients of this package" + stays,
+				"httpx.go:15: API.Client" + clientExportNote + "client: the clients of this package" + stays,
+				"httpx.go:20: NewClient" + clientExportNote + "client: the clients of this package" + stays,
+				"httpx.go:23: API.Shared" + clientExportNote + "client: the clients of this package" + stays,
+				"httpx.go:27: api.Hidden" + clientExportNote + "client: the clients of this package" + stays,
+				"httpx.go:33: " + clientShareNote,
+			},
+		},
+		{
+			name: "the_fields_the_types_and_the_values_of_a_package_are_exports_too",
+			files: map[string]string{
+				"httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// Request is another name of the agent.
+type Request = *fiber.Agent
+
+// Sender takes an agent.
+type Sender interface {
+	Send(a *fiber.Agent) error
+	hidden(a *fiber.Agent)
+}
+
+// Hook takes a client.
+type Hook func(c *fiber.Client)
+
+// Embedded has an embedded agent.
+type Embedded struct {
+	*fiber.Agent
+}
+
+// Default is an agent that is made when the package starts.
+var Default = fiber.Get("http://localhost")
+
+// Build is a function value.
+var Build = newRequest
+
+// Make is a function literal.
+var Make = func(url string) *fiber.Agent { return fiber.Get(url) }
+
+// File is a form file.
+var File *fiber.FormFile
+
+func newRequest(url string) *fiber.Agent { return fiber.Post(url) }
+`,
+			},
+			want: map[string]string{
+				"httpx.go": `package httpx
+
+import "example.com/app/internal/fibermigrate"
+
+// Request is another name of the agent.
+type Request = *fibermigrate.Agent
+
+// Sender takes an agent.
+type Sender interface {
+	Send(a *fibermigrate.Agent) error
+	hidden(a *fibermigrate.Agent)
+}
+
+// Hook takes a client.
+type Hook func(c *fibermigrate.Client)
+
+// Embedded has an embedded agent.
+type Embedded struct {
+	*fibermigrate.Agent
+}
+
+// Default is an agent that is made when the package starts.
+var Default = fibermigrate.Get("http://localhost")
+
+// Build is a function value.
+var Build = newRequest
+
+// Make is a function literal.
+var Make = func(url string) *fibermigrate.Agent { return fibermigrate.Get(url) }
+
+// File is a form file.
+var File *fibermigrate.FormFile
+
+func newRequest(url string) *fibermigrate.Agent { return fibermigrate.Post(url) }
+`,
+			},
+			notes: []string{
+				"httpx.go:6: Request" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:10: Sender.Send" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:15: Hook" + clientExportNote + "client: the clients of this package" + stays,
+				"httpx.go:19: Embedded.Agent" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:23: Default" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:26: Build" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:29: Make" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:32: File" + clientExportNote + "form file: the form files of this package" + stays,
+				"httpx.go:34: " + clientShareNote,
 			},
 		},
 		{
@@ -928,9 +1020,647 @@ func use(url string) {
 `,
 			},
 			notes: []string{
-				"httpx.go:7: " + clientShareNote,
+				"httpx.go:6: New" + clientExportNote + "agent: the agents of this package" + stays,
+				"httpx.go:11: Virtual" + clientExportNote + "agent: the agents of this package" + stays,
 				"httpx.go:12: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+				"httpx.go:18: Client" + clientExportNote + "client: the clients of this package" + stays,
 				"httpx.go:21: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+			},
+		},
+	})
+}
+
+func Test_MigrateClientUsage_PackagesThatImportAnExporter(t *testing.T) {
+	t.Parallel()
+
+	const exporter = `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// New builds the request.
+func New(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Project", "sample")
+}
+`
+	const exported = `package httpx
+
+import "example.com/app/internal/fibermigrate"
+
+// New builds the request.
+func New(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url).Set("X-Project", "sample")
+}
+`
+	const exportNote = "httpx/httpx.go:6: New is exported and uses the Fiber v2 agent: the agents of this package stay on the copy of the Fiber v2 agent in " +
+		"internal/fibermigrate/agent.go, so that the packages that import this one keep compiling"
+	const meet = ", which stay on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go, so this request does too"
+
+	clientRunCases(t, []clientCase{
+		{
+			name: "callers_that_do_not_import_fiber_are_not_touched_and_keep_compiling",
+			files: map[string]string{
+				"httpx/httpx.go": exporter,
+				"app/app.go": `package app
+
+import "example.com/app/httpx"
+
+func Fetch(url string) ([]byte, []error) {
+	_, body, errs := httpx.New(url).Set("X-Id", "1").Bytes()
+	return body, errs
+}
+`,
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"example.com/app/app"
+)
+
+func main() {
+	body, errs := app.Fetch("http://localhost")
+	fmt.Println(string(body), errs)
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": exported,
+				"app/app.go": `package app
+
+import "example.com/app/httpx"
+
+func Fetch(url string) ([]byte, []error) {
+	_, body, errs := httpx.New(url).Set("X-Id", "1").Bytes()
+	return body, errs
+}
+`,
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"example.com/app/app"
+)
+
+func main() {
+	body, errs := app.Fetch("http://localhost")
+	fmt.Println(string(body), errs)
+}
+`,
+			},
+			notes: []string{exportNote},
+		},
+		{
+			name: "a_caller_that_names_the_type_gets_the_copys_type",
+			files: map[string]string{
+				"httpx/httpx.go": exporter,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v2"
+)
+
+func send(a *fiber.Agent) ([]byte, []error) {
+	_, body, errs := a.Bytes()
+	return body, errs
+}
+
+func viaHelper(url string) ([]byte, []error) {
+	return send(httpx.New(url))
+}
+
+func own(url string) ([]byte, []error) {
+	a := fiber.Get(url)
+	a.Set("X-Own", "1")
+	return send(a)
+}
+
+func alone(url string) []byte {
+	_, body, _ := fiber.Get(url).Set("X-Alone", "1").Bytes()
+	return body
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": exported,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"example.com/app/internal/fibermigrate"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func send(a *fibermigrate.Agent) ([]byte, []error) {
+	_, body, errs := a.Bytes()
+	return body, errs
+}
+
+func viaHelper(url string) ([]byte, []error) {
+	return send(httpx.New(url))
+}
+
+func own(url string) ([]byte, []error) {
+	a := fibermigrate.Get(url)
+	a.Set("X-Own", "1")
+	return send(a)
+}
+
+func alone(url string) []byte {
+	resp, err := client.Get(url, client.Config{Header: map[string]string{"X-Alone": "1"}})
+	var body []byte
+	if err == nil {
+		body = resp.Body()
+	}
+	return body
+}
+`,
+			},
+			notes: []string{
+				exportNote,
+				"app/app.go:8: its agent may meet the agents of example.com/app/httpx" + meet,
+				"app/app.go:18: `return send(a)` is not understood by the migration; this request still runs on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
+			},
+		},
+		{
+			name: "the_external_test_package_of_the_exporter",
+			files: map[string]string{
+				"httpx/httpx.go": exporter,
+				"httpx/httpx_test.go": `package httpx_test
+
+import (
+	"testing"
+
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v2"
+)
+
+func use(a *fiber.Agent) []error {
+	_, _, errs := a.Bytes()
+	return errs
+}
+
+func Test_New(t *testing.T) {
+	if errs := use(httpx.New("http://localhost")); len(errs) == 0 {
+		t.Fatal("nothing is listening")
+	}
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": exported,
+				"httpx/httpx_test.go": `package httpx_test
+
+import (
+	"testing"
+
+	"example.com/app/httpx"
+	"example.com/app/internal/fibermigrate"
+)
+
+func use(a *fibermigrate.Agent) []error {
+	_, _, errs := a.Bytes()
+	return errs
+}
+
+func Test_New(t *testing.T) {
+	if errs := use(httpx.New("http://localhost")); len(errs) == 0 {
+		t.Fatal("nothing is listening")
+	}
+}
+`,
+			},
+			notes: []string{
+				exportNote,
+				"httpx/httpx_test.go:10: its agent may meet the agents of example.com/app/httpx" + meet,
+			},
+		},
+		{
+			name: "a_package_main_that_imports_the_exporter",
+			files: map[string]string{
+				"httpx/httpx.go": exporter,
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v2"
+)
+
+func show(a *fiber.Agent) {
+	_, body, errs := a.String()
+	fmt.Println(body, errs)
+}
+
+func main() {
+	show(httpx.New("http://localhost"))
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": exported,
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"example.com/app/httpx"
+	"example.com/app/internal/fibermigrate"
+)
+
+func show(a *fibermigrate.Agent) {
+	_, body, errs := a.String()
+	fmt.Println(body, errs)
+}
+
+func main() {
+	show(httpx.New("http://localhost"))
+}
+`,
+			},
+			notes: []string{
+				exportNote,
+				"main.go:10: its agent may meet the agents of example.com/app/httpx" + meet,
+			},
+		},
+		{
+			// The same code as the next case, which only differs in the package it
+			// imports: one that has no agents.
+			name: "a_helper_in_a_package_that_imports_one_without_agents_migrates_as_before",
+			files: map[string]string{
+				"util/util.go": `package util
+
+// Name is not about requests.
+func Name() string { return "util" }
+`,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/util"
+	"github.com/gofiber/fiber/v2"
+)
+
+func newReq(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Id", util.Name())
+}
+
+func fetch(url string) []byte {
+	a := newReq(url)
+	_, body, _ := a.Bytes()
+	return body
+}
+`,
+			},
+			want: map[string]string{
+				"app/app.go": `package app
+
+import (
+	"example.com/app/util"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func newReq(url string) *client.Request {
+	return client.C().R().SetMethod("GET").SetURL(url).SetHeader("X-Id", util.Name())
+}
+
+func fetch(url string) []byte {
+	a := newReq(url)
+	resp, err := a.Send()
+	var body []byte
+	if err == nil {
+		body = resp.Body()
+	}
+	return body
+}
+`,
+			},
+		},
+		{
+			name: "a_helper_in_a_package_that_imports_the_exporter_stays_on_the_copy",
+			files: map[string]string{
+				"httpx/httpx.go": exporter,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v2"
+)
+
+func newReq(url string) *fiber.Agent {
+	return httpx.New(url).Set("X-Id", "1")
+}
+
+func fetch(url string) []byte {
+	a := newReq(url)
+	_, body, _ := a.Bytes()
+	return body
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": exported,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"example.com/app/internal/fibermigrate"
+)
+
+func newReq(url string) *fibermigrate.Agent {
+	return httpx.New(url).Set("X-Id", "1")
+}
+
+func fetch(url string) []byte {
+	a := newReq(url)
+	_, body, _ := a.Bytes()
+	return body
+}
+`,
+			},
+			notes: []string{
+				exportNote,
+				"app/app.go:13: its agent may meet the agents of example.com/app/httpx" + meet,
+			},
+		},
+		{
+			name: "the_test_files_of_a_package_reach_only_its_external_test_package",
+			files: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+// Name is not about requests.
+func Name() string { return "httpx" }
+`,
+				"httpx/export_test.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// NewForTest is for the tests of the package.
+func NewForTest(url string) *fiber.Agent {
+	return fiber.Get(url)
+}
+`,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v2"
+)
+
+func newReq(url string) *fiber.Agent {
+	return fiber.Get(url).Set("X-Id", httpx.Name())
+}
+
+func fetch(url string) []byte {
+	a := newReq(url)
+	_, body, _ := a.Bytes()
+	return body
+}
+`,
+			},
+			want: map[string]string{
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func newReq(url string) *client.Request {
+	return client.C().R().SetMethod("GET").SetURL(url).SetHeader("X-Id", httpx.Name())
+}
+
+func fetch(url string) []byte {
+	a := newReq(url)
+	resp, err := a.Send()
+	var body []byte
+	if err == nil {
+		body = resp.Body()
+	}
+	return body
+}
+`,
+			},
+			notes: []string{
+				"httpx/export_test.go:6: NewForTest is exported and uses the Fiber v2 agent",
+			},
+		},
+		{
+			// The agent the exported function returns is made by a client, so the clients
+			// of the package stay on the copy as well, and the requests that go through
+			// them.
+			name: "an_exported_agent_made_by_a_client_keeps_the_clients_too",
+			files: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// New builds the request.
+func New(url string) *fiber.Agent {
+	c := &fiber.Client{UserAgent: "sample/1.0"}
+	return c.Get(url)
+}
+
+func ping(url string) []error {
+	c := &fiber.Client{}
+	_, _, errs := c.Get(url).Bytes()
+	return errs
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+import "example.com/app/internal/fibermigrate"
+
+// New builds the request.
+func New(url string) *fibermigrate.Agent {
+	c := &fibermigrate.Client{UserAgent: "sample/1.0"}
+	return c.Get(url)
+}
+
+func ping(url string) []error {
+	c := &fibermigrate.Client{}
+	_, _, errs := c.Get(url).Bytes()
+	return errs
+}
+`,
+			},
+			notes: []string{
+				"httpx/httpx.go:6: New is exported and uses the Fiber v2 agent",
+				"httpx/httpx.go:13: its client is shared with requests that stay on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go, so this request does too",
+			},
+		},
+		{
+			name: "an_exporter_at_the_root_of_the_module",
+			files: map[string]string{
+				"root.go": `package app
+
+import "github.com/gofiber/fiber/v2"
+
+// New builds the request.
+func New(url string) *fiber.Agent {
+	return fiber.Get(url)
+}
+`,
+				"cmd/tool/main.go": `package main
+
+import (
+	"example.com/app"
+	"github.com/gofiber/fiber/v2"
+)
+
+func show(a *fiber.Agent) {
+	_, _, _ = a.String()
+}
+
+func main() {
+	show(app.New("http://localhost"))
+}
+`,
+			},
+			want: map[string]string{
+				"root.go": `package app
+
+import "example.com/app/internal/fibermigrate"
+
+// New builds the request.
+func New(url string) *fibermigrate.Agent {
+	return fibermigrate.Get(url)
+}
+`,
+				"cmd/tool/main.go": `package main
+
+import (
+	"example.com/app"
+	"example.com/app/internal/fibermigrate"
+)
+
+func show(a *fibermigrate.Agent) {
+	_, _, _ = a.String()
+}
+
+func main() {
+	show(app.New("http://localhost"))
+}
+`,
+			},
+			notes: []string{
+				"root.go:6: New is exported and uses the Fiber v2 agent",
+				"cmd/tool/main.go:8: its agent may meet the agents of example.com/app" + meet,
+			},
+		},
+		{
+			name: "an_exporter_with_an_aliased_import",
+			files: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+import f "github.com/gofiber/fiber/v2"
+
+type API struct {
+	Agent *f.Agent
+}
+`,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	f "github.com/gofiber/fiber/v2"
+)
+
+func use(a *f.Agent) *httpx.API {
+	return &httpx.API{Agent: a}
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+import "example.com/app/internal/fibermigrate"
+
+type API struct {
+	Agent *fibermigrate.Agent
+}
+`,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"example.com/app/internal/fibermigrate"
+)
+
+func use(a *fibermigrate.Agent) *httpx.API {
+	return &httpx.API{Agent: a}
+}
+`,
+			},
+			notes: []string{
+				"httpx/httpx.go:6: API.Agent is exported and uses the Fiber v2 agent",
+				"app/app.go:8: `return &httpx.API{Agent: a}` is not understood by the migration; this request still runs on the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
+			},
+		},
+		{
+			name: "a_form_file_from_another_package",
+			files: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+import "github.com/gofiber/fiber/v2"
+
+// NewFile makes a file to upload.
+func NewFile(name string) *fiber.FormFile {
+	ff := fiber.AcquireFormFile()
+	ff.Fieldname = "file"
+	ff.Name = name
+	ff.Content = []byte("content")
+	return ff
+}
+`,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"github.com/gofiber/fiber/v2"
+)
+
+func upload(url string) []error {
+	ff := httpx.NewFile("a.txt")
+	_, _, errs := fiber.Post(url).FileData(ff).MultipartForm(nil).Bytes()
+	return errs
+}
+`,
+			},
+			want: map[string]string{
+				"httpx/httpx.go": `package httpx
+
+import "example.com/app/internal/fibermigrate"
+
+// NewFile makes a file to upload.
+func NewFile(name string) *fibermigrate.FormFile {
+	ff := fibermigrate.AcquireFormFile()
+	ff.Fieldname = "file"
+	ff.Name = name
+	ff.Content = []byte("content")
+	return ff
+}
+`,
+				"app/app.go": `package app
+
+import (
+	"example.com/app/httpx"
+	"example.com/app/internal/fibermigrate"
+)
+
+func upload(url string) []error {
+	ff := httpx.NewFile("a.txt")
+	_, _, errs := fibermigrate.Post(url).FileData(ff).MultipartForm(nil).Bytes()
+	return errs
+}
+`,
+			},
+			notes: []string{
+				"httpx/httpx.go:6: NewFile is exported and uses the Fiber v2 form file",
+				"app/app.go:10: FileData() with a file that is not a fiber.FormFile literal or a variable of the same block" + clientShimNote,
 			},
 		},
 	})
