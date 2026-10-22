@@ -357,3 +357,42 @@ func unrelated( {
 	assert.Contains(t, notes[1], "main.go:4: opa: the v3 module evaluates policies as Rego v1")
 	assert.Contains(t, notes[2], "main.go:5: otel: the metric names changed")
 }
+
+func Test_Review_TimeoutStatus(t *testing.T) {
+	t.Parallel()
+
+	const noWait = "timeout: the middleware returns as soon as the time is up, without waiting for the handler, which should watch c.Context().Done()."
+	const status = "timeout: a timed-out handler now answers 503 instead of 408 (return fiber.ErrRequestTimeout from Config.OnTimeout to keep 408)."
+
+	// a config that keeps the 408 only needs the note about the handler
+	notes := reviewNotes(t, map[string]string{"a.go": `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/timeout"
+)
+
+func routes(app *fiber.App, h fiber.Handler) {
+	app.Get("/a", timeout.New(h, timeout.Config{Timeout: time.Second, OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout }}))
+}
+`})
+	assert.Equal(t, []string{"a.go:7: " + noWait}, notes)
+
+	// a file whose timeouts are answered with 503 gets both
+	notes = reviewNotes(t, map[string]string{"a.go": `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/timeout"
+)
+
+func routes(app *fiber.App, h fiber.Handler) {
+	app.Get("/a", timeout.New(h, timeout.Config{Timeout: time.Second}))
+}
+`})
+	assert.Equal(t, []string{"a.go:7: " + noWait, "a.go:7: " + status}, notes)
+}

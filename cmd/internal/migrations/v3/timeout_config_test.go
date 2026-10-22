@@ -8,6 +8,10 @@ import (
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
+// timeoutOn is the field every rewritten config gets, so that a timeout is still
+// answered with 408 Request Timeout.
+const timeoutOn = `OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout }`
+
 const timeoutSourceHead = `package main
 
 import (
@@ -46,12 +50,12 @@ func Test_MigrateTimeoutConfig_New(t *testing.T) {
 func wrap(a, b string) fiber.Handler { return slow }
 `)
 
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: reqTimeout})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: d})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: time.Duration(3) * time.Second})")
-	assert.Contains(t, content, "}, timeout.Config{Timeout: 2 * time.Second}))")
-	assert.Contains(t, content, `timeout.New(wrap("a", "b"), timeout.Config{Timeout: 2 * time.Second})`)
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: reqTimeout, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: d, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: time.Duration(3) * time.Second, "+timeoutOn+"})")
+	assert.Contains(t, content, "}, timeout.Config{Timeout: 2 * time.Second, "+timeoutOn+"}))")
+	assert.Contains(t, content, `timeout.New(wrap("a", "b"), timeout.Config{Timeout: 2 * time.Second, `+timeoutOn+`})`)
 	assert.Contains(t, run.out, "Migrating timeout middleware configs")
 	assert.Empty(t, run.notes)
 }
@@ -75,13 +79,13 @@ func Test_MigrateTimeoutConfig_NewWithContext(t *testing.T) {
 }
 `)
 
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, Errors: []error{errSlow}})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: reqTimeout, Errors: []error{errSlow, context.Canceled}})")
-	assert.Contains(t, content, "timeout.New(func(c *fiber.Ctx) error { return c.Next() }, timeout.Config{Timeout: 30 * time.Second})")
-	assert.Contains(t, content, "h := timeout.New(slow, timeout.Config{Timeout: 1 * time.Second})")
-	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: d, Errors: errs})")
-	assert.Contains(t, content, "timeout.New(\n\t\tslow,\n\t\ttimeout.Config{Timeout: d, Errors: []error{errSlow}},\n\t)")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, Errors: []error{errSlow}, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: reqTimeout, Errors: []error{errSlow, context.Canceled}, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(func(c *fiber.Ctx) error { return c.Next() }, timeout.Config{Timeout: 30 * time.Second, "+timeoutOn+"})")
+	assert.Contains(t, content, "h := timeout.New(slow, timeout.Config{Timeout: 1 * time.Second, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(slow, timeout.Config{Timeout: d, Errors: errs, "+timeoutOn+"})")
+	assert.Contains(t, content, "timeout.New(\n\t\tslow,\n\t\ttimeout.Config{Timeout: d, Errors: []error{errSlow}, "+timeoutOn+"},\n\t)")
 	assert.NotContains(t, content, "NewWithContext")
 	assert.Contains(t, run.out, "Migrating timeout middleware configs")
 	assert.Empty(t, run.notes)
@@ -107,7 +111,7 @@ func routes(app *fiber.App) {
 }
 `)
 
-	assert.Contains(t, content, "to.New(slow, to.Config{Timeout: 5 * time.Second})")
+	assert.Contains(t, content, "to.New(slow, to.Config{Timeout: 5 * time.Second, "+timeoutOn+"})")
 	assert.NotContains(t, content, "NewWithContext")
 	assert.NotContains(t, content, "timeout.Config")
 }
@@ -177,4 +181,104 @@ func Test_MigrateTimeoutConfig_Idempotent(t *testing.T) {
 	assert.Equal(t, first, second.file(t, "main.go"))
 	assert.Empty(t, second.out)
 	assert.Empty(t, second.notes)
+}
+
+func Test_MigrateTimeoutConfig_UsesTheNamesOfTheFile(t *testing.T) {
+	t.Parallel()
+
+	// the core package under an alias of its own
+	res := mw1Run(t, v3.MigrateTimeoutConfig, `package main
+
+import (
+	"time"
+
+	f "github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/timeout"
+)
+
+func slow(c *f.Ctx) error { return c.SendString("done") }
+
+func routes(app *f.App) {
+	app.Get("/a", timeout.New(slow, 5*time.Second))
+	app.Get("/b", timeout.NewWithContext(slow, 5*time.Second))
+}
+`)
+
+	file := res.file()
+	assert.Contains(t, file, "timeout.New(slow, timeout.Config{Timeout: 5 * time.Second, OnTimeout: func(c f.Ctx) error { return f.ErrRequestTimeout }})")
+	assert.Equal(t, 2, countOf(file, "OnTimeout: func(c f.Ctx)"))
+	assert.NotContains(t, file, "fiber.")
+	assert.Empty(t, res.notes)
+
+	// and under the name of the parameter the function literal would declare
+	res = mw1Run(t, v3.MigrateTimeoutConfig, `package main
+
+import (
+	"time"
+
+	c "github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/timeout"
+)
+
+func slow(ctx *c.Ctx) error { return ctx.SendString("done") }
+
+func routes(app *c.App) {
+	app.Get("/a", timeout.New(slow, 5*time.Second))
+}
+`)
+
+	assert.Contains(t, res.file(), "OnTimeout: func(_ c.Ctx) error { return c.ErrRequestTimeout }")
+}
+
+func Test_MigrateTimeoutConfig_AddsTheFiberImport(t *testing.T) {
+	t.Parallel()
+
+	// the handler comes from another package: the file does not import fiber
+	res := mw1Run(t, v3.MigrateTimeoutConfig, `package main
+
+import (
+	"time"
+
+	"example.com/app/handlers"
+	"github.com/gofiber/fiber/v2/middleware/timeout"
+)
+
+var slow = timeout.NewWithContext(handlers.Slow, 5*time.Second)
+`)
+
+	file := res.file()
+	assert.Contains(t, file, `"github.com/gofiber/fiber/v3"`)
+	assert.Equal(t, 1, countOf(file, `"github.com/gofiber/fiber/v3"`))
+	assert.Contains(t, file, "var slow = timeout.New(handlers.Slow, timeout.Config{Timeout: 5 * time.Second, OnTimeout: func(c fiber.Ctx) error { return fiber.ErrRequestTimeout }})")
+	assert.Contains(t, res.stdout, "Migrating timeout middleware configs")
+}
+
+func Test_MigrateTimeoutConfig_KeepsAConfigThatHasItsOwnOnTimeout(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/timeout"
+)
+
+func slow(c fiber.Ctx) error { return c.SendString("done") }
+
+func routes(app *fiber.App) {
+	app.Get("/a", timeout.New(slow, timeout.Config{
+		Timeout:   5 * time.Second,
+		OnTimeout: func(c fiber.Ctx) error { return c.Status(fiber.StatusGatewayTimeout).SendString("too slow") },
+	}))
+	app.Get("/b", timeout.New(slow, timeout.Config{Timeout: 5 * time.Second}))
+}
+`
+	res := mw1Run(t, v3.MigrateTimeoutConfig, src)
+
+	// a config of v3 is what its author wants it to be
+	assert.Equal(t, src, res.file())
+	assert.Empty(t, res.stdout)
+	assert.Empty(t, res.notes)
 }
