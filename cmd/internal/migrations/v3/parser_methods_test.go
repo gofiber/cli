@@ -277,7 +277,7 @@ func handler(c *fiber.Ctx) error {
 			msg: "Migrating parser methods",
 		},
 		{
-			name: "AllParams that cannot be rewritten is reported",
+			name: "AllParams as a value becomes the function that builds the map",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -288,7 +288,23 @@ func handler(c *fiber.Ctx) error {
 	return nil
 }
 `,
-			notes: []string{"main.go:6: AllParams does not exist in Fiber v3"},
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	all := func() map[string]string {
+		params := make(map[string]string, len(c.Route().Params))
+		for _, name := range c.Route().Params {
+			params[name] = c.Params(name)
+		}
+		return params
+	}
+	_ = all
+	return nil
+}
+`,
+			msg: "Migrating parser methods",
 		},
 		{
 			name: "unknown receiver is reported",
