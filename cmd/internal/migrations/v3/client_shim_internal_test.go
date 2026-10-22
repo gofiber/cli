@@ -134,3 +134,21 @@ func Test_clientShim_MembersAreDeclared(t *testing.T) {
 		assert.True(t, copied || slices.Contains(clientFasthttpAliases, member), "%s has a place to go", member)
 	}
 }
+
+func Test_clientShim_CoversTheRemovedClientNames(t *testing.T) {
+	t.Parallel()
+
+	// Every member of the fiber package that Fiber v3 removed with the HTTP client
+	// is either the copy's or an alias of fasthttp.
+	found := 0
+	for qualified, hint := range reviewAdvice {
+		name, ok := strings.CutPrefix(qualified, reviewCorePath+".")
+		if !ok || hint != reviewClientHint {
+			continue
+		}
+		found++
+		_, copied := clientShimMembers[name]
+		assert.True(t, copied || slices.Contains(clientFasthttpAliases, name), "%s has a place to go", name)
+	}
+	assert.Equal(t, len(clientShimMembers)+len(clientFasthttpAliases), found)
+}

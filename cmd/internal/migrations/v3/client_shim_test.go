@@ -187,6 +187,52 @@ func virtual(url string) {
 			},
 		},
 		{
+			name: "a_request_through_a_client_that_is_no_statement_keeps_the_client",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+var httpClient = &fiber.Client{UserAgent: "svc/1.0"}
+
+func show(url string) {
+	fmt.Println(httpClient.Get(url).String())
+}
+
+func plain(url string) {
+	_, body, errs := httpClient.Get(url).Bytes()
+	fmt.Println(string(body), errs)
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+)
+
+var httpClient = &fiberMigrateClient{UserAgent: "svc/1.0"}
+
+func show(url string) {
+	fmt.Println(httpClient.Get(url).String())
+}
+
+func plain(url string) {
+	_, body, errs := httpClient.Get(url).Bytes()
+	fmt.Println(string(body), errs)
+}
+`,
+			},
+			notes: []string{
+				"main.go:16: " + clientShareClientNote,
+			},
+		},
+		{
 			name: "a_helper_of_a_file_without_the_fiber_import",
 			files: map[string]string{
 				"helper.go": `package main
