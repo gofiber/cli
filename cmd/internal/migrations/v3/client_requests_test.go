@@ -98,6 +98,9 @@ func codecs(url string, v any) error {
 }
 `,
 			},
+			notes: []string{
+				"main.go:29: " + clientAcceptNote,
+			},
 		},
 		{
 			name: "comments_in_chains",
@@ -269,6 +272,9 @@ func trailing(url string) ([]byte, error) {
 }
 `,
 			},
+			notes: []string{
+				"main.go:19: " + clientAcceptNote,
+			},
 		},
 		{
 			name: "flow_loops_and_branches",
@@ -366,6 +372,7 @@ import (
 	"log"
 	"sync"
 
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3/client"
 )
 
@@ -440,7 +447,7 @@ func branches(flag bool, u1, u2 string) ([]byte, error) {
 }
 
 func captured(url string) {
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	run := func() {
 		_, _, _ = a.Bytes()
 	}
@@ -450,6 +457,7 @@ func captured(url string) {
 			},
 			notes: []string{
 				"main.go:78: it is used inside a function literal" + clientShimNote,
+				"main.go:15: " + clientErrsNote,
 			},
 		},
 		{
@@ -521,6 +529,7 @@ func parameterNamedFiber(fiber string) string {
 import (
 	"fmt"
 
+	"example.com/app/internal/fibermigrate"
 	fiberclient "github.com/gofiber/fiber/v3/client"
 )
 
@@ -571,7 +580,7 @@ func deferred(url string) (body []byte) {
 }
 
 func functionValue() {
-	get := fiberMigrateGet
+	get := fibermigrate.Get
 	_ = get
 }
 
@@ -581,7 +590,8 @@ func parameterNamedFiber(fiber string) string {
 `,
 			},
 			notes: []string{
-				"main.go:52: `fiber.Get` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in fiber_migrate_agent.go",
+				"main.go:52: `fiber.Get` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in internal/fibermigrate/agent.go",
+				"main.go:46: " + clientErrsNote,
 			},
 		},
 		{
@@ -734,6 +744,10 @@ func reassign(url string) (int, error) {
 }
 `,
 			},
+			notes: []string{
+				"main.go:16: " + clientErrsNote,
+				"main.go:39: " + clientAcceptNote,
+			},
 		},
 		{
 			name: "json_headers_and_debug",
@@ -808,24 +822,30 @@ func reuse(url string) error {
 				"main.go": `package main
 
 import (
+	"os"
+
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3/client"
 )
 
 func jsonAccept(url string, v map[string]string) error {
-	_, err := client.Post(url, client.Config{Header: map[string]string{"Accept": "text/plain"}, Body: v})
-	if err != nil {
-		return err
+	a := fibermigrate.Post(url)
+	a.Set("Accept", "text/plain")
+	a.JSON(v)
+	_, _, errs := a.Bytes()
+	if len(errs) > 0 {
+		return errs[0]
 	}
 	return nil
 }
 
 func jsonContentTypeFirst(url string, v map[string]string) error {
-	_, err := client.Post(url, client.Config{
-		Body:   v,
-		Header: map[string]string{"Content-Type": "application/vnd.api+json"},
-	})
-	if err != nil {
-		return err
+	a := fibermigrate.Post(url)
+	a.JSON(v)
+	a.ContentType("application/vnd.api+json")
+	_, _, errs := a.Bytes()
+	if len(errs) > 0 {
+		return errs[0]
 	}
 	return nil
 }
@@ -842,19 +862,14 @@ func jsonMatching(url string, v map[string]string) error {
 }
 
 func debugging(url string) error {
-	_, err := client.Get(url)
-	var errs []error
-	if err != nil {
-		errs = []error{err}
-	}
+	a := fibermigrate.Get(url)
+	a.Debug()
+	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
 		return errs[0]
 	}
-	_, err = client.Get(url)
-	errs = nil
-	if err != nil {
-		errs = []error{err}
-	}
+	b := fibermigrate.Get(url).Debug(os.Stderr)
+	_, _, errs = b.Bytes()
 	if len(errs) > 0 {
 		return errs[0]
 	}
@@ -871,10 +886,11 @@ func reuse(url string) error {
 `,
 			},
 			notes: []string{
-				"main.go:11: the v3 client sets Accept: application/json for a body it encodes as json, which replaces this header",
-				"main.go:23: the v3 client sets Content-Type: application/json for a body it encodes as json, which replaces this header",
-				"main.go:45: Debug() has no per-request equivalent in the v3 client and was removed, so the request/response dump is gone; call Debug() on the client (client.C().Debug() or client.New().Debug()) to log every request through its logger",
-				"main.go:50: Debug() has no per-request equivalent in the v3 client and was removed, so the request/response dump is gone; call Debug() on the client (client.C().Debug() or client.New().Debug()) to log every request through its logger",
+				"main.go:10: the v3 client sets Accept: application/json for a body it encodes as json, which replaces this header" + clientShimNote,
+				"main.go:21: the v3 client sets Content-Type: application/json for a body it encodes as json, which replaces this header" + clientShimNote,
+				"main.go:35: " + clientAcceptNote,
+				"main.go:44: Debug(): the v3 client cannot dump a single request and its response" + clientShimNote,
+				"main.go:50: Debug(): the v3 client cannot dump a single request and its response" + clientShimNote,
 			},
 		},
 		{
@@ -964,6 +980,7 @@ func requestArgs(url string) ([]byte, error) {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
 )
@@ -1000,7 +1017,7 @@ func replacesQuery(base string) ([]byte, error) {
 }
 
 func notALiteral(base, qs string) ([]byte, error) {
-	a := fiberMigrateGet(base)
+	a := fibermigrate.Get(base)
 	a.QueryString(qs)
 	_, body, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1010,15 +1027,18 @@ func notALiteral(base, qs string) ([]byte, error) {
 }
 
 func queryBeforeURL(url string) ([]byte, error) {
-	a := client.C().R()
-	a.SetMethod(fiber.MethodGet)
-	a.AddParam("dropped", "1")
-	a.SetURL(url)
-	resp, err := a.Send()
-	if err != nil {
+	a := fibermigrate.AcquireAgent()
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.URI().QueryArgs().Add("dropped", "1")
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
 		return nil, err
 	}
-	body := resp.Body()
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
 	return body, nil
 }
 
@@ -1038,9 +1058,9 @@ func requestArgs(url string) ([]byte, error) {
 `,
 			},
 			notes: []string{
-				"main.go:28: QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both",
+				"main.go:8: " + clientQueryNote,
 				"main.go:38: QueryString() with a value that is not a string literal" + clientShimNote,
-				"main.go:51: the query was added before SetRequestURI(), which discarded it in Fiber v2; the v3 client sends it",
+				"main.go:48: the query is added before SetRequestURI(), which discards it in Fiber v2" + clientShimNote,
 			},
 		},
 		{
@@ -1229,20 +1249,24 @@ func newFetcher(url string) fetcher {
 			want: map[string]string{
 				"main.go": `package main
 
+import (
+	"example.com/app/internal/fibermigrate"
+)
+
 type fetcher struct {
-	agent *fiberMigrateAgent
+	agent *fibermigrate.Agent
 }
 
-func passed(url string, use func(*fiberMigrateAgent)) {
-	use(fiberMigrateGet(url))
+func passed(url string, use func(*fibermigrate.Agent)) {
+	use(fibermigrate.Get(url))
 }
 
 func returnedTerminal(url string) (int, []byte, []error) {
-	return fiberMigrateGet(url).Bytes()
+	return fibermigrate.Get(url).Bytes()
 }
 
 func hostClient(url string) {
-	a := fiberMigrateAcquireAgent()
+	a := fibermigrate.AcquireAgent()
 	a.Request().SetRequestURI(url)
 	if err := a.Parse(); err != nil {
 		return
@@ -1252,7 +1276,7 @@ func hostClient(url string) {
 }
 
 func newFetcher(url string) fetcher {
-	return fetcher{agent: fiberMigrateGet(url)}
+	return fetcher{agent: fibermigrate.Get(url)}
 }
 `,
 			},
@@ -1406,6 +1430,9 @@ func jsonString(url, text string) error {
 }
 `,
 			},
+			notes: []string{
+				"main.go:35: " + clientAcceptNote,
+			},
 		},
 		{
 			name: "setters_config",
@@ -1504,14 +1531,16 @@ import (
 type body struct{ N int }
 
 func literals(url string) ([]byte, error) {
-	resp, err := client.Get(url, client.Config{
-		Header:       map[string]string{"X-Static": "1", "Content-Type": "application/json"},
-		UserAgent:    "svc/2.0",
-		Referer:      "https://example.com/",
-		Cookie:       map[string]string{"sid": "abc", "theme": "dark"},
-		MaxRedirects: 3,
-		Timeout:      2 * time.Second,
-	})
+	agent := client.C().R().SetMethod("GET").SetURL(url)
+	agent.SetHeader("X-Static", "1")
+	agent.SetHeader("Content-Type", "application/json")
+	agent.SetUserAgent("svc/2.0")
+	agent.SetReferer("https://example.com/")
+	agent.RawRequest.Header.SetCookie("sid", "abc")
+	agent.RawRequest.Header.SetCookie("theme", "dark")
+	agent.SetMaxRedirects(3)
+	agent.SetTimeout(2 * time.Second)
+	resp, err := agent.Send()
 	if err != nil {
 		return nil, err
 	}
@@ -1574,10 +1603,10 @@ func closeAndEncode(url string) string {
 }
 
 func closing(url string) ([]byte, error) {
-	resp, err := client.Get(url, client.Config{
-		Header: map[string]string{"Connection": "close"},
-		Cookie: map[string]string{"a": "1", "b": "2"},
-	})
+	req := client.C().R().SetMethod("GET").SetURL(url).SetHeader("Connection", "close")
+	req.RawRequest.Header.SetCookie("a", "1")
+	req.RawRequest.Header.SetCookie("b", "2")
+	resp, err := req.Send()
 	if err != nil {
 		return nil, err
 	}
@@ -1595,6 +1624,9 @@ func agentAndReferer(url, ua string) ([]byte, error) {
 	return b, nil
 }
 `,
+			},
+			notes: []string{
+				"main.go:35: " + clientAcceptNote,
 			},
 		},
 		{
@@ -1765,6 +1797,9 @@ func comments(url string) ([]byte, error) {
 }
 `,
 			},
+			notes: []string{
+				"main.go:25: " + clientErrsNote,
+			},
 		},
 		{
 			name: "unsupported_settings",
@@ -1834,11 +1869,12 @@ func nameOfFiberGet(url string) error {
 				"main.go": `package main
 
 import (
+	"example.com/app/internal/fibermigrate"
 	"github.com/valyala/fasthttp"
 )
 
 func host(url string) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Host("virtual.example.com").Bytes()
+	_, body, errs := fibermigrate.Get(url).Host("virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1846,7 +1882,7 @@ func host(url string) ([]byte, error) {
 }
 
 func hostHeader(url string) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Set("Host", "virtual.example.com").Bytes()
+	_, body, errs := fibermigrate.Get(url).Set("Host", "virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1856,7 +1892,7 @@ func hostHeader(url string) ([]byte, error) {
 func response(url string) error {
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	a.SetResponse(resp)
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1866,7 +1902,7 @@ func response(url string) error {
 }
 
 func dest(url string, dst []byte) ([]byte, error) {
-	_, body, errs := fiberMigrateGet(url).Dest(dst).Bytes()
+	_, body, errs := fibermigrate.Get(url).Dest(dst).Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1874,7 +1910,7 @@ func dest(url string, dst []byte) ([]byte, error) {
 }
 
 func jsonContentType(url string, v any) error {
-	_, _, errs := fiberMigratePost(url).JSON(v, "application/vnd.api+json").Bytes()
+	_, _, errs := fibermigrate.Post(url).JSON(v, "application/vnd.api+json").Bytes()
 	if len(errs) > 0 {
 		return errs[0]
 	}
@@ -1882,7 +1918,7 @@ func jsonContentType(url string, v any) error {
 }
 
 func nameOfFiberGet(url string) error {
-	a := fiberMigrateGet(url)
+	a := fibermigrate.Get(url)
 	a.Name = "svc"
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {

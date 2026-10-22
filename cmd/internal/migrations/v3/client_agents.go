@@ -3,6 +3,7 @@ package v3
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 )
 
 // isAgentPtr reports whether t is *fiber.Agent.
@@ -102,14 +103,51 @@ func (f *clientFile) agentFromHelper(l clientList, idx int) *clientUnit {
 
 // returnedAgents migrates the requests a return statement creates.
 func (f *clientFile) returnedAgents(l clientList, s *ast.ReturnStmt) {
-	for _, res := range s.Results {
+	for i, res := range s.Results {
 		ch, ok := f.decompose(res)
 		if !ok || ch.root.kind == clientVar || ch.terminal() != nil {
 			continue
 		}
-		f.migrate(&clientUnit{
+		u := &clientUnit{
 			f: f, list: l, kind: ch.root.kind, root: ch.root, url: ch.root.url, client: ch.root.client,
 			method: ch.root.method, creationCalls: ch.calls, retExpr: res, anchor: s,
-		})
+		}
+		if !f.returnsAgent(s, i) {
+			// The agent leaves as a value of another type (any, an interface) that code
+			// in another package can turn back into the agent of Fiber v2.
+			f.bail(u, clientErrReturned)
+			continue
+		}
+		f.migrate(u)
 	}
+}
+
+// returnsAgent reports whether the result at position i of a return statement is
+// declared as a *fiber.Agent by the function it returns from.
+func (f *clientFile) returnsAgent(s *ast.ReturnStmt, i int) bool {
+	var ft *ast.FuncType
+	for _, n := range slices.Backward(f.ancestors(s)) {
+		if decl, ok := n.(*ast.FuncDecl); ok {
+			ft = decl.Type
+		} else if lit, ok := n.(*ast.FuncLit); ok {
+			ft = lit.Type
+		}
+		if ft != nil {
+			break
+		}
+	}
+	if ft == nil || ft.Results == nil {
+		return false
+	}
+
+	pos := 0
+	for _, field := range ft.Results.List {
+		count := max(1, len(field.Names))
+		if i < pos+count {
+			_, isAgent := f.isAgentPtr(field.Type)
+			return isAgent
+		}
+		pos += count
+	}
+	return false
 }

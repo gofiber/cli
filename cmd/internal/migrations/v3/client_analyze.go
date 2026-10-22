@@ -11,8 +11,9 @@ import (
 
 // Reasons a request is left alone.
 const (
-	clientErrUse     clientUnsupported = "it is used in a way the migration does not handle"
-	clientErrClosure clientUnsupported = "it is used inside a function literal"
+	clientErrUse      clientUnsupported = "it is used in a way the migration does not handle"
+	clientErrClosure  clientUnsupported = "it is used inside a function literal"
+	clientErrReturned clientUnsupported = "its agent is returned as a value of another type"
 )
 
 // migrate rewrites the request of u, or leaves it on the copy of the v2 agent and
@@ -33,18 +34,14 @@ func (f *clientFile) migrate(u *clientUnit) {
 		f.bail(u, reason)
 		return
 	}
-	if reason := f.sharedWithCopy(u); reason != "" {
-		f.bailShared(u, reason)
+	if note := f.sharedWithCopy(u); note != "" {
+		f.bailShared(u, note)
 		return
 	}
 	if f.holdsBailed(u) && f.shimOK() {
 		// The code that is replaced holds a request that stays on the copy: its
 		// names cannot be changed inside the new code.
-		if f.dry {
-			f.bail(u, "it contains a request that stays on the copy")
-		} else {
-			f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimFile+", so this request does too")
-		}
+		f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimWhere+", so this request does too")
 		return
 	}
 	f.emit(u)
@@ -70,20 +67,37 @@ func (f *clientFile) bail(u *clientUnit, reason clientUnsupported) {
 	if f.shimOK() {
 		f.shimNoted = true
 		f.markCopied(u)
-		f.notef(line, "%s; this request still runs on the copy of the Fiber v2 agent in %s", reason, clientShimFile)
+		f.notef(line, "%s; this request still runs on the copy of the Fiber v2 agent in %s", reason, clientShimWhere)
 		return
 	}
 	f.notef(line, "left as Fiber v2 code: %s%s. Convert this request by hand to the client package (client.Get/client.Post with a client.Config, or client.C().R())",
-		reason, f.copyMissing(true, nil))
+		reason, f.copyMissing(true))
 	f.markBailed(u)
 }
 
 // bailShared keeps a request that could be migrated on the copy of the v2 agent
-// because it shares its agent or its client with requests that cannot.
+// because it shares its agent or its client with requests that cannot. A scan only
+// records what the request means for the rest of the package, as for any request that
+// stays on the copy. Where the module cannot have the copy, the request is left as
+// it is.
 func (f *clientFile) bailShared(u *clientUnit, note string) {
+	if f.dry || !f.shimOK() {
+		f.bail(u, "it is shared with code that cannot move to the client package")
+		return
+	}
 	f.shimNoted = true
 	f.markCopied(u)
+	if f.inExported(u.rootNode()) {
+		return // the note of the exported function says it
+	}
 	f.notef(f.line(u.rootNode()), "%s", note)
+}
+
+// inExported reports whether n is in a function that a note says uses the copy.
+func (f *clientFile) inExported(n ast.Node) bool {
+	return slices.ContainsFunc(f.exported, func(decl ast.Node) bool {
+		return decl.Pos() <= n.Pos() && n.End() <= decl.End()
+	})
 }
 
 // markCopied records the fiber members of a request that stays on the copy.
@@ -197,6 +211,7 @@ func (f *clientFile) analyze(u *clientUnit) clientUnsupported {
 		}
 	}
 	slices.SortStableFunc(u.items, func(a, b *clientItem) int { return cmp.Compare(a.stmt.Pos(), b.stmt.Pos()) })
+	clientOrderCookies(u)
 	return clientValidate(u)
 }
 
@@ -254,6 +269,9 @@ func (f *clientFile) classify(u *clientUnit, g clientRefGroup, name string, isAl
 		consumed, reason = f.classifyDefer(it, s, name)
 	case *ast.ReturnStmt:
 		consumed, reason = clientClassifyReturn(it, s, name)
+		if reason == "" && !f.returnsAgentVar(s, name) {
+			reason = clientErrReturned
+		}
 	default:
 		return f.useReason(g.stmt)
 	}
@@ -545,6 +563,17 @@ func (f *clientFile) classifyDefer(it *clientItem, s *ast.DeferStmt, name string
 	return 1, ""
 }
 
+// returnsAgentVar reports whether every result of a return statement that is the
+// variable name is declared as a *fiber.Agent.
+func (f *clientFile) returnsAgentVar(s *ast.ReturnStmt, name string) bool {
+	for i, r := range s.Results {
+		if isIdentNamed(r, name) && !f.returnsAgent(s, i) {
+			return false
+		}
+	}
+	return true
+}
+
 // clientClassifyReturn handles a return statement that hands the request on.
 func clientClassifyReturn(it *clientItem, s *ast.ReturnStmt, name string) (int, clientUnsupported) {
 	n := 0
@@ -572,6 +601,12 @@ func clientValidate(u *clientUnit) clientUnsupported {
 		}
 	}
 	if reason := clientValidateForms(u); reason != "" {
+		return reason
+	}
+	if reason := clientHeaderConflict(all); reason != "" {
+		return reason
+	}
+	if reason := u.queryConflict(all); reason != "" {
 		return reason
 	}
 
@@ -617,6 +652,69 @@ func clientValidate(u *clientUnit) clientUnsupported {
 				return "the error of Parse() is read after the request is sent, where it was nil in v2"
 			}
 		}
+	}
+	return ""
+}
+
+// clientHeaderConflict returns the reason a header that is set by hand is replaced by
+// the v3 client when it encodes the body: it sets Content-Type, and Accept for JSON.
+// The request stays on the copy of the v2 agent, which sends the header as it was set.
+func clientHeaderConflict(all []clientOp) clientUnsupported {
+	bodyAt := slices.IndexFunc(all, func(op clientOp) bool { return clientBodyMedia(op.body) != "" })
+	if bodyAt < 0 {
+		return ""
+	}
+	media := clientBodyMedia(all[bodyAt].body)
+	isMedia := func(op clientOp) bool {
+		return op.headerVal != "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(op.headerVal)), media)
+	}
+	for i, op := range all {
+		// v2 set the content type when the body was set, so a header set before
+		// the body lost against it there too.
+		replaced := (op.header == clientHdrContentType && i > bodyAt) ||
+			(op.header == clientHdrAccept && all[bodyAt].body == clientBodyJSON)
+		if replaced && !isMedia(op) {
+			name := "Content-Type"
+			if op.header == clientHdrAccept {
+				name = "Accept"
+			}
+			return clientUnsupported(fmt.Sprintf("the v3 client sets %s: %s for a body it encodes as %s, which replaces this header",
+				name, media, media[strings.Index(media, "/")+1:]))
+		}
+	}
+	return ""
+}
+
+// queryConflict returns the reason the query of the request would differ in the v3
+// client. QueryString replaced the query of the URL in v2 and SetRequestURI
+// replaced the URI with the query arguments added to it, where the v3 client
+// adds the parameters to the query of the URL and keeps them.
+func (u *clientUnit) queryConflict(all []clientOp) clientUnsupported {
+	hasQuery := slices.ContainsFunc(all, func(op clientOp) bool { return op.hasQuery })
+
+	touched := false
+	for _, op := range all {
+		switch {
+		case op.setsURL && touched:
+			return "the query is added before SetRequestURI(), which discards it in Fiber v2"
+		case op.touchesURI || op.hasQuery:
+			touched = true
+		}
+	}
+	if !hasQuery {
+		return ""
+	}
+
+	if u.kind == clientAcquire || u.kind == clientExternal {
+		for _, op := range all {
+			if op.setsURL && clientHasQueryMark(op.urlArg) {
+				return "QueryString() replaces the query of the URL that SetRequestURI() sets, where the v3 client adds the parameters to it"
+			}
+		}
+		return ""
+	}
+	if _, exact := u.f.withoutQuery(u.url); !exact {
+		return "QueryString() replaces the query of the URL, which the migration cannot take out of it"
 	}
 	return ""
 }

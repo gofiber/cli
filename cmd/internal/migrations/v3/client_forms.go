@@ -46,13 +46,13 @@ func (f *clientFile) formFieldsOp(op clientOp, arg ast.Expr, multipart bool) (cl
 		op.dropped = true
 		return op, ""
 	}
-	op.stmt = f.formFieldsStmt(arg)
+	op.stmt = f.formFieldsStmt(arg, multipart)
 	return op, ""
 }
 
 // formFieldsStmt renders the statement that copies the fields of the
 // fasthttp.Args arg to the request.
-func (f *clientFile) formFieldsStmt(arg ast.Expr) func(recv string) string {
+func (f *clientFile) formFieldsStmt(arg ast.Expr, multipart bool) func(recv string) string {
 	args := f.text(arg)
 	guard := !f.argsNonNil(arg)
 	return func(recv string) string {
@@ -65,11 +65,17 @@ func (f *clientFile) formFieldsStmt(arg ast.Expr) func(recv string) string {
 		}
 		text := args + ".VisitAll(func(" + key + ", " + val + " []byte) {\n" +
 			recv + ".AddFormData(string(" + key + "), string(" + val + "))\n})"
-		if guard {
-			// v2 sent no fields for a nil *Args, VisitAll would panic.
+		if !guard {
+			return text
+		}
+		// v2 sent no fields for a nil *Args, VisitAll would panic.
+		if multipart {
 			return "if " + args + " != nil {\n" + text + "\n}"
 		}
-		return text
+		// But Form(nil) set the content type of a form all the same, which AddFormData
+		// does with the first field.
+		return "if " + args + " != nil {\n" + text + "\n} else {\n" +
+			recv + `.SetHeader("Content-Type", "` + clientBodyMedia(clientBodyForm) + `")` + "\n}"
 	}
 }
 

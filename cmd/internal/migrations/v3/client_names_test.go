@@ -55,6 +55,9 @@ func fetch(url string) {
 }
 `,
 			},
+			notes: []string{
+				"main.go:13: " + clientErrsNote,
+			},
 		},
 		{
 			name: "name_client_local",
@@ -219,6 +222,9 @@ func fetch(url string) {
 	fmt.Println(string(body))
 }
 `,
+			},
+			notes: []string{
+				"main.go:14: " + clientErrsNote,
 			},
 		},
 		{
@@ -432,6 +438,9 @@ func localErrors(url string) {
 	}
 }
 `,
+			},
+			notes: []string{
+				"main.go:24: " + clientErrsNote,
 			},
 		},
 		{

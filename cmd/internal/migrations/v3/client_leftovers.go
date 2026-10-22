@@ -28,11 +28,13 @@ func (f *clientFile) taint(domain clientShimDomain) {
 	}
 }
 
-// shimmed reports whether the values of a kind are the copy's in the package of
-// the file. The migration then keeps their types and everything that makes or
-// uses one on the copy.
-func (f *clientFile) shimmed(domain clientShimDomain) bool {
-	return !f.dry && f.pkgs.tainted(f.dir(), f.pkgName(), domain) && f.shimOK()
+// kept reports whether the values of a kind stay as they are in the package of the
+// file, on the copy of the v2 agent: the code of the package hands them around in
+// ways the migration does not follow, or shares them with other packages of the
+// module. The migration then keeps their types and everything that makes or uses
+// one that way.
+func (f *clientFile) kept(domain clientShimDomain) bool {
+	return f.pkgs.tainted(f.dir(), f.pkgName(), domain)
 }
 
 // connected reports whether the agent of the request is handed to or taken from
@@ -74,12 +76,23 @@ func (f *clientFile) agentFlows(u *clientUnit) bool {
 // that does.
 func (f *clientFile) sharedWithCopy(u *clientUnit) string {
 	switch {
-	case u.connected() && f.shimmed(clientDomainAgent):
-		return "its agent is shared with code that stays on the copy of the Fiber v2 agent in " + clientShimFile + ", so this request does too"
-	case u.viaClient() && f.shimmed(clientDomainClient):
-		return "its client is shared with requests that stay on the copy of the Fiber v2 agent in " + clientShimFile + ", so this request does too"
+	case u.connected() && f.kept(clientDomainAgent):
+		return f.sharedNote(clientDomainAgent, "its agent is shared with code that stays")
+	case u.viaClient() && f.kept(clientDomainClient):
+		return f.sharedNote(clientDomainClient, "its client is shared with requests that stay")
 	}
 	return ""
+}
+
+// sharedNote says why a request shares the values of a kind with code that stays on
+// the copy: other code of the package does, or a package of the module that the
+// package imports exports them.
+func (f *clientFile) sharedNote(domain clientShimDomain, local string) string {
+	word := clientKindWord(domain)
+	if path := f.pkgs.sharedVia(f.dir(), f.pkgName(), domain); path != "" {
+		return "its " + word + " may meet the " + word + "s of " + path + ", which stay on the copy of the Fiber v2 agent in " + clientShimWhere + ", so this request does too"
+	}
+	return local + " on the copy of the Fiber v2 agent in " + clientShimWhere + ", so this request does too"
 }
 
 // leftovers deals with the members of the v2 client that are still used once the
@@ -87,7 +100,7 @@ func (f *clientFile) sharedWithCopy(u *clientUnit) string {
 // renames them to the names of the copy, or reports them where the package
 // cannot have the copy.
 func (f *clientFile) leftovers() {
-	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
+	f.g.walk(func(n ast.Node, _ []ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
 		if !ok || !f.isFiberName(sel.X) || !slices.Contains(clientAPIMembers, sel.Sel.Name) || f.handled[sel] || f.reported[sel] {
 			return true
@@ -97,12 +110,12 @@ func (f *clientFile) leftovers() {
 		switch {
 		case f.dry:
 			f.taint(domain)
-		case domain != 0 && f.shimOK() && !clientIsEmbedded(stack):
+		case domain != 0 && f.shimOK():
 			f.renameToCopy(sel)
 		default:
 			f.reported[sel] = true
 			f.notef(f.line(sel), "`%s.%s` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)%s",
-				f.g.text(sel.X), sel.Sel.Name, f.copyMissing(domain != 0, stack))
+				f.g.text(sel.X), sel.Sel.Name, f.copyMissing(domain != 0))
 		}
 		return true
 	})
@@ -170,48 +183,24 @@ func (f *clientFile) returnedByAgentFunc(call *ast.CallExpr, ancestors []ast.Nod
 	return false
 }
 
-// renameToCopy points a member of the fiber package at the copy of the v2 agent.
+// renameToCopy points a member of the fiber package at the copy of the v2 agent,
+// which declares it under the same name.
 func (f *clientFile) renameToCopy(sel *ast.SelectorExpr) {
-	f.edits.replace(f.edits.begin(), f.g.offset(sel.Pos()), f.g.offset(sel.End()), clientShimPrefix+sel.Sel.Name)
+	pkg := f.use(f.shim.path, moduleShimPkg)
+	f.edits.replace(f.edits.begin(), f.g.offset(sel.X.Pos()), f.g.offset(sel.X.End()), pkg)
 	f.handled[sel] = true
 	if f.shimNoted {
 		return
 	}
 	f.shimNoted = true
 	f.notef(f.line(sel), "`%s.%s` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in %s",
-		f.g.text(sel.X), sel.Sel.Name, clientShimFile)
+		f.g.text(sel.X), sel.Sel.Name, clientShimWhere)
 }
 
 // copyMissing explains, for a member the copy stands in for, why it was not used.
-func (f *clientFile) copyMissing(standsIn bool, stack []ast.Node) string {
-	switch {
-	case !standsIn:
+func (f *clientFile) copyMissing(standsIn bool) string {
+	if !standsIn || f.shim.why == "" {
 		return ""
-	case clientIsEmbedded(stack):
-		return " (an embedded field is named after its type: give it a name of its own and the type " + clientShimPrefix + "...)"
-	case f.shim.why != "":
-		return " (the copy of the Fiber v2 agent could not be added: " + f.shim.why + ")"
 	}
-	return ""
-}
-
-// clientIsEmbedded reports whether the selector whose ancestors are stack is the
-// type of an embedded field of a struct: the field is named after its type, so
-// the name would change with it.
-func clientIsEmbedded(stack []ast.Node) bool {
-	i := len(stack) - 1
-	if i >= 0 {
-		if _, ok := stack[i].(*ast.StarExpr); ok {
-			i--
-		}
-	}
-	if i < 2 {
-		return false
-	}
-	field, ok := stack[i].(*ast.Field)
-	if !ok || len(field.Names) != 0 {
-		return false
-	}
-	_, inStruct := stack[i-2].(*ast.StructType)
-	return inStruct
+	return " (the copy of the Fiber v2 agent could not be added: " + f.shim.why + ")"
 }

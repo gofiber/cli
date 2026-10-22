@@ -23,17 +23,25 @@ import (
 // request is ever dropped silently; where the package cannot have the copy the
 // request is left as it is and reported.
 func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	pkgs := clientNewPackages()
+	pkgs := clientNewPackages(cwd)
 
-	// The first pass changes nothing. It finds out which packages hand agents and
-	// clients from one function to another in ways the migration does not follow:
-	// the types of those cannot be the ones of the client package for some of the
-	// code and the copy's for the rest.
-	if _, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		clientMigrateContent(content, fi, pkgs, true)
-		return content
-	}); err != nil {
-		return fmt.Errorf("failed to scan client usage: %w", err)
+	// The first passes change nothing. They find out which packages hand agents and
+	// clients from one function to another in ways the migration does not follow, or
+	// share them with other packages of the module: the types of those cannot be the
+	// ones of the client package for some of the code and the copy's for the rest.
+	// A request that has to stay on the copy can make another one stay, so the scan
+	// is repeated until it learns nothing more.
+	for range clientMaxScans {
+		learned := pkgs.learned()
+		if _, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+			clientMigrateContent(content, fi, pkgs, true)
+			return content
+		}); err != nil {
+			return fmt.Errorf("failed to scan client usage: %w", err)
+		}
+		if pkgs.learned() == learned {
+			break
+		}
 	}
 
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -49,6 +57,11 @@ func MigrateClientUsage(cmd *cobra.Command, cwd string, _, _ *semver.Version) er
 	cmd.Println("Migrating client usage")
 	return nil
 }
+
+// clientMaxScans bounds the scans. A scan taints the agents or the clients of a
+// package, which makes more requests stay on the copy, and with them the other kind:
+// two scans learn all there is, and a third one finds out that it is all.
+const clientMaxScans = 8
 
 // clientErrorsPath and clientLogPaths match the packages whose functions only
 // format the errors they are given.
@@ -83,7 +96,9 @@ type clientFile struct {
 	errors    []string
 	fmt       []string
 	log       []string
-	edits     clientEdits
+	// exported are the declarations that a note says use the copy.
+	exported []ast.Node
+	edits    clientEdits
 	// dry says the file is only scanned: nothing is reported or written.
 	dry bool
 	// shimNoted says a request of the file was reported as running on the copy.
@@ -145,15 +160,15 @@ func (f *clientFile) run() {
 		// The files of the package that do not import fiber are read with it.
 		f.pkgs.get(f.dir(), f.pkgName())
 	}
-	f.copyAgents = f.shimmed(clientDomainAgent)
-	f.copyClients = f.shimmed(clientDomainClient)
+	f.copyAgents = f.kept(clientDomainAgent)
+	f.copyClients = f.kept(clientDomainClient)
+	f.noteExports()
 	f.renameAliases()
 	f.rewriteClients()
 	for _, decl := range f.g.file.Decls {
 		f.walkDecl(decl, clientNewFunc(decl))
 	}
 	f.leftovers()
-	f.noteExports()
 	if f.dry {
 		f.scanReferences()
 	}
