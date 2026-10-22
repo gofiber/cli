@@ -5,6 +5,8 @@ import (
 	"go/version"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"golang.org/x/mod/modfile"
 
@@ -39,6 +41,9 @@ func (w *WorkFile) RaiseGo(minimum string) bool {
 // is lower than the one of a module in it, and the migrations raise the go line
 // of the modules. A workspace that does not parse is skipped with a note. It
 // returns whether any file was written.
+//
+// When root is a module of a workspace whose go.work is in a directory above it,
+// the file is not the CLI's to change, but a note says that it is behind.
 func SyncWork(root string) (bool, error) {
 	paths, err := findFiles(root, WorkFileName)
 	if err != nil {
@@ -53,7 +58,64 @@ func SyncWork(root string) (bool, error) {
 		}
 		changed = changed || written
 	}
+
+	if !slices.ContainsFunc(paths, func(p string) bool { return filepath.Dir(p) == filepath.Clean(root) }) {
+		noteWorkAbove(root)
+	}
 	return changed, nil
+}
+
+// noteWorkAbove reports the go.work file that the go command would use for root,
+// the nearest one in a directory above it, when it uses a module below root and
+// its go line is behind the one of its modules.
+func noteWorkAbove(root string) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return
+	}
+
+	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
+		path := filepath.Join(dir, WorkFileName)
+		if b, err := os.ReadFile(path); err == nil { // #nosec G304 -- the workspace file above the migrated directory
+			noteWorkBehind(root, abs, path, b)
+			return
+		}
+		if filepath.Dir(dir) == dir {
+			return
+		}
+	}
+}
+
+// noteWorkBehind adds the note for the workspace file path, whose content is b.
+func noteWorkBehind(root, abs, path string, b []byte) {
+	work, err := modfile.ParseWork(path, b, nil)
+	if err != nil || work.Go == nil {
+		return
+	}
+
+	usesRoot := slices.ContainsFunc(work.Use, func(use *modfile.Use) bool {
+		dir := use.Path
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(filepath.Dir(path), dir)
+		}
+		rel, err := filepath.Rel(abs, dir)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	})
+	need := workGoVersion(path, work)
+	if !usesRoot || need == "" || version.Compare("go"+work.Go.Version, "go"+need) >= 0 {
+		return
+	}
+
+	rel, err := filepath.Rel(abs, path)
+	if err != nil {
+		rel = path
+	}
+	internal.AddNote(root, internal.Note{
+		File: filepath.ToSlash(rel),
+		Line: Line(work.Go.Syntax),
+		Message: fmt.Sprintf("the go line of this workspace (go %s) is behind the modules it uses (go %s), and the go command refuses to build such a workspace; "+
+			"run `go work use` or raise the line by hand. The CLI only changes the go.work files below the directory it runs in.", work.Go.Version, need),
+	})
 }
 
 func syncWorkFile(root, path string) (bool, error) {

@@ -435,3 +435,56 @@ func Test_SyncWork(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, again, "idempotent")
 }
+
+func Test_SyncWork_WorkspaceAboveTheMigratedDirectory(t *testing.T) {
+	t.Parallel()
+
+	const behind = "go 1.21\n\nuse (\n\t./svc/a\n\t./svc/b\n)\n"
+
+	tests := []struct {
+		name string
+		work string
+		// own is a go.work file in the directory that is migrated.
+		own  string
+		note bool
+	}{
+		{name: "behind the module", work: behind, note: true},
+		{name: "up to date", work: "go 1.26.0\n\nuse ./svc/a\n"},
+		{name: "newer than the module", work: "go 1.30.1\n\nuse ./svc/a\n"},
+		{name: "does not use the module", work: "go 1.21\n\nuse ./svc/b\n"},
+		{name: "has no go line", work: "use ./svc/a\n"},
+		{name: "does not parse", work: "go 1.21 1.22\n"},
+		{name: "the migrated directory has its own", work: behind, own: "go 1.26.0\n\nuse ./\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			write(t, dir, "svc/a/go.mod", "module example.com/mono/svc/a\n\ngo 1.26.0\n")
+			write(t, dir, "svc/b/go.mod", "module example.com/mono/svc/b\n\ngo 1.21\n")
+			work := write(t, dir, "go.work", tt.work)
+			if tt.own != "" {
+				write(t, dir, "svc/a/go.work", tt.own)
+			}
+			root := filepath.Join(dir, "svc", "a")
+
+			changed, err := gomod.SyncWork(root)
+			require.NoError(t, err)
+
+			assert.False(t, changed)
+			assert.Equal(t, tt.work, read(t, work), "a go.work above the directory is not the CLI's to change")
+			notes := internal.DrainNotes(root)
+			if !tt.note {
+				assert.Empty(t, notes)
+				return
+			}
+			require.Len(t, notes, 1)
+			assert.Equal(t, "../../go.work", notes[0].File)
+			assert.Equal(t, 1, notes[0].Line)
+			assert.Contains(t, notes[0].Message, "(go 1.21) is behind the modules it uses (go 1.26.0)")
+			assert.Contains(t, notes[0].Message, "`go work use`")
+		})
+	}
+}
