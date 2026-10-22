@@ -336,7 +336,10 @@ func (w *Wrapped) Reset() error                                        { return 
 func (w *Wrapped) Close() error                                        { return nil }
 `
 
-func Test_MigrateStorageInterface_EmbeddingMayBringTheMethods(t *testing.T) {
+// A type that embeds a storage and has the methods of Fiber v2's Storage gets the
+// context methods all the same: the middleware of v3 call them, and the ones the
+// embedded type brings would skip the type's own Get, Set, Delete and Reset.
+func Test_MigrateStorageInterface_EmbeddingATypeThatBringsTheMethods(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -386,15 +389,211 @@ func Test_MigrateStorageInterface_EmbeddingMayBringTheMethods(t *testing.T) {
 			var buf bytes.Buffer
 			require.NoError(t, v3.MigrateStorageInterface(newCmd(&buf), dir, nil, nil))
 
-			assert.Empty(t, buf.String())
-			assert.Equal(t, src, importsRead(t, dir, "wrapped.go"))
-			notes := importsNotes(dir)
-			require.Len(t, notes, 1)
-			assert.Contains(t, notes[0], "wrapped.go:")
-			assert.Contains(t, notes[0], "Wrapped has the methods of Fiber v2's Storage but embeds another type")
-			assert.Contains(t, notes[0], "GetWithContext, SetWithContext, DeleteWithContext, ResetWithContext")
+			assert.Equal(t, "Adding the context methods to fiber.Storage implementations\n", buf.String())
+			assert.Empty(t, importsNotes(dir))
+			out := importsRead(t, dir, "wrapped.go")
+			for _, m := range []string{"GetWithContext", "SetWithContext", "DeleteWithContext", "ResetWithContext"} {
+				assert.Contains(t, out, "func (w *Wrapped) "+m+"(", m)
+			}
 		})
 	}
+}
+
+// storageWrapper is a wrapper that counts: it embeds the storage of Fiber and
+// overrides some of the methods.
+const storageWrapper = `package store
+
+import (
+	"sync/atomic"
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+)
+
+// Counting wraps a storage and counts the calls.
+type Counting struct {
+	fiber.Storage
+	Gets, Sets, Deletes atomic.Int64
+}
+
+func (c *Counting) Get(key string) ([]byte, error) {
+	c.Gets.Add(1)
+	return c.Storage.Get(key)
+}
+
+func (c *Counting) Set(key string, val []byte, exp time.Duration) error {
+	c.Sets.Add(1)
+	return c.Storage.Set(key, val, exp)
+}
+
+func (c *Counting) Delete(key string) error {
+	c.Deletes.Add(1)
+	return c.Storage.Delete(key)
+}
+`
+
+// A wrapper that embeds fiber.Storage and overrides Get, Set and Delete is
+// bypassed by the middleware of v3 (which call GetWithContext of the embedded
+// storage) unless it has the twins of the methods it overrides, and only those.
+func Test_MigrateStorageInterface_WrapperThatOverridesSomeMethods(t *testing.T) {
+	t.Parallel()
+
+	dir := importsTree(t, map[string]string{"store/counting.go": storageWrapper})
+
+	var buf bytes.Buffer
+	require.NoError(t, v3.MigrateStorageInterface(newCmd(&buf), dir, nil, nil))
+	assert.Equal(t, "Adding the context methods to fiber.Storage implementations\n", buf.String())
+
+	got := importsRead(t, dir, "store/counting.go")
+	contribRequireParses(t, got)
+	assert.Contains(t, got, "func (c *Counting) GetWithContext(_ context.Context, key string) ([]byte, error) {\n\treturn c.Get(key)\n}")
+	assert.Contains(t, got, "func (c *Counting) SetWithContext(_ context.Context, key string, val []byte, exp time.Duration) error {\n\treturn c.Set(key, val, exp)\n}")
+	assert.Contains(t, got, "func (c *Counting) DeleteWithContext(_ context.Context, key string) error {\n\treturn c.Delete(key)\n}")
+	assert.NotContains(t, got, "ResetWithContext", "Reset is the embedded one, which is what v3 should call")
+	assert.Contains(t, got, "\t\"context\"\n")
+	assert.Contains(t, got, "without these the calls skip this type")
+	assert.Empty(t, importsNotes(dir))
+
+	var again bytes.Buffer
+	require.NoError(t, v3.MigrateStorageInterface(newCmd(&again), dir, nil, nil))
+	assert.Empty(t, again.String(), "idempotent")
+	assert.Equal(t, got, importsRead(t, dir, "store/counting.go"))
+}
+
+// The methods of a wrapper can be in several files, and the twin one of them
+// declares already stays.
+func Test_MigrateStorageInterface_WrapperMethodsInSeveralFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := importsTree(t, map[string]string{
+		"a.go": `package store
+
+import "github.com/gofiber/fiber/v3"
+
+type Tenant struct {
+	fiber.Storage
+	Prefix string
+}
+`,
+		"b.go": `package store
+
+func (t *Tenant) Get(key string) ([]byte, error) { return t.Storage.Get(t.Prefix + key) }
+`,
+		"c.go": `package store
+
+import (
+	"context"
+	"time"
+)
+
+func (t *Tenant) Set(key string, val []byte, exp time.Duration) error {
+	return t.Storage.Set(t.Prefix+key, val, exp)
+}
+
+func (t *Tenant) SetWithContext(ctx context.Context, key string, val []byte, exp time.Duration) error {
+	return t.Storage.SetWithContext(ctx, t.Prefix+key, val, exp)
+}
+`,
+	})
+
+	require.NoError(t, v3.MigrateStorageInterface(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	assert.Contains(t, importsRead(t, dir, "b.go"), "func (t *Tenant) GetWithContext(_ context.Context, key string) ([]byte, error) {\n\treturn t.Get(key)\n}")
+	assert.Equal(t, 1, strings.Count(importsRead(t, dir, "c.go"), "func (t *Tenant) SetWithContext("), "the twin that exists is kept")
+	assert.NotContains(t, importsRead(t, dir, "a.go"), "WithContext")
+}
+
+// A type that embeds something the scan knows nothing about is a wrapper when it
+// declares two of the methods; one method does not make it a storage.
+func Test_MigrateStorageInterface_WrapperOfAnUnknownType(t *testing.T) {
+	t.Parallel()
+
+	dir := importsTree(t, map[string]string{
+		"two.go": `package a
+
+import (
+	"time"
+
+	"example.com/kv"
+)
+
+type Two struct {
+	*kv.Store
+}
+
+func (t *Two) Get(key string) ([]byte, error)                      { return t.Store.Get(key) }
+func (t *Two) Set(key string, val []byte, exp time.Duration) error { return t.Store.Set(key, val, exp) }
+`,
+		"one.go": `package a
+
+import "example.com/kv"
+
+type One struct {
+	*kv.Store
+}
+
+func (o *One) Get(key string) ([]byte, error) { return o.Store.Get(key) }
+`,
+	})
+
+	require.NoError(t, v3.MigrateStorageInterface(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	two := importsRead(t, dir, "two.go")
+	assert.Contains(t, two, "func (t *Two) GetWithContext(")
+	assert.Contains(t, two, "func (t *Two) SetWithContext(")
+	assert.NotContains(t, two, "DeleteWithContext")
+	assert.NotContains(t, importsRead(t, dir, "one.go"), "WithContext")
+}
+
+// The type a wrapper embeds can be a storage of another package of the module.
+func Test_MigrateStorageInterface_WrapperOfAStorageOfAnotherPackage(t *testing.T) {
+	t.Parallel()
+
+	dir := importsTree(t, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.22\n",
+		"store/store.go": `package store
+
+import "time"
+
+type Map struct{}
+
+func (Map) Get(key string) ([]byte, error)                      { return nil, nil }
+func (Map) Set(key string, val []byte, exp time.Duration) error { return nil }
+func (Map) Delete(key string) error                             { return nil }
+func (Map) Reset() error                                        { return nil }
+func (Map) Close() error                                        { return nil }
+`,
+		"metrics/metrics.go": `package metrics
+
+import "example.com/app/store"
+
+type Timed struct {
+	*store.Map
+	Calls int
+}
+
+func (t *Timed) Get(key string) ([]byte, error) {
+	t.Calls++
+	return t.Map.Get(key)
+}
+`,
+		"other/other.go": `package other
+
+import "example.com/app/store"
+
+type Plain struct {
+	*store.Map
+}
+
+func (p *Plain) Name() string { return "plain" }
+`,
+	})
+
+	require.NoError(t, v3.MigrateStorageInterface(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	assert.Contains(t, importsRead(t, dir, "store/store.go"), "func (s Map) GetWithContext(")
+	assert.Contains(t, importsRead(t, dir, "metrics/metrics.go"), "func (t *Timed) GetWithContext(_ context.Context, key string) ([]byte, error) {\n\treturn t.Get(key)\n}")
+	assert.NotContains(t, importsRead(t, dir, "other/other.go"), "WithContext", "it overrides nothing")
 }
 
 func Test_MigrateStorageInterface_EmbeddingAnythingElseKeepsTheMethodsComing(t *testing.T) {
