@@ -23,6 +23,10 @@ type MigrationFn func(cmd *cobra.Command, cwd string, curr, target *semver.Versi
 
 // Migration is a single migration
 type Migration struct {
+	// Review, when set, runs after every migration and the go.mod work, if the
+	// migration applied. It changes nothing: it records notes about what the
+	// migrations could not finish or could not make behave the same.
+	Review    func(cwd string)
 	From      string
 	To        string
 	Functions []MigrationFn
@@ -41,8 +45,9 @@ var Migrations = []Migration{
 	{
 		// v2 to v3. A project that is already on v3 must not get the v2 rewrites
 		// again, and a v2 target must not get v3 code.
-		From: ">=2.0.0-0 <3.0.0-0",
-		To:   ">=3.0.0-0 <4.0.0-0",
+		From:   ">=2.0.0-0 <3.0.0-0",
+		To:     ">=3.0.0-0 <4.0.0-0",
+		Review: v3migrations.Review,
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
 			v3migrations.MigrateViewBind,
@@ -172,6 +177,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	internal.DrainNotes(cwd)
 	var errs []error
 	var notes []internal.Note
+	var reviews []func(cwd string)
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
 		var err error
@@ -191,6 +197,10 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 				cmd.Printf("Skipping migration from %s to %s\n", m.From, m.To)
 			}
 			continue
+		}
+
+		if m.Review != nil {
+			reviews = append(reviews, m.Review)
 		}
 
 		for _, fn := range m.Functions {
@@ -215,6 +225,9 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
 		}
+	}
+	for _, review := range reviews {
+		review(cwd)
 	}
 	notes = append(notes, internal.DrainNotes(cwd)...)
 
