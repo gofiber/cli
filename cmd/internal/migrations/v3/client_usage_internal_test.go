@@ -128,6 +128,129 @@ func Test_clientLenComparison(t *testing.T) {
 	}
 }
 
+func Test_clientJoinChain(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "client.C().R().SetMethod(\"GET\")", clientJoinChain([]string{"client.C()", "R()", "SetMethod(\"GET\")"}))
+	assert.Equal(t, "a."+strings.Repeat("x", 120), clientJoinChain([]string{"a", strings.Repeat("x", 120)}),
+		"a chain of two parts stays on a line however long it is")
+
+	long := clientJoinChain([]string{"client.C()", "R()", "SetMethod(\"GET\")", "SetURL(url)", "SetHeader(a, b)", "AddHeader(c, d)", "Send()"})
+	assert.Equal(t, "client.C().R().\nSetMethod(\"GET\").\nSetURL(url).\nSetHeader(a, b).\nAddHeader(c, d).\nSend()", long)
+
+	wide := clientJoinChain([]string{"client.New()", "R()", "SetURL(" + strings.Repeat("u", 90) + ")", "Send()"})
+	assert.Contains(t, wide, ".\nSend()")
+}
+
+func Test_clientSkipBlankLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		src  string
+		del  string
+		want string
+	}{
+		{name: "after the opening brace", src: "f() {\n\tx()\n\n\ty()\n}", del: "\tx()\n", want: "f() {\n\ty()\n}"},
+		{name: "between two blank lines", src: "a()\n\n\tx()\n\n\ty()", del: "\tx()\n", want: "a()\n\n\ty()"},
+		{name: "after a statement", src: "a()\n\tx()\n\n\ty()", del: "\tx()\n", want: "a()\n\n\ty()"},
+		{name: "before a closing brace", src: "f() {\n\tx()\n}", del: "\tx()\n", want: "f() {\n}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ls := strings.Index(tt.src, tt.del)
+			le := ls + len(tt.del)
+			end := clientSkipBlankLine(tt.src, ls, le)
+			assert.Equal(t, tt.want, tt.src[:ls]+tt.src[end:])
+		})
+	}
+}
+
+func Test_clientBlockEnds(t *testing.T) {
+	t.Parallel()
+
+	f := &clientFile{log: []string{"log"}}
+	tests := map[string]bool{
+		"return err":                      true,
+		"x(); return":                     true,
+		"continue":                        true,
+		"break":                           true,
+		"panic(err)":                      true,
+		"log.Fatal(err)":                  true,
+		"log.Panicf(\"x\")":               true,
+		"os.Exit(1)":                      true,
+		"log.Println(err)":                false,
+		"x()":                             false,
+		"":                                false,
+		"if a { return } else { return }": true,
+		"if a { return }":                 false,
+		"if a { return } else { x() }":    false,
+		"{ return }":                      true,
+		"if a { return } else if b { return } else { panic(1) }": true,
+	}
+	for body, want := range tests {
+		stmts := clientBodyStmts(t, body)
+		assert.Equal(t, want, f.blockEnds(&ast.BlockStmt{List: stmts}), body)
+	}
+}
+
+func Test_clientOverwritten(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]bool{
+		"use(1)":                       true,
+		"err = f(); use(err)":          true,
+		"x, err = f(); use(err)":       true,
+		"use(err)":                     false,
+		"if err != nil { return }":     false,
+		"err = g(err)":                 false,
+		"err := f(); use(err)":         true,
+		"err := f(err)":                false,
+		"use(1); err = f()":            true,
+		"if c { err = f() }; use(err)": false,
+	}
+	for body, want := range tests {
+		assert.Equal(t, want, clientOverwritten("err", clientBodyStmts(t, body)), body)
+	}
+}
+
+func Test_clientDirect(t *testing.T) {
+	t.Parallel()
+
+	assigns := []clientTermAssign{
+		{side: clientTermSide{text: "code", isNew: true}, expr: "resp.StatusCode()"},
+		{side: clientTermSide{text: "body", isNew: true}, expr: "resp.Body()"},
+	}
+	assert.Equal(t, []string{"code, body := resp.StatusCode(), resp.Body()"}, clientDirect(assigns))
+
+	assigns[0].side.isNew = false
+	assert.Equal(t, []string{"code = resp.StatusCode()", "body := resp.Body()"}, clientDirect(assigns))
+	assert.Empty(t, clientDirect(nil))
+}
+
+func Test_clientErrsSlice(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []string{"x", "var errs []error"}, clientErrsSlice([]string{"x"}, clientErrsOwn, "errs", "err", false))
+	assert.Equal(t, []string{"errs = nil"}, clientErrsSlice(nil, clientErrsExisting, "errs", "err", false))
+	assert.Equal(t, []string{"var errs []error", "if err != nil {", "errs = []error{err}", "}"},
+		clientErrsSlice(nil, clientErrsOwn, "errs", "err", true))
+	assert.Empty(t, clientErrsSlice(nil, clientErrsRewrite, "errs", "err", true))
+}
+
+func Test_clientBodyMedia(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "application/json", clientBodyMedia(clientBodyJSON))
+	assert.Equal(t, "application/xml", clientBodyMedia(clientBodyXML))
+	assert.Equal(t, "application/x-www-form-urlencoded", clientBodyMedia(clientBodyForm))
+	assert.Equal(t, "multipart/form-data", clientBodyMedia(clientBodyMultipart))
+	assert.Empty(t, clientBodyMedia(clientBodyRaw))
+	assert.Empty(t, clientBodyMedia(clientBodyNone))
+}
+
 func clientGofmtSource(t *testing.T, src string) string {
 	t.Helper()
 

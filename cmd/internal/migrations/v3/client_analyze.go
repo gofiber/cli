@@ -2,6 +2,7 @@ package v3
 
 import (
 	"cmp"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"slices"
@@ -14,8 +15,17 @@ const (
 	clientErrClosure clientUnsupported = "it is used inside a function literal"
 )
 
-// migrate rewrites the request of u, or leaves it alone and says why.
+// migrate rewrites the request of u, or leaves it alone and says why. A request
+// the migration fails on is left alone too: one request must not stop the
+// others, nor the migrations that run after this one.
 func (f *clientFile) migrate(u *clientUnit) {
+	edits := len(f.edits.list)
+	defer func() {
+		if r := recover(); r != nil {
+			f.edits.list = f.edits.list[:edits]
+			f.bail(u, clientUnsupported(fmt.Sprintf("the migration failed on this request (%v), please report this", r)))
+		}
+	}()
 	if reason := f.analyze(u); reason != "" {
 		f.bail(u, reason)
 		return

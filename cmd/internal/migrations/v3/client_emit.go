@@ -151,15 +151,15 @@ func (f *clientFile) deleteStmt(id int, s ast.Node) {
 	if len(kept) > 0 {
 		repl = strings.Join(kept, "\n") + "\n"
 	} else {
-		le = skipBlankLine(src, ls, le)
+		le = clientSkipBlankLine(src, ls, le)
 	}
 	f.edits.replace(id, ls, le, repl)
 }
 
-// skipBlankLine extends the end le of a deleted line, which started at ls, over
+// clientSkipBlankLine extends the end le of a deleted line, which started at ls, over
 // the blank line that follows when the lines around the deleted one would
 // leave the block with a blank line at its start or two in a row.
-func skipBlankLine(src string, ls, le int) int {
+func clientSkipBlankLine(src string, ls, le int) int {
 	next := le
 	for next < len(src) && (src[next] == ' ' || src[next] == '\t' || src[next] == '\r') {
 		next++
