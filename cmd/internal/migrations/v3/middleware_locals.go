@@ -24,10 +24,14 @@ import (
 //	c.Locals("user").(*jwt.Token)   ->  jwtware.FromContext(c)
 //
 // A read is only a middleware's when the project uses the middleware and the key
-// is the one the middleware stores under, by default or through its config
-// (constants are resolved), and when the application does not write that key
-// itself: a read of an application's own key such as "token" or "username" is
-// left alone. A read that cannot be migrated safely is left as it is and noted.
+// is the one the middleware stores under, by default or through its config, and
+// when the application does not write that key itself: a read of an application's
+// own key such as "token" or "username" is left alone. The key is resolved the way
+// the compiler does it: a constant, a variable that nothing assigns to, an alias or
+// a concatenation of those, in any file of the package or in another package of
+// the module (c.Locals(auth.ContextKey) reads what jwtware.Config{ContextKey:
+// ContextKey} stored in package auth). A read that cannot be migrated safely is
+// left as it is and noted.
 //
 // A context key field is dropped once nothing reads the key any more, which is
 // not the case as long as a read had to be left alone: the field stays then, and

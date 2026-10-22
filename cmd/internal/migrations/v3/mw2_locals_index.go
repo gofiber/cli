@@ -24,7 +24,7 @@ type mw2LocalsIndex struct {
 }
 
 func newMW2LocalsIndex(root string) *mw2LocalsIndex {
-	return &mw2LocalsIndex{modules: newMW2Modules(root), pkgs: newMW2Packages(), byRoot: map[string]*mw2LocalsModule{}, run: newCtxRun()}
+	return &mw2LocalsIndex{modules: newMW2Modules(root), pkgs: newMW2PackagesIn(root), byRoot: map[string]*mw2LocalsModule{}, run: newCtxRun()}
 }
 
 // module returns what is known about the module that holds file.
@@ -129,7 +129,7 @@ func (ix *mw2LocalsIndex) read(path string) *mw2LocalsFile {
 		rel:   filepath.ToSlash(rel),
 		names: names,
 		fiber: fiberNames(string(src)),
-		kr:    &mw2KeyResolver{g: g, pkg: ix.pkgs.of(dir, g.file.Name.Name), names: names, dir: dir},
+		kr:    &mw2KeyResolver{g: g, pkg: ix.pkgs.of(dir, g.file.Name.Name), pkgs: ix.pkgs, names: names, dir: dir},
 		fi:    internal.FileInfo{Root: ix.modules.root, Path: path, Rel: rel},
 		run:   ix.run,
 	}

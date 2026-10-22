@@ -126,6 +126,8 @@ type mw2Key struct {
 type mw2KeyResolver struct {
 	g   *goSource
 	pkg *mw2Package
+	// pkgs reads the other packages of the module, nil when there is no module to read.
+	pkgs *mw2Packages
 	// names maps the identifiers the file binds to the middleware packages to the roles of the package.
 	names map[string][]*mw2Role
 	dir   string
@@ -137,7 +139,7 @@ func (kr *mw2KeyResolver) key(e ast.Expr) (mw2Key, bool) {
 	case *ast.ParenExpr:
 		return kr.key(x.X)
 	case *ast.BasicLit, *ast.BinaryExpr:
-		if v, ok := mw2ConstString(e, kr.pkg.constValue, 0); ok {
+		if v, ok := kr.scope().str(e, 0); ok {
 			return mw2Key{val: v}, true
 		}
 	case *ast.Ident:
@@ -148,6 +150,9 @@ func (kr *mw2KeyResolver) key(e ast.Expr) (mw2Key, bool) {
 		}
 	case *ast.SelectorExpr:
 		if k, ok := kr.middlewareDefault(x); ok {
+			return k, true
+		}
+		if k, ok := kr.qualified(x); ok {
 			return k, true
 		}
 		// pkg.Key means the same in every package that imports pkg.
@@ -161,12 +166,12 @@ func (kr *mw2KeyResolver) text(e ast.Expr) string {
 	return strings.Join(strings.Fields(kr.g.text(e)), "")
 }
 
-// ident resolves a name: a constant string of the package, typed or not, or
-// otherwise the name itself.
+// ident resolves a name: a constant string of the package, typed or not, a
+// variable of it that nothing assigns to, or otherwise the name itself.
 func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
-	c, ok := kr.pkg.consts[id.Name]
-	if ok && c.value != nil {
-		if v, ok := mw2ConstString(c.value, kr.pkg.constValue, 1); ok {
+	scope := kr.scope()
+	if c, ok := kr.pkg.consts[id.Name]; ok && c.value != nil {
+		if v, known := (mw2ConstScope{pkgs: kr.pkgs, pkg: kr.pkg, imports: c.imports}).str(c.value, 1); known {
 			switch typ := mw2TypeText(c.typ); {
 			case c.typ == nil || typ == nameString:
 				return mw2Key{val: v}
@@ -174,6 +179,8 @@ func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
 				return mw2Key{typ: typ, val: v}
 			}
 		}
+	} else if v, known := scope.str(id, 0); known {
+		return mw2Key{val: v}
 	}
 	return mw2Key{val: id.Name, dir: kr.dir, expr: true}
 }
