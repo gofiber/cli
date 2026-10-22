@@ -74,9 +74,102 @@ func Test_MigrateGoVersion(t *testing.T) {
 	assert.Equal(t, "module example/nogo\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n", importsRead(t, dir, "nogo/go.mod"))
 	assert.Equal(t, "module example/crlf\r\n\r\ngo 1.26.0\r\n\r\nrequire github.com/gofiber/fiber/v3 v3.6.1\r\n", importsRead(t, dir, "crlf/go.mod"))
 
+	// Every directive that moved by several releases says what the new one switches on, the bad go.mod says it was skipped.
+	files := map[string]int{}
+	for _, n := range internal.DrainNotes(dir) {
+		files[n.File]++
+	}
+	assert.Equal(t, map[string]int{
+		"go.mod":              1,
+		"tools/go.mod":        1,
+		"toolchain/go.mod":    1,
+		"commented/go.mod":    1,
+		"nogo/go.mod":         1,
+		"crlf/go.mod":         1,
+		"testdata/bad/go.mod": 1,
+	}, files)
+}
+
+func Test_MigrateGoVersion_SaysWhatAJumpSwitchesOn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		from string
+		// contains and absent are parts of the note, absent ones must not be in it
+		contains []string
+		absent   []string
+		note     bool
+	}{
+		{
+			name:     "go 1.13 crosses everything",
+			from:     "1.13",
+			note:     true,
+			contains: []string{"moved from 1.13 to 1.26.0", "since go 1.22 each iteration", "since go 1.23 timer", "since go 1.24 go vet", "since go 1.25 GOMAXPROCS", "GODEBUG"},
+		},
+		{
+			name:     "go 1.21.5 with a patch version",
+			from:     "1.21.5",
+			note:     true,
+			contains: []string{"moved from 1.21.5 to 1.26.0", "since go 1.22 each iteration", "since go 1.24 go vet"},
+		},
+		{
+			name:     "go 1.23 only has the later ones left",
+			from:     "1.23",
+			note:     true,
+			contains: []string{"since go 1.24 go vet", "since go 1.25 GOMAXPROCS"},
+			absent:   []string{"each iteration", "timer"},
+		},
+		{name: "go 1.24 moves by two releases", from: "1.24"},
+		{name: "go 1.25.0 moves by one", from: "1.25.0"},
+		{name: "go 1.26.0 stays", from: "1.26.0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := importsWriteTree(t, map[string]string{
+				"go.mod": "module example\n\n// comment\ngo " + tc.from + "\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
+			})
+			var buf bytes.Buffer
+			require.NoError(t, migrations.MigrateGoVersion(newCmd(&buf), dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1")))
+
+			notes := internal.DrainNotes(dir)
+			if !tc.note {
+				assert.Empty(t, notes)
+				return
+			}
+			require.Len(t, notes, 1)
+			assert.Equal(t, "go.mod", notes[0].File)
+			assert.Equal(t, 4, notes[0].Line, "the note is on the go line")
+			for _, part := range tc.contains {
+				assert.Contains(t, notes[0].Message, part)
+			}
+			for _, part := range tc.absent {
+				assert.NotContains(t, notes[0].Message, part)
+			}
+
+			// The second run has nothing left to raise and says nothing.
+			require.NoError(t, migrations.MigrateGoVersion(newCmd(&buf), dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1")))
+			assert.Empty(t, internal.DrainNotes(dir))
+		})
+	}
+}
+
+func Test_MigrateGoVersion_NoGoLineIsGo116(t *testing.T) {
+	t.Parallel()
+
+	dir := importsWriteTree(t, map[string]string{
+		"go.mod": "module example\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n",
+	})
+	var buf bytes.Buffer
+	require.NoError(t, migrations.MigrateGoVersion(newCmd(&buf), dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1")))
+
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Equal(t, "testdata/bad/go.mod", notes[0].File)
+	assert.Contains(t, notes[0].Message, "moved from 1.16 to 1.26.0")
+	assert.Zero(t, notes[0].Line, "there was no go line to point at")
 }
 
 func Test_MigrateGoVersion_PrintsOnlyWhenItChangedSomething(t *testing.T) {

@@ -155,7 +155,7 @@ func Test_DoMigration_ReportsWhatItCouldNotMigrate(t *testing.T) {
 	require.NoError(t, os.WriteFile(broken, fmt.Appendf(nil, handler, "second", "(nil"), 0o600))
 	require.NoError(t, os.WriteFile(later, fmt.Appendf(nil, handler, "third", "nil"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
-		[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
 
 	var buf bytes.Buffer
 	cmd := &cobra.Command{}
@@ -183,7 +183,7 @@ func Test_DoMigration_NoNotesNoReport(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
-		[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
 
 	var buf bytes.Buffer
 	cmd := &cobra.Command{}
