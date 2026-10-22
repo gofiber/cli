@@ -125,6 +125,77 @@ func TestNotFound(t *testing.T) {
 			notes: []string{"svc/svc_test.go:15: Fiber v3 adds", "svc/svc_test.go:26: Fiber v3 answers an unmatched route"},
 		},
 		{
+			name: "the media types a table of cases expects",
+			file: "svc/svc_test.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"example.com/app/svc"
+)
+
+func TestContentTypes(t *testing.T) {
+	app := svc.New()
+	cases := []struct{ path, want string }{
+		{"/json", "application/json"},
+		{"/ping", "text/plain; charset=utf-8"},
+		{path: "/xml", want: "application/xml"},
+	}
+	byPath := map[string]string{"/html": "text/html"}
+	for _, tc := range cases {
+		req := httptest.NewRequest("POST", tc.path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header = http.Header{"Content-Type": {"application/json"}}
+		resp, _ := app.Test(req)
+		if got := resp.Header.Get("Content-Type"); got != tc.want {
+			t.Errorf("content type %q, want %q", got, tc.want)
+		}
+	}
+	_ = byPath
+}
+`,
+			notes: []string{"svc/svc_test.go:15: Fiber v3 adds", "svc/svc_test.go:17: Fiber v3 adds", "svc/svc_test.go:19: Fiber v3 adds"},
+		},
+		{
+			name: "a table of media types in a test that reads no Content-Type",
+			file: "svc/svc_test.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc_test
+
+import (
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"example.com/app/svc"
+)
+
+func TestRequests(t *testing.T) {
+	app := svc.New()
+	for _, ctype := range []string{"application/json", "text/html"} {
+		req := httptest.NewRequest("POST", "/x", strings.NewReader("{}"))
+		req.Header.Set("Content-Type", ctype)
+		_, _ = app.Test(req)
+	}
+}
+`,
+		},
+		{
 			name: "a test of the package that has another file with the app",
 			file: "svc/svc_test.go",
 			others: map[string]string{"svc/svc.go": `package svc
