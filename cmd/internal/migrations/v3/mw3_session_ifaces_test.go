@@ -278,3 +278,43 @@ var _ = context
 	assert.Contains(t, got, "func (w wrapper) Reset(ctx stdcontext.Context) error")
 	assert.Contains(t, got, "{ return w.inner.Reset(ctx) }")
 }
+
+// A type is given the context only in the methods an interface asks of it.
+func Test_SessionMigrations_OnlyTheMethodsAnInterfaceAsksFor(t *testing.T) {
+	t.Parallel()
+
+	res := mw3RunModule(t, map[string]string{
+		"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+// Getter asks for no more than Get, which the v3 store still has.
+type Getter interface {
+	Get(c fiber.Ctx) (*session.Session, error)
+}
+
+// Users is not a store, although it has a Get like the store's.
+type Users struct{ names map[string]string }
+
+func (u *Users) Get(c fiber.Ctx) (*session.Session, error) { return nil, nil }
+func (u *Users) Delete(id string) error                    { delete(u.names, id); return nil }
+func (u *Users) Reset() error                              { u.names = nil; return nil }
+
+func use(u *Users, g Getter) {
+	_ = u.Reset()
+	_ = u.Delete("a")
+	_, _ = g.Get(nil)
+}
+`,
+	}, mw3SessionChain...)
+
+	got := res.files["main.go"]
+	assert.Contains(t, got, "func (u *Users) Delete(id string) error ")
+	assert.Contains(t, got, "func (u *Users) Reset() error ")
+	assert.Contains(t, got, "_ = u.Reset()")
+	assert.Contains(t, got, `_ = u.Delete("a")`)
+	assert.NotContains(t, got, "context")
+}

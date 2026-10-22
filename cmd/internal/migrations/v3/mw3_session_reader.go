@@ -460,7 +460,7 @@ func (r *mw3KindReader) lookup(k mw3Kind, member string) mw3Member {
 				}
 				if f.declares(e.kind.name, member) {
 					m := mw3Member{user: true, owner: e.kind}
-					if slices.Contains(mw3StoreCalls, member) && r.storeBound(e.kind) {
+					if slices.Contains(mw3StoreCalls, member) && r.storeBound(e.kind, member) {
 						m.base = mw3KindStore // a method of a type that stands in for the store
 					}
 					found = append(found, m)

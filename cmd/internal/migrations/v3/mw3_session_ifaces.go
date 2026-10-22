@@ -35,17 +35,22 @@ type mw3TypeKey struct {
 }
 
 // mw3StoreTypes are the types of a module that have the methods of the v2 session
-// store: the interfaces that ask for them and the types that have them.
+// store: the interfaces that ask for them, and the types that have them, with the
+// methods that an interface asks of them.
 type mw3StoreTypes struct {
 	ifaces map[mw3TypeKey]struct{}
-	impls  map[mw3TypeKey]struct{}
+	impls  map[mw3TypeKey]map[string]struct{}
 }
 
-// has reports whether the type is one of them.
-func (t *mw3StoreTypes) has(k mw3TypeKey) bool {
-	_, iface := t.ifaces[k]
-	_, impl := t.impls[k]
-	return iface || impl
+// stands reports whether the method of the type is one that stands in for a
+// method of the store: the interface asks for it, or an interface asks the type
+// for it.
+func (t *mw3StoreTypes) stands(k mw3TypeKey, method string) bool {
+	if _, iface := t.ifaces[k]; iface {
+		return true
+	}
+	_, asked := t.impls[k][method]
+	return asked
 }
 
 // mw3ContextMethods are the methods of the v2 session store that take a context
@@ -67,7 +72,7 @@ func (p *mw3Pkgs) storeTypes(fi internal.FileInfo) *mw3StoreTypes {
 		p.stores = map[string]*mw3StoreTypes{}
 	}
 
-	types := &mw3StoreTypes{ifaces: map[mw3TypeKey]struct{}{}, impls: map[mw3TypeKey]struct{}{}}
+	types := &mw3StoreTypes{ifaces: map[mw3TypeKey]struct{}{}, impls: map[mw3TypeKey]map[string]struct{}{}}
 	p.stores[mod.root] = types
 
 	var pkgs []*mw3Pkg
@@ -102,9 +107,15 @@ func (p *mw3Pkgs) storeTypes(fi internal.FileInfo) *mw3StoreTypes {
 				continue
 			}
 			for _, methods := range ifaces {
-				if r.satisfies(mw3Kind{base: mw3KindNamed, name: name}, methods) {
-					types.impls[mw3TypeKey{pkg, name}] = struct{}{}
-					break
+				if !r.satisfies(mw3Kind{base: mw3KindNamed, name: name}, methods) {
+					continue
+				}
+				key := mw3TypeKey{pkg, name}
+				if types.impls[key] == nil {
+					types.impls[key] = map[string]struct{}{}
+				}
+				for method := range methods {
+					types.impls[key][method] = struct{}{}
 				}
 			}
 		}
@@ -227,9 +238,9 @@ func (r *mw3KindReader) satisfies(k mw3Kind, methods map[string]mw3IfaceMethod) 
 	return true
 }
 
-// storeBound reports whether the type is one that stands in for the v2 session
-// store, so that its methods are written like the ones of the store.
-func (r *mw3KindReader) storeBound(owner mw3Kind) bool {
+// storeBound reports whether the method of the type is one that stands in for a
+// method of the v2 session store, so that it is written like the one of the store.
+func (r *mw3KindReader) storeBound(owner mw3Kind, method string) bool {
 	if r.noBind {
 		return false
 	}
@@ -237,5 +248,5 @@ func (r *mw3KindReader) storeBound(owner mw3Kind) bool {
 	if f == nil {
 		return false
 	}
-	return f.owner.owner.storeTypes(f.owner.fi).has(mw3TypeKey{f.owner, owner.name})
+	return f.owner.owner.storeTypes(f.owner.fi).stands(mw3TypeKey{f.owner, owner.name}, method)
 }

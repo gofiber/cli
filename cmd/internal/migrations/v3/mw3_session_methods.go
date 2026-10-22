@@ -297,8 +297,7 @@ func (p *mw3SessionMethodsPass) standIn(d *ast.FuncDecl, stack []ast.Node) {
 	if recv.base != mw3KindNamed {
 		return
 	}
-	key := mw3TypeKey{p.f.pkgOf(), recv.name}
-	if _, impl := p.types.impls[key]; !impl || !mw3IsStoreMethod(d.Name.Name, d.Type, p.f.env) {
+	if !p.types.stands(mw3TypeKey{p.f.pkgOf(), recv.name}, d.Name.Name) || !mw3IsStoreMethod(d.Name.Name, d.Type, p.f.env) {
 		return
 	}
 	p.addContext(d.Type, d.Recv, stack)
