@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // The types and the field of the fiber package that carry the ranges of a request.
@@ -25,6 +26,15 @@ const ctxRangeNote = "c.Range takes an int64 size in Fiber v3, and the Start and
 // ctxRangeUnknownNote is the note for a read of a Start or End of a value whose
 // type is not known in a file that handles ranges.
 const ctxRangeUnknownNote = "the Start and End of a fiber.RangeSet are int64 in Fiber v3: the type of this value is not known here, so if it is a range, convert it where it is used as int"
+
+// ctxRangeAddressNote is the note for the address of a Start or an End, which is a
+// *int64 now where it was a *int, and no conversion can change.
+const ctxRangeAddressNote = "the address of the Start or the End of a fiber.RangeSet is a *int64 in Fiber v3, where it was a *int: pass the address of an int64 variable, or of an int that the value is copied to and back from"
+
+// ctxRangeTupleNote is the note for a Start or an End that is given one of the values
+// of a call that returns several, in a statement that no block can replace (the one of
+// an if, a for or a switch).
+const ctxRangeTupleNote = "a Start or an End is given one of the values of a call that returns several, in the header of a statement: v3 makes them int64, so assign the value, converted, in a statement of its own"
 
 // ctxRangeTracker follows the ranges a request context returns through a file.
 // In v2 the Start and End of a range are int, in v3 they are int64: the places
@@ -282,7 +292,7 @@ func (t *ctxRangeTracker) checkRead(sel *ast.SelectorExpr, stack []ast.Node) {
 		return
 	case *ast.UnaryExpr:
 		if p.Op == token.AND {
-			t.noter.oncef("range", sel.Pos(), "%s", ctxRangeNote)
+			t.noter.oncef("range-address", sel.Pos(), "%s", ctxRangeAddressNote)
 			return
 		}
 	case *ast.CallExpr:
@@ -364,11 +374,78 @@ func (t *ctxRangeTracker) checkAssign(as *ast.AssignStmt, stack []ast.Node) {
 			continue
 		}
 		if len(as.Lhs) != len(as.Rhs) {
-			t.noter.oncef("range", sel.Pos(), "%s", ctxRangeNote)
+			if !t.splitTupleAssign(as, stack) {
+				t.noter.oncef("range-tuple", sel.Pos(), "%s", ctxRangeTupleNote)
+			}
 			return
 		}
 		t.checkInt64(as.Rhs[i], stack)
 	}
+}
+
+// splitTupleAssign rewrites an assignment that gives the values of one call to
+// several targets, a Start or an End among them, which the call returns as int:
+//
+//	rs.Start, err = strconv.Atoi(s)
+//
+// The call gives its values to variables of a block, and the targets get them
+// from there, converted where a target is a Start or an End:
+//
+//	{
+//		v1, v2 := strconv.Atoi(s)
+//		rs.Start, err = int64(v1), v2
+//	}
+//
+// It reports whether it did; a statement that is no member of a list of
+// statements (the one of an if or a for) or a target with a call in it is left.
+func (t *ctxRangeTracker) splitTupleAssign(as *ast.AssignStmt, stack []ast.Node) bool {
+	if len(as.Rhs) != 1 || as.Tok != token.ASSIGN || !ctxInStatementList(as, stack) {
+		return false
+	}
+	fields := make([]bool, len(as.Lhs))
+	for i, lhs := range as.Lhs {
+		if !ctxIsPure(lhs) {
+			return false
+		}
+		sel, ok := ast.Unparen(lhs).(*ast.SelectorExpr)
+		fields[i] = ok && t.isRangeField(sel, stack)
+	}
+
+	g := t.env.g
+	t.plan.add(func(e *editSet) {
+		namer := newCtxNamer(append(slices.Clone(as.Lhs), as.Rhs[0]))
+		var define, targets, values []string
+		for i, lhs := range as.Lhs {
+			if isIdentNamed(ast.Unparen(lhs), "_") {
+				define = append(define, "_")
+				continue
+			}
+			name := namer.fresh("v")
+			define = append(define, name)
+			targets = append(targets, ctxRenderNode(e, g, lhs))
+			if fields[i] {
+				name = "int64(" + name + ")"
+			}
+			values = append(values, name)
+		}
+		e.replaceNode(g, as, "{\n"+strings.Join(define, ", ")+" := "+ctxRenderNode(e, g, as.Rhs[0])+"\n"+
+			strings.Join(targets, ", ")+" = "+strings.Join(values, ", ")+"\n}")
+	})
+	return true
+}
+
+// ctxInStatementList reports whether stmt is one of the statements of the block
+// or the clause that holds it, which can be replaced with a block.
+func ctxInStatementList(stmt ast.Stmt, stack []ast.Node) bool {
+	switch p := ctxParent(stack).(type) {
+	case *ast.BlockStmt:
+		return slices.Contains(p.List, stmt)
+	case *ast.CaseClause:
+		return slices.Contains(p.Body, stmt)
+	case *ast.CommClause:
+		return slices.Contains(p.Body, stmt)
+	}
+	return false
 }
 
 // checkLiteral converts the values in a literal of a range to int64.

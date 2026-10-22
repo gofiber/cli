@@ -14,6 +14,94 @@ func Test_MigrateCtxRenames_RangeShapes(t *testing.T) {
 
 	ctxRunCases(t, v3.MigrateCtxRenames, []ctxCase{
 		{
+			name: "the values of one call given to a Start and an End",
+			in: `package main
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func parse() (int, int) { return 1, 2 }
+
+func handler(c *fiber.Ctx, ch chan int) error {
+	r, err := c.Range(100)
+	if err != nil {
+		return err
+	}
+	rs := r.Ranges[0]
+	var perr error
+	rs.Start, perr = strconv.Atoi("7")
+	rs.Start, rs.End = parse()
+	rs.End, _ = strconv.Atoi("9")
+	counts := map[string]int{}
+	var ok bool
+	rs.Start, ok = counts["a"]
+	switch {
+	case perr != nil:
+		rs.End, ok = <-ch
+	}
+	_ = ok
+	if rs.Start, perr = strconv.Atoi("1"); perr != nil {
+		return perr
+	}
+	return nil
+}
+`,
+			want: `package main
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func parse() (int, int) { return 1, 2 }
+
+func handler(c *fiber.Ctx, ch chan int) error {
+	r, err := c.Range(100)
+	if err != nil {
+		return err
+	}
+	rs := r.Ranges[0]
+	var perr error
+	{
+		v, v2 := strconv.Atoi("7")
+		rs.Start, perr = int64(v), v2
+	}
+	{
+		v, v2 := parse()
+		rs.Start, rs.End = int64(v), int64(v2)
+	}
+	{
+		v, _ := strconv.Atoi("9")
+		rs.End = int64(v)
+	}
+	counts := map[string]int{}
+	var ok bool
+	{
+		v, v2 := counts["a"]
+		rs.Start, ok = int64(v), v2
+	}
+	switch {
+	case perr != nil:
+		{
+			v, v2 := <-ch
+			rs.End, ok = int64(v), v2
+		}
+	}
+	_ = ok
+	if rs.Start, perr = strconv.Atoi("1"); perr != nil {
+		return perr
+	}
+	return nil
+}
+`,
+			msg:   "Migrating context method renames",
+			notes: []string{"main.go:29: a Start or an End is given one of the values of a call that returns several, in the header of a statement"},
+		},
+		{
 			name: "a range in a generic type",
 			in: `package main
 

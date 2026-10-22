@@ -666,7 +666,7 @@ func handler(c *fiber.Ctx) error {
 	return nil
 }
 `,
-			notes: []string{"main.go:14: " + note},
+			notes: []string{"main.go:14: the address of the Start or the End of a fiber.RangeSet is a *int64 in Fiber v3, where it was a *int"},
 		},
 	})
 }
