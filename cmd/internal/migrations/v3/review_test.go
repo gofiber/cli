@@ -91,6 +91,28 @@ func main() {
 	}, notes)
 }
 
+func Test_Review_SendFileNames(t *testing.T) {
+	t.Parallel()
+
+	notes := reviewNotes(t, map[string]string{"main.go": `package main
+
+import "github.com/gofiber/fiber/v3"
+
+func handler(c fiber.Ctx) error {
+	if err := c.SendFile("./public/index.html"); err != nil {
+		return err
+	}
+	if err := c.SendFile(c.Params("file")); err != nil {
+		return err
+	}
+	return c.Download(c.Params("other"))
+}
+`})
+
+	require.Len(t, notes, 1, "reported once per project: %v", notes)
+	assert.Contains(t, notes[0], "main.go:9: SendFile takes the file name literally in Fiber v3")
+}
+
 func Test_Review_LeavesValidV3Alone(t *testing.T) {
 	t.Parallel()
 

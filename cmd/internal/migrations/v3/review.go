@@ -46,6 +46,8 @@ type reviewer struct {
 	// behaviorSeen holds the behavior rules that were reported already: a rule
 	// is reported once per project.
 	behaviorSeen map[int]bool
+	// fileNameSeen is set once the SendFile file name note was given.
+	fileNameSeen bool
 }
 
 // reviewFile is what the checks need to know about the file being scanned.
@@ -212,6 +214,9 @@ func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	name := sel.Sel.Name
 
 	switch {
+	case (name == "SendFile" || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && isFiberCtxExpr(sel.X, rf.core, stack):
+		rf.r.fileNameSeen = true
+		rf.notef(sel.Sel.Pos(), "%s takes the file name literally in Fiber v3 instead of percent-decoding it, so a name taken from a route parameter keeps its %%XX escapes unless fiber.Config{UnescapePath: true} is set; decode it and make sure it stays inside the directory you serve", name)
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && isFiberCtxExpr(sel.X, rf.core, stack):
 		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s", name, reviewHint("Ctx."+name))
 	case name == "Redirect" && len(call.Args) > 0 && isFiberCtxExpr(sel.X, rf.core, stack):
@@ -221,6 +226,12 @@ func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Hooks"], name) && rf.isHooksExpr(sel.X, stack, 0):
 		rf.notef(sel.Sel.Pos(), "Hooks().%s was removed in Fiber v3%s", name, reviewHint("Hooks."+name))
 	}
+}
+
+// isStringLiteral reports whether e is a string literal.
+func isStringLiteral(e ast.Expr) bool {
+	lit, ok := e.(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING
 }
 
 // reviewRemovedRouterMethod reports whether v3 removed the method from the app,
