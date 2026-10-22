@@ -9,11 +9,6 @@ import (
 	"strings"
 )
 
-var (
-	hexRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
-	b64Re = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=?$`)
-)
-
 func isIdentifierChar(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
 }
