@@ -24,11 +24,21 @@ import (
 const (
 	otelCoreModule   = "go.opentelemetry.io/otel"
 	otelModulePrefix = otelCoreModule + "/"
+	// otelContribModule is the module of the instrumentation libraries of the OpenTelemetry project
+	// (otelhttp, otelgrpc, the propagators), which are released with the core module and
+	// import packages that a newer core module no longer has.
+	otelContribModule = "go.opentelemetry.io/contrib"
 	// otelShort is the name of the v3 module of otelfiber in the table of the moved modules.
 	otelShort = "otel"
 	// otelMaxNamed is how many modules the note names.
 	otelMaxNamed = 4
 )
+
+// isOtelFamily reports whether the module is one that is released with the core module of OpenTelemetry.
+func isOtelFamily(path string) bool {
+	return path == otelCoreModule || strings.HasPrefix(path, otelModulePrefix) ||
+		path == otelContribModule || strings.HasPrefix(path, otelContribModule+"/")
+}
 
 // otelResult is the answer of the lookups for a requirement of the family.
 type otelResult struct {
@@ -84,7 +94,7 @@ func (r *contribRun) raiseOtelFamily(mod *contribGoMod, content string) string {
 	var family []*modfile.Require
 	for _, req := range f.Require {
 		path := req.Mod.Path
-		if (path == otelCoreModule || strings.HasPrefix(path, otelModulePrefix)) &&
+		if isOtelFamily(path) &&
 			!slices.ContainsFunc(f.Replace, func(rep *modfile.Replace) bool { return rep.Old.Path == path }) {
 			family = append(family, req)
 		}

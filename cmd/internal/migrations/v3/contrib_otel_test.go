@@ -39,6 +39,12 @@ func stubOtelLookups(t *testing.T, dir string) *atomic.Int32 {
 				return v3.ContribModule{}, errors.New("go: " + path + "@" + query + ": invalid version: unknown revision")
 			}
 			return v3.ContribModule{Version: "v1.17.0"}, nil
+		case strings.HasPrefix(path, "go.opentelemetry.io/contrib/"):
+			// the instrumentation has versions of its own, none of them is the release of the core module
+			if query != "latest" {
+				return v3.ContribModule{}, errors.New("go: " + path + "@" + query + ": invalid version: unknown revision")
+			}
+			return v3.ContribModule{Version: "v0.72.0"}, nil
 		case strings.Contains(path, "/unreachable"):
 			return v3.ContribModule{}, errors.New("go: module lookup disabled by GOPROXY=off")
 		case query == "latest":
@@ -64,6 +70,20 @@ require (
 )
 
 require go.opentelemetry.io/otel/trace v1.16.0 // indirect
+`
+
+// otelProjectWithInstrumentation also uses the instrumentation libraries of the OpenTelemetry project, which are
+// released with the core module and have versions of their own.
+const otelProjectWithInstrumentation = `module example.com/app
+
+go 1.22
+
+require (
+	github.com/gofiber/contrib/otelfiber v1.0.10
+	github.com/gofiber/fiber/v2 v2.52.15
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.42.0
+	go.opentelemetry.io/otel v1.16.0
+)
 `
 
 const otelProjectSource = `package main
@@ -208,4 +228,20 @@ func Test_MigrateContribPackages_OpenTelemetryWithoutTheRequirementsOfTheV3Modul
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.NotContains(t, notes[0].Message, "requires go.opentelemetry.io/otel", "the release the v3 module needs is not known")
+}
+
+func Test_MigrateContribPackages_RaisesTheInstrumentationOfOpenTelemetryToo(t *testing.T) {
+	dir := t.TempDir()
+	stubOtelLookups(t, dir)
+	contribWriteFile(t, dir, "main.go", otelProjectSource)
+	contribWriteFile(t, dir, "go.mod", otelProjectWithInstrumentation)
+
+	var buf bytes.Buffer
+	require.NoError(t, v3.MigrateContribPackages(newCmd(&buf), dir, nil, nil))
+
+	got := readFile(t, filepath.Join(dir, "go.mod"))
+	// there is no release 1.47.0 of the instrumentation, the latest one is taken
+	assert.Contains(t, got, "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0\n")
+	assert.Contains(t, got, "go.opentelemetry.io/otel v1.47.0\n")
+	require.Len(t, internal.DrainNotes(dir), 1)
 }
