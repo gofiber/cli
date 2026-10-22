@@ -245,13 +245,12 @@ func main() {
 	t.Run("more names than the note shows", func(t *testing.T) {
 		t.Parallel()
 
-		var src strings.Builder
-		src.WriteString("package server\n\n" + moduleBuild)
+		parts := []string{"package server\n\n" + moduleBuild}
 		for _, name := range []string{"A", "B", "C", "D", "E"} {
-			src.WriteString("\n// " + name + " makes an app.\nfunc " + name + "() *fiber.App { return New() }\n")
+			parts = append(parts, "\n// "+name+" makes an app.\nfunc "+name+"() *fiber.App { return New() }\n")
 		}
 		dir := appProject(t, map[string]string{
-			"server/server.go": src.String(),
+			"server/server.go": strings.Join(parts, ""),
 			"cmd/api/main.go":  "package main\n\nimport \"example.com/app/server\"\n\nfunc main() { server.New().Listen(\":3000\") }\n",
 		})
 
@@ -468,4 +467,69 @@ func main() {
 	assert.Contains(t, main, `fibermigratemw "example.com/app/internal/fibermigrate"`)
 	assert.Contains(t, main, `fibermigratemw.Listen(New(), ":3000")`)
 	assert.Contains(t, main, "fibermigratemw.NewApp(cfg, cfgListen)")
+}
+
+// Apps that are held in slices, maps and fields, and taken out of them by index, by
+// range or by a type switch, are started with the settings they were made with.
+func Test_MigrateConfigListenerFields_Module_AppsInCollections(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"internal/server/server.go": "package server\n\n" + moduleBuild,
+		"cmd/api/main.go": `package main
+
+import (
+	"example.com/app/internal/server"
+	"github.com/gofiber/fiber/v2"
+)
+
+type Fleet struct {
+	apps   []*fiber.App
+	byName map[string]*fiber.App
+}
+
+func (f *Fleet) start() {
+	f.apps = append(f.apps, server.New())
+	f.byName = map[string]*fiber.App{"api": server.New()}
+	for _, app := range f.apps {
+		app.Listen(":3000")
+	}
+	for name, app := range f.byName {
+		_ = name
+		app.ListenTLS(":4000", "c", "k")
+	}
+	f.apps[0].Listen(":5000")
+	f.byName["api"].Listen(":6000")
+}
+
+func serveAny(v any) {
+	switch app := v.(type) {
+	case *fiber.App:
+		app.Listen(":7000")
+	}
+}
+
+func handler(c *fiber.Ctx) error {
+	return c.App().Listen(":8000")
+}
+`,
+	})
+
+	_, notes := shimMigrate(t, dir)
+
+	content := appRead(t, dir, "cmd/api/main.go")
+	assert.Contains(t, content, `app.Listen(":3000", fibermigrate.ListenConfig(app))`)
+	assert.Contains(t, content, `app.Listen(":4000", fibermigrate.ListenConfig(app, fiber.ListenConfig{CertFile: "c", CertKeyFile: "k"}))`)
+	assert.Contains(t, content, `f.apps[0].Listen(":5000", fibermigrate.ListenConfig(f.apps[0]))`)
+	assert.Contains(t, content, `f.byName["api"].Listen(":6000", fibermigrate.ListenConfig(f.byName["api"]))`)
+	assert.Contains(t, content, `app.Listen(":7000", fibermigrate.ListenConfig(app))`)
+	assert.Contains(t, content, `fibermigrate.Listen(c.App(), ":8000")`, "the app of the context is an expression, which is evaluated once")
+	assert.NotContains(t, content, "ListenTLS")
+	require.Len(t, notes, 1)
+	assert.Equal(t, "internal/server/server.go", filepath.ToSlash(notes[0].File))
+
+	// nothing is left to do for a second run
+	out := appRun(t, dir, v3.MigrateConfigListenerFields)
+	assert.Empty(t, out)
+	assert.Empty(t, internal.DrainNotes(dir))
 }

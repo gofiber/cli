@@ -225,6 +225,127 @@ func main() {
 	}
 }
 
+// Apps held in slices, maps and channels are apps where they are taken out of them:
+// by index, by range, by a type switch, or through the context of a handler.
+func Test_appKinds_Collections(t *testing.T) {
+	t.Parallel()
+
+	files := appTestFiles(t, map[string]string{
+		"go.mod": "module example.com/demo\n",
+		"main.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type registry struct{}
+
+func (registry) Mount(string, any) {}
+
+type fleet []*fiber.App
+
+type holder struct {
+	apps   []*fiber.App
+	byName map[string]*fiber.App
+}
+
+func loops(apps []*fiber.App, named fleet, h holder, regs []registry, byName map[string]*fiber.App, ids map[*fiber.App]string, feed chan *fiber.App) {
+	for _, a := range apps {
+		a.Mount("range", nil)
+	}
+	for _, a := range named {
+		a.Mount("namedrange", nil)
+	}
+	for i := range apps {
+		apps[i].Mount("indexed", nil)
+	}
+	for _, a := range h.apps {
+		a.Mount("field", nil)
+	}
+	for k, a := range byName {
+		k.Mount("key", nil)
+		a.Mount("value", nil)
+	}
+	for a := range ids {
+		a.Mount("appkey", nil)
+	}
+	for a := range feed {
+		a.Mount("channel", nil)
+	}
+	for _, r := range regs {
+		r.Mount("registry", nil)
+	}
+	apps[0].Mount("first", nil)
+	apps[1:][0].Mount("sliced", nil)
+	byName["x"].Mount("lookup", nil)
+	grown := append(apps, fiber.New())
+	grown[0].Mount("appended", nil)
+	made := make([]*fiber.App, 0, 2)
+	made[0].Mount("made", nil)
+	regs[0].Mount("notapp", nil)
+}
+
+func switches(v any) {
+	switch x := v.(type) {
+	case *fiber.App:
+		x.Mount("case", nil)
+	case registry:
+		x.Mount("other", nil)
+	case *fiber.App, int:
+		x.Mount("several", nil)
+	}
+}
+
+func handler(c *fiber.Ctx) error {
+	c.App().Mount("ctx", nil)
+	c.App().Config().Mount("ctxconfig", nil)
+	return nil
+}
+`,
+	})
+
+	f := files["main.go"]
+	got := map[string]appKind{}
+	ast.Inspect(f.g.file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 2 {
+			return true
+		}
+		sel, isSel := call.Fun.(*ast.SelectorExpr)
+		lit, isLit := call.Args[0].(*ast.BasicLit)
+		if isSel && isLit && sel.Sel.Name == "Mount" {
+			got[lit.Value] = f.kind(sel.X)
+		}
+		return true
+	})
+
+	want := map[string]appKind{
+		`"range"`:      appKindApp,
+		`"namedrange"`: appKindApp,
+		`"indexed"`:    appKindApp,
+		`"field"`:      appKindApp,
+		`"key"`:        appKindNone,
+		`"value"`:      appKindApp,
+		`"appkey"`:     appKindApp,
+		`"channel"`:    appKindApp,
+		`"registry"`:   appKindNone,
+		`"first"`:      appKindApp,
+		`"sliced"`:     appKindApp,
+		`"lookup"`:     appKindApp,
+		`"appended"`:   appKindApp,
+		`"made"`:       appKindApp,
+		`"notapp"`:     appKindNone,
+		`"case"`:       appKindApp,
+		`"other"`:      appKindNone,
+		`"several"`:    appKindNone,
+		`"ctx"`:        appKindApp,
+		`"ctxconfig"`:  appKindConfig,
+	}
+	for label, kind := range want {
+		require.Contains(t, got, label)
+		assert.Equal(t, kind, got[label], label)
+	}
+	assert.Len(t, got, len(want))
+}
+
 func Test_appKinds_OtherPackage(t *testing.T) {
 	t.Parallel()
 

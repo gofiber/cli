@@ -112,6 +112,11 @@ type appPlanner struct {
 	mods map[string]appModuleOf
 	// unknown remembers the first call on a value of unknown type of a file.
 	unknown map[*appFile]int
+	// reads are the reads of removed settings through the config of an app, by the
+	// directory of the go.mod of their module.
+	reads map[string]*appModuleReads
+	// blocked has the modules whose reads the registry cannot serve, with the reason.
+	blocked map[string]string
 	root    string
 	files   []*appFile
 	starts  []*appStartInfo
@@ -144,9 +149,12 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		shims:   map[string]*appShimModule{},
 		mods:    map[string]appModuleOf{},
 		unknown: map[*appFile]int{},
+		reads:   map[string]*appModuleReads{},
+		blocked: map[string]string{},
 		root:    cwd,
 		files:   files,
 	}
+	pl.collectReads()
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
@@ -167,6 +175,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		}
 		pl.finishShims()
 	}
+	pl.finishReads()
 	pl.noteUntracked(files)
 	return pl.plan, nil
 }
@@ -176,6 +185,11 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 // parameter: they stay, and v3 does not compile them.
 func (pl *appPlanner) noteUntracked(files []*appFile) {
 	followed := map[ast.Node]bool{}
+	for _, mr := range pl.reads {
+		for _, r := range mr.reads {
+			followed[r.sel] = true
+		}
+	}
 	for _, src := range pl.sources {
 		for _, fld := range src.fields {
 			for _, occ := range fld.occs {
@@ -261,6 +275,22 @@ func (src *appListenSource) hasLeftovers(ip appInPlace) bool {
 // removed from an app that is never started (see dropDead). Only when neither can
 // be done do the settings that can move move, and the others stay with a note.
 func (pl *appPlanner) move(src *appListenSource) string {
+	// the code reads the settings of the apps of the module from their configs, which
+	// only the registry can give back
+	if mod, ok := pl.moduleOf(src.file); ok && pl.reads[mod.root] != nil {
+		commit, refusal := pl.carry(src)
+		if commit != nil {
+			commit()
+			for _, fld := range src.fields {
+				fld.problem = ""
+			}
+			return ""
+		}
+		if pl.blocked[mod.root] == "" {
+			pl.blocked[mod.root] = refusal.why
+		}
+	}
+
 	ip := pl.moveInPlace(src)
 	if !src.hasLeftovers(ip) {
 		ip.apply()

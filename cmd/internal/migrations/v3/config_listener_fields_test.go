@@ -594,8 +594,8 @@ func (s *server) tune(quiet bool) {
 	s.cfg.DisableStartupMessage = quiet
 }
 
-func describe(cfg fiber.Config, app *fiber.App) {
-	log.Println(cfg.Prefork, app.Config().Network)
+func describe(cfg fiber.Config) {
+	log.Println(cfg.Prefork)
 }
 
 type unrelated struct{ Prefork bool }
@@ -609,11 +609,10 @@ func other(u unrelated) bool { return u.Prefork }
 	assert.Empty(t, out)
 	assert.Equal(t, before, appRead(t, dir, "main.go"))
 	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 3, "the unrelated struct has a Prefork field of its own")
-	assert.Equal(t, []int{14, 18, 18}, []int{notes[0].Line, notes[1].Line, notes[2].Line})
+	require.Len(t, notes, 2, "the unrelated struct has a Prefork field of its own")
+	assert.Equal(t, []int{14, 18}, []int{notes[0].Line, notes[1].Line})
 	assert.Contains(t, notes[0].Message, "DisableStartupMessage")
 	assert.Contains(t, notes[1].Message, "EnablePrefork")
-	assert.Contains(t, notes[2].Message, "ListenerNetwork")
 	assert.Contains(t, notes[0].Message, "is not one the migration follows")
 }
 

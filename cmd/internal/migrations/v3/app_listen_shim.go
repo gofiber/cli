@@ -293,7 +293,7 @@ func (pl *appPlanner) shimStarts(src *appListenSource, mod goModule) (wrap []*ap
 			}
 		}
 	}
-	if len(wrap) == 0 && len(values) == 0 {
+	if len(wrap) == 0 && len(values) == 0 && pl.reads[mod.root] == nil {
 		return nil, nil, appShimRefusal{why: "no Listen call of this module starts the app, so it would hold the settings for nobody", tell: true}
 	}
 
@@ -326,7 +326,7 @@ func (pl *appPlanner) exposure(mod goModule, creations []appNew) []string {
 
 	var out []string
 	for _, pkg := range pl.publicPackages(mod) {
-		label := pl.importPathOf(mod, pkg)
+		label := appImportPathOf(mod, pkg)
 		for _, d := range pkg.exportedAppAPI(flows) {
 			out = append(out, label+"."+d)
 		}
@@ -366,8 +366,8 @@ func appRelDir(mod goModule, pkg *appPackage) string {
 	return rel
 }
 
-// importPathOf is the import path of a package of the module.
-func (pl *appPlanner) importPathOf(mod goModule, pkg *appPackage) string {
+// appImportPathOf is the import path of a package of the module.
+func appImportPathOf(mod goModule, pkg *appPackage) string {
 	rel := filepath.ToSlash(appRelDir(mod, pkg))
 	if rel == "." {
 		return mod.path

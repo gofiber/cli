@@ -178,13 +178,10 @@ func (s appStart) rewriteShim(imports appImports, receiver, shimPath string) app
 	if recv == "" {
 		recv = g.text(s.sel.X)
 	}
-	if !s.file.isPlainApp(s.sel.X) {
-		field := s.file.embeddedAppField(s.sel.X)
-		if field == "" {
-			out.problem = "its receiver is not a *fiber.App but a type that holds one in a way the registry cannot name"
-			return out
-		}
-		recv += "." + field
+	recv, ok := s.file.appText(recv, s.sel.X)
+	if !ok {
+		out.problem = "its receiver is not a *fiber.App but a type that holds one in a way the registry cannot name"
+		return out
 	}
 
 	args := s.call.Args
@@ -272,13 +269,9 @@ type appValueInfo struct {
 // type the method value had in v2.
 func (v *appValueInfo) rewrite(imps *appImports, receiver, shimPath string) []textEdit {
 	g := v.file.g
-	recv := receiver
-	if !v.file.isPlainApp(v.sel.X) {
-		field := v.file.embeddedAppField(v.sel.X)
-		if field == "" {
-			return nil
-		}
-		recv += "." + field
+	recv, ok := v.file.appText(receiver, v.sel.X)
+	if !ok {
+		return nil
 	}
 
 	name := appShimListenFunc
@@ -308,6 +301,20 @@ func appPureReceiver(e ast.Expr) bool {
 		return true
 	}
 	return false
+}
+
+// appText returns the expression that is the *fiber.App held by the value e, whose
+// source text is text: the text itself for an app, the embedded field for a type of
+// the project that embeds one.
+func (f *appFile) appText(text string, e ast.Expr) (string, bool) {
+	if f.isPlainApp(e) {
+		return text, true
+	}
+	field := f.embeddedAppField(e)
+	if field == "" {
+		return "", false
+	}
+	return text + "." + field, true
 }
 
 // isPlainApp reports whether e is a *fiber.App itself rather than a type of the
