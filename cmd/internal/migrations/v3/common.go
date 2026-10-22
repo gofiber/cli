@@ -266,11 +266,18 @@ func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comm
 			uq, err := strconv.Unquote(val)
 			if err != nil {
 				comment = normalizeMigrationComment(comment, false)
-				replacement := fmt.Sprintf("%s%s// TODO: migrate %s: %s", prefix, indent, field, val)
-				if comment != "" {
-					replacement = fmt.Sprintf("%s %s", replacement, comment)
+				var replacement string
+				if newline == "" {
+					// Whatever follows the field shares its line (Config{KeyLookup: x, Next: y}),
+					// and a line comment would swallow it.
+					replacement = fmt.Sprintf("%s%s/* TODO: migrate %s: %s */ ", prefix, indent, field, strings.ReplaceAll(val, "*/", "* /"))
+				} else {
+					replacement = fmt.Sprintf("%s%s// TODO: migrate %s: %s", prefix, indent, field, val)
+					if comment != "" {
+						replacement = fmt.Sprintf("%s %s", replacement, comment)
+					}
+					replacement += newline
 				}
-				replacement += newline
 				b.WriteString(replacement) //nolint:errcheck // WriteString never returns an error
 				pos = end
 				continue

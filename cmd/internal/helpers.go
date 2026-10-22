@@ -1,7 +1,11 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
+	"go/parser"
+	"go/scanner"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,6 +40,10 @@ func checkConsole() (size console.WinSize, err error) {
 // FileProcessor processes the file content and returns the modified content.
 type FileProcessor func(content string) string
 
+// FileProcessorInfo is a FileProcessor that also receives information about the
+// file being processed, so that a migration can attach notes to it.
+type FileProcessorInfo func(content string, fi FileInfo) string
+
 var (
 	fileIncludePatterns []string
 	fileExcludePatterns []string
@@ -53,7 +61,18 @@ func SetFileFilters(include, exclude []string) {
 // ChangeFileContent walks through cwd and applies the processorFn to every Go
 // file found. Files in a vendor directory are skipped. It returns true if any
 // file content was modified.
+//
+// A file whose rewritten content does not parse is left untouched, a note is
+// recorded for it, and the walk continues with the next file.
 func ChangeFileContent(cwd string, processorFn FileProcessor) (bool, error) {
+	return ChangeFileContentInfo(cwd, func(content string, _ FileInfo) string {
+		return processorFn(content)
+	})
+}
+
+// ChangeFileContentInfo is like ChangeFileContent, but the processor also
+// receives the FileInfo of the file it is rewriting.
+func ChangeFileContentInfo(cwd string, processorFn FileProcessorInfo) (bool, error) {
 	changed := false
 	err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -89,11 +108,14 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) (bool, error) {
 			return fmt.Errorf("read file %s: %w", path, err)
 		}
 
-		processed := processorFn(string(fileContent))
-		if processed != string(fileContent) {
+		fi := FileInfo{Root: cwd, Path: path, Rel: rel}
+		original := string(fileContent)
+		processed := processorFn(original, fi)
+		if processed != original {
 			fixed, err := imports.Process(path, []byte(processed), nil)
 			if err != nil {
-				return fmt.Errorf("fix imports for %s: %w", path, err)
+				noteSkippedFile(fi, original, err)
+				return nil
 			}
 			processed = string(fixed)
 			if err2 := os.WriteFile(path, []byte(processed), 0o600); err2 != nil {
@@ -109,6 +131,28 @@ func ChangeFileContent(cwd string, processorFn FileProcessor) (bool, error) {
 	}
 
 	return changed, nil
+}
+
+// noteSkippedFile records why the file was left untouched after its rewritten
+// content failed to parse: either the file was already broken, or the rewrite
+// broke it.
+func noteSkippedFile(fi FileInfo, original string, rewriteErr error) {
+	_, err := parser.ParseFile(token.NewFileSet(), fi.Path, original, parser.SkipObjectResolution)
+	if err != nil {
+		NoteParseError(fi, err)
+		return
+	}
+	Notef(fi, 0, "left unchanged because the rewritten code does not parse (please report this): %v", rewriteErr)
+}
+
+// NoteParseError records that the file was skipped because it does not parse.
+func NoteParseError(fi FileInfo, err error) {
+	line, msg := 0, err.Error()
+	var list scanner.ErrorList
+	if errors.As(err, &list) && len(list) > 0 {
+		line, msg = list[0].Pos.Line, list[0].Msg
+	}
+	Notef(fi, line, "skipped because the file does not parse: %s", msg)
 }
 
 func matchPatternList(name string, patterns []string) bool {

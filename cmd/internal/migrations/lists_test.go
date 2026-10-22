@@ -2,8 +2,10 @@ package migrations_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -39,7 +41,7 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "Skipping migration from >=1.0.0-0 to >=0.0.0-0")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to >=3.0.0-0 <4.0.0-0")
 	})
 }
 
@@ -67,7 +69,7 @@ require github.com/valyala/fasthttp v1.0.0`
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "MigrateGoPkgs: no changes")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to >=3.0.0-0 <4.0.0-0")
 	})
 
 	t.Run("changes", func(t *testing.T) {
@@ -92,7 +94,7 @@ require github.com/valyala/fasthttp v1.0.0`
 		out := buf.String()
 		assert.Contains(t, out, "Migrating Go packages")
 		assert.Contains(t, out, "MigrateGoPkgs: changed")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to >=3.0.0-0 <4.0.0-0")
 	})
 }
 
@@ -141,4 +143,52 @@ var _ = redirect.New(redirect.Config{
 			}
 		})
 	}
+}
+
+func Test_DoMigration_ReportsWhatItCouldNotMigrate(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "a_good.go")
+	broken := filepath.Join(dir, "b_broken.go")
+	later := filepath.Join(dir, "c_later.go")
+	handler := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\nfunc %s(c *fiber.Ctx) error {\n\treturn %s\n}\n"
+	require.NoError(t, os.WriteFile(good, fmt.Appendf(nil, handler, "first", "nil"), 0o600))
+	require.NoError(t, os.WriteFile(broken, fmt.Appendf(nil, handler, "second", "(nil"), 0o600))
+	require.NoError(t, os.WriteFile(later, fmt.Appendf(nil, handler, "third", "nil"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, migrations.DoMigration(cmd, dir,
+		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+	out := buf.String()
+	assert.Contains(t, out, "1 item to review by hand:")
+	assert.Contains(t, out, "b_broken.go:")
+	assert.Contains(t, out, "skipped because the file does not parse")
+	assert.Equal(t, 1, strings.Count(out, "b_broken.go:"), "the same finding from several migrations is listed once")
+
+	for _, path := range []string{good, later} {
+		content, err := os.ReadFile(path) //nolint:gosec // the path is this test's own temp dir
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "c fiber.Ctx", "%s is migrated although a file before it is broken", path)
+	}
+	content, err := os.ReadFile(broken) //nolint:gosec // the path is this test's own temp dir
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "c *fiber.Ctx", "the broken file is left as it was")
+}
+
+func Test_DoMigration_NoNotesNoReport(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, migrations.DoMigration(cmd, dir,
+		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+	assert.NotContains(t, buf.String(), "review by hand")
 }

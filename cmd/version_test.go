@@ -112,6 +112,73 @@ require (
 		at.Equal("v0.0.0-20200926082917-55763e7e6ee3", v)
 	})
 
+	t.Run("ignores comments and unrelated lines", func(t *testing.T) {
+		content := `module github.com/gofiber/fiber-demo
+
+go 1.22
+
+require (
+	github.com/gofiber/contrib/fiberzap/v2 v2.1.0
+	github.com/gofiber/fiber/v2 v2.52.5 // direct, pinned for now
+	github.com/gofiber/fiber-extras v1.0.0
+)
+
+replace github.com/gofiber/fiber/v2 => ../fiber
+`
+
+		setupCurrentVersionFile(content)
+		defer teardownCurrentVersionFile()
+
+		v, err := currentVersion()
+		require.NoError(t, err)
+		at.Equal("v2.52.5", v)
+	})
+
+	t.Run("single line require with indirect comment", func(t *testing.T) {
+		content := "module demo\n\nrequire github.com/gofiber/fiber/v3 v3.6.1 // indirect\n"
+
+		setupCurrentVersionFile(content)
+		defer teardownCurrentVersionFile()
+
+		v, err := currentVersion()
+		require.NoError(t, err)
+		at.Equal("v3.6.1", v)
+	})
+
+	t.Run("module name looks like fiber", func(t *testing.T) {
+		content := "module github.com/gofiber/fiber-demo\n\ngo 1.22\n"
+
+		setupCurrentVersionFile(content)
+		defer teardownCurrentVersionFile()
+
+		_, err := currentVersion()
+		require.Error(t, err)
+	})
+
+	t.Run("half migrated project reports the oldest major", func(t *testing.T) {
+		content := `module demo
+
+require (
+	github.com/gofiber/fiber/v3 v3.6.1
+	github.com/gofiber/fiber/v2 v2.52.5
+)`
+
+		setupCurrentVersionFile(content)
+		defer teardownCurrentVersionFile()
+
+		v, err := currentVersion()
+		require.NoError(t, err)
+		at.Equal("v2.52.5", v)
+	})
+
+	t.Run("malformed go.mod is an error", func(t *testing.T) {
+		setupCurrentVersionFile("module demo\n\nrequire (\n\tgithub.com/gofiber/fiber/v2 not-a-version\n)\n")
+		defer teardownCurrentVersionFile()
+
+		_, err := currentVersion()
+		require.Error(t, err)
+	})
+
 	t.Run("package not found", func(t *testing.T) {
 		content := `module fiber-demo
 go 1.14
