@@ -164,7 +164,7 @@ func (r *mw3GivenReader) ofConfig(e ast.Expr, stack []ast.Node) (mw3Given, bool)
 			return mw3ConfigDefaultGiven, true
 		}
 	case *ast.CompositeLit:
-		if x.Type != nil && r.isSessionMember(x.Type, mw3Config, stack) {
+		if x.Type != nil && r.isConfigType(x.Type, stack) {
 			return r.literal(x, stack)
 		}
 	case *ast.Ident:
@@ -175,6 +175,16 @@ func (r *mw3GivenReader) ofConfig(e ast.Expr, stack []ast.Node) (mw3Given, bool)
 		return r.ofFunc(x, stack)
 	}
 	return mw3Given{}, false
+}
+
+// isConfigType reports whether the type is the session Config, in the file the
+// reader is in.
+func (r *mw3GivenReader) isConfigType(t ast.Expr, stack []ast.Node) bool {
+	if r.isSessionMember(t, mw3Config, stack) {
+		return true
+	}
+	kind := r.facts.reader(r.env).resolve(mw3KindOfType(t, r.env))
+	return kind.base == mw3KindConfig
 }
 
 // literal reads the lookup of a session.Config literal. v2 gave the fields it did

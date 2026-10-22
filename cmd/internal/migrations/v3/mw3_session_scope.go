@@ -244,7 +244,23 @@ func (f *mw3SessionFile) isConfigLit(e ast.Expr, stack []ast.Node) (*ast.Composi
 	if !ok || lit.Type == nil {
 		return nil, false
 	}
-	return lit, f.isMember(lit.Type, mw3Config, stack)
+	return lit, f.isConfigType(lit.Type, stack)
+}
+
+// isConfigType reports whether the type is the session Config, by the name the
+// file gives the session package or by a name that a package of the module gives
+// it.
+func (f *mw3SessionFile) isConfigType(t ast.Expr, stack []ast.Node) bool {
+	if f.isMember(t, mw3Config, stack) {
+		return true
+	}
+	if sel, ok := t.(*ast.SelectorExpr); ok {
+		if id, isIdent := sel.X.(*ast.Ident); isIdent && mw3Shadowed(id.Name, id.Pos(), stack) {
+			return false
+		}
+	}
+	r := f.reader()
+	return r.resolve(mw3KindOfType(t, f.env)).base == mw3KindConfig
 }
 
 // isStoreCall reports whether e creates a store, and with which function.

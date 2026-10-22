@@ -214,7 +214,7 @@ func main() {
 `,
 	}, mw3SessionChain...)
 
-	assert.Contains(t, res.files["internal/sess/sess.go"], "session.NewStore(cfg...)")
+	assert.Contains(t, res.files["internal/sess/sess.go"], "session.NewStore(func() []session.Config {")
 	assert.Contains(t, res.files["internal/repo/repo.go"], "c.store.Reset(context.Background())")
 	main := res.files["main.go"]
 	assert.Contains(t, main, `cache.Store().Delete(context.Background(), "x")`)
@@ -337,4 +337,60 @@ func main() {
 	assert.Contains(t, got, "auth.Store.IdleTimeout = time.Hour")
 	assert.Contains(t, got, "fmt.Println(h.Sessions.IdleTimeout, auth.Default().IdleTimeout)")
 	assert.NotContains(t, got, "Expiration")
+}
+
+// A package that gives the session types other names is used in the lookup and
+// the lifetime of its configs like the session package, and a function that takes
+// the configs and passes them on keeps the default lifetime for none.
+func Test_SessionMigrations_ConfigsThroughAReExport(t *testing.T) {
+	t.Parallel()
+
+	res := mw3RunModule(t, map[string]string{
+		"internal/sess/sess.go": `package sess
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+type Store = session.Store
+type Config = session.Config
+
+func New(cfg ...Config) *Store { return session.New(cfg...) }
+
+func Many(cfgs []Config) *Store { return session.New(cfgs...) }
+
+func Computed() *Store { return session.New(load()...) }
+
+func load() []Config { return nil }
+`,
+		"main.go": `package main
+
+import (
+	"fmt"
+	"time"
+
+	"example.com/app/internal/sess"
+)
+
+func main() {
+	byHeader := sess.New(sess.Config{KeyLookup: "header:X-ID", Expiration: time.Minute})
+	var zero sess.Config
+	fmt.Println(sess.New(), byHeader != nil, zero)
+}
+`,
+	}, mw3SessionChain...)
+
+	lib := res.files["internal/sess/sess.go"]
+	assert.Contains(t, lib, "return session.NewStore(func() []session.Config {\n\t\tif len(cfg) == 0 {\n\t\t\treturn []session.Config{{IdleTimeout: 24 * time.Hour}}\n\t\t}\n\t\treturn cfg\n\t}()...)")
+	assert.Contains(t, lib, "func Many(cfgs []Config) *Store {\n\treturn session.NewStore(func() []session.Config {\n\t\tif len(cfgs) == 0 {")
+	assert.Contains(t, lib, "func Computed() *Store { return session.NewStore(load()...) }")
+
+	main := res.files["main.go"]
+	assert.Contains(t, main, `sess.Config{Extractor: extractors.FromHeader("X-ID"), IdleTimeout: time.Minute}`)
+	assert.Contains(t, main, "var zero sess.Config\n\tzero.IdleTimeout = 24 * time.Hour")
+
+	msgs := mw3Messages(res.notes)
+	require.Len(t, msgs, 1)
+	assert.Contains(t, msgs[0], "load()...")
+
+	again := mw3RunModule(t, res.files, mw3SessionChain...)
+	assert.Equal(t, res.files, again.files)
 }

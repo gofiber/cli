@@ -50,7 +50,7 @@ type mw3SessionConfigPass struct {
 
 func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
-		return strings.Contains(src, "middleware/session") || strings.Contains(src, "."+cacheExpiration)
+		return strings.Contains(src, "middleware/session") || strings.Contains(src, cacheExpiration) || strings.Contains(src, mw3Config)
 	})
 	if !ok {
 		return src
@@ -173,6 +173,7 @@ func (p *mw3SessionConfigPass) newCall(call *ast.CallExpr, stack []ast.Node) {
 		return
 	}
 	if call.Ellipsis.IsValid() {
+		p.spread(call, pkgName, stack)
 		return
 	}
 
@@ -192,6 +193,38 @@ func (p *mw3SessionConfigPass) newCall(call *ast.CallExpr, stack []ast.Node) {
 			"%s: v2 sessions lasted 24 hours unless Expiration said otherwise, v3 sessions idle out after 30 minutes unless IdleTimeout says otherwise. "+
 				"Make sure the config sets IdleTimeout (24 * time.Hour keeps the v2 lifetime).", g.text(arg))
 	}
+}
+
+// spread keeps the lifetime of a store made from the configs that a slice holds,
+// session.New(configs...): v2 made one with the default lifetime when the slice
+// is empty, which is what a function of the program that takes a variadic
+// config and passes it on does when it is called with none. The configs in the
+// slice have their lifetime where they are made.
+func (p *mw3SessionConfigPass) spread(call *ast.CallExpr, pkgName string, stack []ast.Node) {
+	g := p.f.g
+	arg := call.Args[len(call.Args)-1]
+	if !mw3IsPlainValue(arg) {
+		internal.Notef(p.fi, g.line(arg.Pos()),
+			"%s...: v2 sessions lasted 24 hours unless Expiration said otherwise, v3 sessions idle out after 30 minutes unless IdleTimeout says otherwise. "+
+				"If the slice is empty the store gets the default: set IdleTimeout to 24 * time.Hour in a config you add then to keep the v2 lifetime.", g.text(arg))
+		return
+	}
+
+	text := g.text(arg)
+	site := mw3Site{pos: call.Pos(), stack: stack}
+	p.edits.replaceNode(g, arg, "func() []"+pkgName+".Config {\nif len("+text+") == 0 {\nreturn []"+pkgName+".Config{{"+p.idleTimeout(site)+"}}\n}\nreturn "+text+"\n}()")
+}
+
+// mw3IsPlainValue reports whether the expression is a name or a field of one,
+// which can be written twice.
+func mw3IsPlainValue(e ast.Expr) bool {
+	switch x := ast.Unparen(e).(type) {
+	case *ast.Ident:
+		return true
+	case *ast.SelectorExpr:
+		return mw3IsPlainValue(x.X)
+	}
+	return false
 }
 
 // mw3FromOtherPackage reports whether the expression is a call of a function
@@ -258,7 +291,7 @@ func (p *mw3SessionConfigPass) configDefault(sel *ast.SelectorExpr, stack []ast.
 // zeroConfig handles a session.Config variable that is declared without a
 // value: a zero config has no IdleTimeout, which v3 takes for 30 minutes.
 func (p *mw3SessionConfigPass) zeroConfig(spec *ast.ValueSpec, stack []ast.Node) {
-	if spec.Type == nil || len(spec.Values) > 0 || !p.f.isMember(spec.Type, mw3Config, stack) {
+	if spec.Type == nil || len(spec.Values) > 0 || !p.f.isConfigType(spec.Type, stack) {
 		return
 	}
 	for _, name := range spec.Names {

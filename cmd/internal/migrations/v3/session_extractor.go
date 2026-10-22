@@ -92,7 +92,7 @@ type mw3Site struct {
 
 func mw3SessionExtractorContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
-		return strings.Contains(src, "middleware/session") || strings.Contains(src, "."+mw3KeyLookup) || strings.Contains(src, "."+mw3CookieName)
+		return strings.Contains(src, "middleware/session") || strings.Contains(src, mw3KeyLookup) || strings.Contains(src, mw3CookieName)
 	})
 	if !ok {
 		return src
