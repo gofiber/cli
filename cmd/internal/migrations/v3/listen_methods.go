@@ -2,7 +2,7 @@ package v3
 
 import (
 	"fmt"
-	"regexp"
+	"slices"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -11,58 +11,19 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// MigrateListenMethods turns the TLS variants of Listen, which v3 removed, into
+// Listen with a fiber.ListenConfig:
+//
+//	app.ListenTLS(addr, cert, key)                       -> app.Listen(addr, fiber.ListenConfig{CertFile: cert, CertKeyFile: key})
+//	app.ListenMutualTLS(addr, cert, key, ca)             -> ... CertClientFile: ca
+//	app.ListenTLSWithCertificate(addr, c)                -> ... TLSConfig: &tls.Config{Certificates: []tls.Certificate{c}}
+//	app.ListenMutualTLSWithCertificate(addr, c, pool)    -> ... ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool
+//
+// Only calls on a fiber app are touched.
 func MigrateListenMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		orig := content
-		re := regexp.MustCompile(`\.(ListenTLSWithCertificate|ListenTLS|ListenMutualTLSWithCertificate|ListenMutualTLS)\(`)
-		matches := re.FindAllStringIndex(content, -1)
-		if len(matches) == 0 {
-			return content
-		}
-
-		var b strings.Builder
-		last := 0
-		for _, m := range matches {
-			if m[0] < last {
-				continue
-			}
-
-			startCall := m[0]
-			if startCall > 0 {
-				if _, err := b.WriteString(content[last:startCall]); err != nil {
-					return content
-				}
-			}
-
-			end, inner := extractCall(content, m[1])
-			identStart := startCall - 1
-			for identStart >= 0 {
-				ch := content[identStart]
-				if !isIdentifierChar(ch) {
-					break
-				}
-				identStart--
-			}
-			ident := content[identStart+1 : startCall]
-
-			if isFiberApp(orig, ident) {
-				if _, err := b.WriteString(".Listen(" + inner + ")"); err != nil {
-					return content
-				}
-			} else {
-				if _, err := b.WriteString(content[startCall:end]); err != nil {
-					return content
-				}
-			}
-
-			last = end
-		}
-
-		if _, err := b.WriteString(content[last:]); err != nil {
-			return content
-		}
-
-		return b.String()
+	ix := newAppIndex(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateListenMethodsContent(ix, content, fi)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate listen methods: %w", err)
@@ -73,4 +34,35 @@ func MigrateListenMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 
 	cmd.Println("Migrating listen methods")
 	return nil
+}
+
+func migrateListenMethodsContent(ix *appIndex, content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, "ListenTLS") && !strings.Contains(content, "ListenMutualTLS") {
+		return content
+	}
+	f, ok := ix.openFile(fi, content)
+	if !ok {
+		return content
+	}
+
+	var edits editSet
+	var imps appImports
+	for _, s := range f.startsIn() {
+		if s.method == appNameListen || s.method == appNameListener {
+			continue
+		}
+		rw := s.rewrite(nil, appImports{reqs: slices.Clone(imps.reqs)})
+		line := f.g.line(s.call.Pos())
+		if rw.problem != "" {
+			internal.Notef(fi, line,
+				"%s was removed in v3 and this call could not be converted to Listen with a fiber.ListenConfig (%s)", s.method, rw.problem)
+			continue
+		}
+		imps = rw.imports
+		edits.edits = append(edits.edits, rw.edits...)
+		for _, note := range rw.notes {
+			internal.Notef(fi, line, "%s", note)
+		}
+	}
+	return imps.apply(edits.apply(content))
 }
