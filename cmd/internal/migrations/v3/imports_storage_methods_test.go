@@ -543,6 +543,13 @@ func (o *One) Get(key string) ([]byte, error) { return o.Store.Get(key) }
 	assert.Contains(t, two, "func (t *Two) SetWithContext(")
 	assert.NotContains(t, two, "DeleteWithContext")
 	assert.NotContains(t, importsRead(t, dir, "one.go"), "WithContext")
+
+	// One method does not make it a storage, but it may wrap one: the note says what to do.
+	notes := importsNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "one.go:9: ")
+	assert.Contains(t, notes[0], "One declares Get with the signature of Fiber v2's Storage and embeds Store of example.com/kv")
+	assert.Contains(t, notes[0], "call GetWithContext, which it brings, and skip Get")
 }
 
 // The type a wrapper embeds can be a storage of another package of the module.

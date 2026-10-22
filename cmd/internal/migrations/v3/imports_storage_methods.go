@@ -579,6 +579,9 @@ func (p importsStoragePackages) wrapperMethods(g *goSource, fi internal.FileInfo
 	}
 	known, weak := p.embedsStorage(ix, pkg, typ, 0)
 	if !known && (!weak || declared < 2) {
+		if weak {
+			typ.noteUnreadableWrapper(g, fi, lacking)
+		}
 		return ""
 	}
 
@@ -601,6 +604,42 @@ func (p importsStoragePackages) wrapperMethods(g *goSource, fi internal.FileInfo
 		return ""
 	}
 	return importsContextMethods(g, anchor, set, ctx, missing, importsWrapperIntro)
+}
+
+// noteUnreadableWrapper reports a type that embeds something the scan can say
+// nothing about and declares one method of Fiber v2's Storage. One method does not
+// make it a storage, but when the embedded type is one, the middleware of v3 call
+// the twin that it brings and skip the method. The note stands at the first of
+// those methods that this file declares.
+func (t *importsStorageType) noteUnreadableWrapper(g *goSource, fi internal.FileInfo, lacking []string) {
+	for _, old := range lacking {
+		m := t.methods[old]
+		if m.path != fi.Path || m.decl.Recv == nil || len(m.decl.Recv.List) != 1 {
+			continue
+		}
+		internal.Notef(fi, g.line(m.decl.Pos()),
+			"%s declares %s with the signature of Fiber v2's Storage and embeds %s, which this migration cannot read; if that is a storage, "+
+				"the middleware of Fiber v3 call %sWithContext, which it brings, and skip %s: add the twin that passes the context on",
+			importsReceiverType(m.decl.Recv.List[0].Type), old, t.embeddedNames(), old, old)
+		return
+	}
+}
+
+// embeddedNames says which types the type embeds, for a note.
+func (t *importsStorageType) embeddedNames() string {
+	var names []string
+	for _, sel := range t.selectors {
+		if sel.path != "" {
+			names = append(names, sel.name+" of "+sel.path)
+		} else {
+			names = append(names, sel.name)
+		}
+	}
+	names = append(names, t.embedded...)
+	if len(names) == 0 {
+		return "a type it cannot name"
+	}
+	return strings.Join(names, ", ")
 }
 
 // importsEndOfLine returns the offset just after the line break that ends the line
