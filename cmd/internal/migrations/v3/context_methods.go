@@ -93,8 +93,10 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 			if sel.Sel.Name == ctxSetUserContext {
 				renamed = ctxSetContext
 			}
-			switch env.receiverKind(sel, stack, renamed) {
+			kind, via := env.receiverKindVia(sel, stack, renamed)
+			switch kind {
 			case ctxYes:
+				plan.qualify(g, sel, via)
 				plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, renamed) })
 			case ctxUnknown:
 				noter.notef(sel.Pos(),

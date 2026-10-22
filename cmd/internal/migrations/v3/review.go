@@ -31,7 +31,7 @@ var (
 // rewrite and that will not compile on v3, and behavior changes of the
 // middleware the project uses that no rewrite can reproduce. It changes nothing.
 func Review(cwd string) {
-	r := &reviewer{behaviorSeen: map[int]bool{}}
+	r := &reviewer{behaviorSeen: map[int]bool{}, run: newCtxRun()}
 
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		r.scan(content, fi)
@@ -46,18 +46,22 @@ type reviewer struct {
 	// behaviorSeen holds the behavior rules that were reported already: a rule
 	// is reported once per project.
 	behaviorSeen map[int]bool
+	// run reads the files next to the one scanned, which declare the types it uses.
+	run *ctxRun
 	// fileNameSeen is set once the SendFile file name note was given.
 	fileNameSeen bool
 }
 
 // reviewFile is what the checks need to know about the file being scanned.
 type reviewFile struct {
-	r  *reviewer
-	g  *goSource
-	fi internal.FileInfo
+	r *reviewer
+	g *goSource
 	// packages maps the identifier the file binds to an import to its path, for
 	// the packages of the fiber v3 module.
 	packages map[string]string
+	// env tells the types of the declarations of the file, built when first needed.
+	env *ctxEnv
+	fi  internal.FileInfo
 	// core are the identifiers the file binds to the core fiber package.
 	core []string
 }
@@ -217,8 +221,8 @@ func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && isFiberCtxExpr(sel.X, rf.core, stack):
 		rf.r.fileNameSeen = true
 		rf.notef(sel.Sel.Pos(), "%s takes the file name literally in Fiber v3 instead of percent-decoding it, so a name taken from a route parameter keeps its %%XX escapes unless fiber.Config{UnescapePath: true} is set; decode it and make sure it stays inside the directory you serve", name)
-	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && isFiberCtxExpr(sel.X, rf.core, stack):
-		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s", name, reviewHint("Ctx."+name))
+	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && rf.isCtxMethod(sel, stack):
+		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s%s", name, reviewHint("Ctx."+name), rf.wrapperHint(sel, stack))
 	case name == "Redirect" && len(call.Args) > 0 && isFiberCtxExpr(sel.X, rf.core, stack):
 		rf.notef(sel.Sel.Pos(), "Redirect takes no arguments in Fiber v3%s", reviewHint("Ctx.Redirect"))
 	case reviewRemovedRouterMethod(name) && rf.isRouterExpr(sel.X, stack, 0):
@@ -226,6 +230,32 @@ func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Hooks"], name) && rf.isHooksExpr(sel.X, stack, 0):
 		rf.notef(sel.Sel.Pos(), "Hooks().%s was removed in Fiber v3%s", name, reviewHint("Hooks."+name))
 	}
+}
+
+// isCtxMethod reports whether the method sel selects is one of the fiber request
+// context. Besides the variables declared as a context, that is a value of a type
+// that embeds the context, as long as the type does not declare a method or a
+// field of that name itself.
+func (rf *reviewFile) isCtxMethod(sel *ast.SelectorExpr, stack []ast.Node) bool {
+	if isFiberCtxExpr(sel.X, rf.core, stack) {
+		return true
+	}
+	if rf.env == nil {
+		rf.env = newCtxEnv(rf.g, rf.core, rf.r.run.siblings(rf.fi, rf.g)...)
+	}
+	return rf.env.receiverKind(sel, stack) == ctxYes
+}
+
+// wrapperHint explains what to do when the receiver is a type that embeds the
+// context and not the context itself: the replacement of a removed method has to
+// be called on the embedded context when the type declares a method of its name
+// (a wrapper with a Redirect(to string) of its own hides the Redirect() of v3).
+func (rf *reviewFile) wrapperHint(sel *ast.SelectorExpr, stack []ast.Node) string {
+	if isFiberCtxExpr(sel.X, rf.core, stack) {
+		return ""
+	}
+	recv := rf.g.text(sel.X)
+	return "; " + recv + " is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on the embedded context: " + recv + ".Ctx"
 }
 
 // isStringLiteral reports whether e is a string literal.

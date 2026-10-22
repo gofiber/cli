@@ -11,6 +11,7 @@
 - Never rewrite string literals, comments, or fields and methods of unrelated types, and never assume a package called `session`, `static` or `utils` is Fiber's.
 - Add every import the output needs yourself (`addImport`). goimports only finds v3 packages that happen to be in the module cache, so a migration that relies on it works on one machine and not on another.
 - Do not drop configuration or user code silently. If there is no faithful v3 equivalent, leave the code in place and record a note (`internal.Notef(fi, line, ...)`); if removing it would change what the program does without a compile error, the old construct must stay so that the build fails.
+- A type that embeds `fiber.Ctx` and declares a member of the name your rewrite introduces hides it from calls on the type. Ask `ctxEnv.receiverKindVia` instead of `receiverKind` and put `ctxPlan.qualify` in front of the rewrite, so that the call goes through the embedded field (`c.Ctx.Redirect()`).
 - Where an explicit v3 setting reproduces the v2 default (for example `IdleTimeout: 24 * time.Hour`, `ByteRange: true`), set it. Where it would be unsafe, warn instead.
 
 ## Notes

@@ -71,12 +71,14 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 			return true
 		}
 
-		switch env.receiverKind(sel, stack, "Bind") {
+		kind, via := env.receiverKindVia(sel, stack, "Bind")
+		switch kind {
 		case ctxYes:
 			if sel.Sel.Name == ctxAllParams {
 				ctxQueueAllParams(&plan, noter, env, sel, stack)
 				return true
 			}
+			plan.qualify(g, sel, via)
 			plan.add(func(e *editSet) {
 				e.replaceNode(g, sel.Sel, "Bind()."+ctxBinders[sel.Sel.Name])
 			})

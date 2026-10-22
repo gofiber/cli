@@ -57,8 +57,10 @@ func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) strin
 			return true
 		}
 
-		switch env.receiverKind(sel, stack, "ViewBind") {
+		kind, via := env.receiverKindVia(sel, stack, "ViewBind")
+		switch kind {
 		case ctxYes:
+			plan.qualify(g, sel, via)
 			plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, "ViewBind") })
 		case ctxUnknown:
 			if ctxIsFiberMap(call.Args[0], env) {

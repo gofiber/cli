@@ -171,6 +171,19 @@ func (p *ctxPlan) add(step func(*editSet)) {
 	p.steps = append(p.steps, step)
 }
 
+// qualify queues the detour through the embedded field via for the call of sel
+// (see ctxEnv.receiverKindVia): c.Bind(...) becomes c.Ctx.Bind(...). Nothing is
+// queued when via is empty.
+func (p *ctxPlan) qualify(g *goSource, sel *ast.SelectorExpr, via string) {
+	if via == "" {
+		return
+	}
+	p.add(func(e *editSet) {
+		at := g.offset(sel.X.End())
+		e.replace(at, at, "."+via)
+	})
+}
+
 // apply runs the queued rewrites and returns src with them applied.
 func (p *ctxPlan) apply(src string) string {
 	var edits editSet

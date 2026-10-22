@@ -320,13 +320,14 @@ type Context struct{ *fiber.Ctx }
 // Redirect hides the one of the embedded context.
 func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().Status(301).To(to) }
 
-func (c *Context) Back() error { return c.RedirectBack("/") }
+func (c *Context) Back() error { return c.Ctx.Redirect().Back("/") }
 
 func handler(c *Context) error {
 	return c.Redirect("/x")
 }
 `,
-			msg: "Migrating redirect methods",
+			msg:   "Migrating redirect methods",
+			notes: []string{"303 See Other"},
 		},
 		{
 			name: "other receivers stay",

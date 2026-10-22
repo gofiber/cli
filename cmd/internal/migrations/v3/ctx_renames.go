@@ -84,11 +84,13 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 		default:
 			return true
 		}
-		if env.receiverKind(sel, stack, rename) != ctxYes {
+		kind, via := env.receiverKindVia(sel, stack, rename)
+		if kind != ctxYes {
 			return true
 		}
 
 		if rename != "" {
+			plan.qualify(g, sel, via)
 			plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, rename) })
 			if rename == "AutoFormat" {
 				noter.oncef("format", sel.Pos(),

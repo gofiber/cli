@@ -543,9 +543,60 @@ func (env *ctxEnv) receiverKind(sel *ast.SelectorExpr, stack []ast.Node, introdu
 	return ctxYes
 }
 
+// receiverKindVia is receiverKind for a rewrite that can go through the embedded
+// context. A type that embeds the context and declares a member of the name the
+// rewrite introduces hides it from calls on the type itself (a wrapper with a
+// Redirect(to string) of its own hides the Redirect() of v3), but the context it
+// embeds still has it: for such a call the kind is ctxYes and via is the name of
+// the embedded field, which the rewrite puts after the receiver (c.Ctx.Redirect()).
+// via is empty when the call needs no such detour.
+func (env *ctxEnv) receiverKindVia(sel *ast.SelectorExpr, stack []ast.Node, introduced ...string) (kind ctxKind, via string) {
+	kind = env.receiverKind(sel, stack, introduced...)
+	if kind != ctxNo {
+		return kind, ""
+	}
+
+	t := env.typeOf(sel.X, stack)
+	name := ctxTypeName(t)
+	if name == "" || env.typeIs(t, ctxTypeCtx) != ctxYes || env.declares(name, sel.Sel.Name) {
+		return ctxNo, ""
+	}
+	if via = env.embeddedCtxField(name); via == "" {
+		return ctxNo, ""
+	}
+	return ctxYes, via
+}
+
+// embeddedCtxField returns the name of the field through which the struct type
+// declared in the file embeds the fiber context, "" when it does not embed it
+// directly.
+func (env *ctxEnv) embeddedCtxField(typeName string) string {
+	spec := env.typeDecl[typeName]
+	if spec == nil {
+		return ""
+	}
+	st, ok := spec.Type.(*ast.StructType)
+	if !ok || st.Fields == nil {
+		return ""
+	}
+	for _, f := range st.Fields.List {
+		if len(f.Names) == 0 && ctxIsFiberType(f.Type, env.pkgNames, ctxTypeCtx) {
+			return ctxEmbeddedName(f.Type)
+		}
+	}
+	return ""
+}
+
 // declares reports whether the type declared in the file has a method or a field
-// of its own called name.
+// called name, its own or one it gets from a struct of the file it embeds.
 func (env *ctxEnv) declares(typeName, name string) bool {
+	return env.declaresAt(typeName, name, 0)
+}
+
+func (env *ctxEnv) declaresAt(typeName, name string, depth int) bool {
+	if depth > ctxMaxDepth {
+		return false
+	}
 	if env.methods[typeName+"."+name] != nil {
 		return true
 	}
@@ -557,8 +608,14 @@ func (env *ctxEnv) declares(typeName, name string) bool {
 	if !ok || st.Fields == nil {
 		return false
 	}
+
 	return slices.ContainsFunc(st.Fields.List, func(f *ast.Field) bool {
-		return slices.ContainsFunc(f.Names, func(id *ast.Ident) bool { return id.Name == name })
+		if len(f.Names) > 0 {
+			return slices.ContainsFunc(f.Names, func(id *ast.Ident) bool { return id.Name == name })
+		}
+		// An embedded field promotes what its type declares.
+		inner := ctxTypeName(f.Type)
+		return inner != "" && inner != typeName && env.declaresAt(inner, name, depth+1)
 	})
 }
 

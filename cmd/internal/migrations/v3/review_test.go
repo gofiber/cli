@@ -184,6 +184,57 @@ func handler(c fiber.Ctx, d db) error {
 	assert.Empty(t, notes)
 }
 
+// A type that embeds the context has all its methods, so a removed one that is
+// called through it is as much a leftover as on the context: the types of the
+// other files of the package are read as well. The methods and fields a wrapper
+// declares itself are its own.
+func Test_Review_WrapperThatEmbedsTheContext(t *testing.T) {
+	t.Parallel()
+
+	notes := reviewNotes(t, map[string]string{
+		"main.go": `package main
+
+import "github.com/gofiber/fiber/v3"
+
+type Context struct{ fiber.Ctx }
+
+func (c *Context) Back() error { return c.RedirectBack("/") }
+
+// Redirect hides the one of the embedded context.
+func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().To(to) }
+
+// QueryInt is the wrapper's own method.
+func (c *Context) QueryInt(key string) int { return 0 }
+
+func handler(c *Context, d unrelated) error {
+	_ = c.QueryInt("n")
+	_ = d.RedirectBack("/")
+	_ = c.Ctx.Redirect().Back("/")
+	return c.Redirect("/x")
+}
+
+func other(c *Remote) error { return c.RedirectBack("/") }
+`,
+		"types.go": `package main
+
+import fib "github.com/gofiber/fiber/v3"
+
+type Remote struct{ *fib.Ctx }
+
+type unrelated struct{}
+
+func (unrelated) RedirectBack(string) error { return nil }
+`,
+	})
+
+	assert.ElementsMatch(t, []string{
+		"main.go:7: RedirectBack was removed in Fiber v3: use c.Redirect().Back(fallback); " +
+			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on the embedded context: c.Ctx",
+		"main.go:22: RedirectBack was removed in Fiber v3: use c.Redirect().Back(fallback); " +
+			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on the embedded context: c.Ctx",
+	}, notes)
+}
+
 func Test_Review_AliasedAndMultiFile(t *testing.T) {
 	t.Parallel()
 

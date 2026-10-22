@@ -82,9 +82,10 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 			return true
 		}
 
-		switch env.receiverKind(sel, stack, ctxRedirect) {
+		kind, via := env.receiverKindVia(sel, stack, ctxRedirect)
+		switch kind {
 		case ctxYes:
-			ctxQueueRedirect(&plan, noter, env, call, sel)
+			ctxQueueRedirect(&plan, noter, env, call, sel, via)
 		case ctxUnknown:
 			// Redirect alone is too common a name to tell anything.
 			if sel.Sel.Name != ctxRedirect {
@@ -114,8 +115,9 @@ var ctxRedirectTarget = map[string]struct {
 // ctxQueueRedirect queues the rewrite of one call of a v2 redirect method. The
 // arguments before the status are the same for the v2 method and its v3
 // counterpart, except for the params of RedirectToRoute, which move into the
-// RedirectConfig, so it is the position that tells the status, not its type.
-func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr) {
+// RedirectConfig, so it is the position that tells the status, not its type. via
+// is the field to go through when the receiver is a wrapper that hides Redirect.
+func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr, via string) {
 	g := env.g
 	name := sel.Sel.Name
 	target := ctxRedirectTarget[name]
@@ -138,6 +140,7 @@ func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.Cal
 
 	// Only the name changes while the arguments stay where they are.
 	hasParams := name == ctxRedirectToRoute && len(call.Args) > 1
+	plan.qualify(g, sel, via)
 	if !hasStatus && !hasParams {
 		plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, "Redirect()."+target.method) })
 		return
