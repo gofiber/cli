@@ -69,15 +69,11 @@ func migrateLocalsContent(content string, fi internal.FileInfo, index *mw2Locals
 		removal := &plan.removals[i]
 		if m.blocked[removal.key] > 0 {
 			internal.Notef(fi, removal.line,
-				"%s was kept: v3 has no such field, and %d read(s) of the key could not be migrated. Move them to %s, then delete the field.",
+				"%s was kept: v3 has no such field, and %d read(s) of that key could not be migrated (see the other notes). Move them to %s, then delete the field.",
 				removal.what, m.blocked[removal.key], mw2Readers([]*mw2Role{removal.role}))
 			continue
 		}
-		if m.dynamic != "" && removal.key.val != removal.role.defaultKey {
-			internal.Notef(fi, removal.line,
-				"%s was removed: v3 has no such field. Reads of the key whose key is not a constant cannot be checked (for example the one at %s): use %s for them.",
-				removal.what, m.dynamic, mw2Readers([]*mw2Role{removal.role}))
-		}
+		m.noteRemoval(fi, removal)
 		edits.edits = append(edits.edits, removal.edits.edits...)
 	}
 
@@ -85,4 +81,21 @@ func migrateLocalsContent(content string, fi internal.FileInfo, index *mw2Locals
 		return content
 	}
 	return mw2AddImports(edits.apply(content), plan.imports...)
+}
+
+// noteRemoval tells the user what the removal of a key field could not account for.
+func (m *mw2LocalsModule) noteRemoval(fi internal.FileInfo, removal *mw2Removal) {
+	reader := mw2Readers([]*mw2Role{removal.role})
+	unresolved := m.unresolvedRead()
+
+	switch {
+	case removal.key.expr && removal.key.dir == "":
+		internal.Notef(fi, removal.line,
+			"%s was removed: v3 has no such field. The value of its key could not be resolved, so reads of the key by value were not migrated: use %s for them.",
+			removal.what, reader)
+	case unresolved != "" && removal.key.val != removal.role.defaultKey:
+		internal.Notef(fi, removal.line,
+			"%s was removed: v3 has no such field. The key of the Locals read at %s cannot be resolved; if it is this key, use %s there.",
+			removal.what, unresolved, reader)
+	}
 }

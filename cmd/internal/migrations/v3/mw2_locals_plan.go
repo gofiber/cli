@@ -133,10 +133,11 @@ func (p *mw2Planner) read(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast
 	}
 
 	key0 := p.f.g.text(call.Args[0])
+	written, isWritten := p.m.setters[key]
 	switch role := p.pick(candidates); {
-	case p.m.setters[key]:
-		p.skipf(key, call, "%s(%s) was left as it is: your own code stores a value under that key too, so it is not clear whether it reads %s's. If it does, use %s.",
-			p.f.g.text(sel), key0, mw2Names(candidates), mw2Readers(candidates))
+	case isWritten:
+		p.skipf(key, call, "%s(%s) was left as it is: your own code stores a value under that key too (%s), so it is not clear whether it reads %s's. If it does, use %s.",
+			p.f.g.text(sel), key0, written, mw2Names(candidates), mw2Readers(candidates))
 	case role == nil:
 		p.skipf(key, call, "%s(%s) was left as it is: %s store a value under that key. Use %s for the one you mean.",
 			p.f.g.text(sel), key0, mw2Names(candidates), mw2Readers(candidates))

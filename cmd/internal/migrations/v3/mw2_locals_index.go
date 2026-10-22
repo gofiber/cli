@@ -32,7 +32,7 @@ func (ix *mw2LocalsIndex) module(file string) *mw2LocalsModule {
 	m := &mw2LocalsModule{
 		usedPkgs: map[string]bool{},
 		bindings: map[mw2Key][]*mw2Role{},
-		setters:  map[mw2Key]bool{},
+		setters:  map[mw2Key]string{},
 		blocked:  map[mw2Key]int{},
 		plans:    map[string]*mw2LocalsPlan{},
 	}
@@ -131,14 +131,21 @@ func (f *mw2LocalsFile) imports(role *mw2Role) bool {
 type mw2LocalsModule struct {
 	usedPkgs map[string]bool
 	bindings map[mw2Key][]*mw2Role
-	setters  map[mw2Key]bool
+	// setters maps the keys the application writes to the place where it does.
+	setters map[mw2Key]string
 	// blocked counts, per key, the reads that could not be migrated.
 	blocked map[mw2Key]int
 	plans   map[string]*mw2LocalsPlan
-	// dynamic is the location of the first read whose key is not a constant.
-	dynamic string
+	// exprReads are the reads whose key is an expression, not a constant.
+	exprReads []mw2ExprRead
 	// files are the parsed files, until they are planned.
 	files []*mw2LocalsFile
+}
+
+// mw2ExprRead is a read of a key that is not a constant.
+type mw2ExprRead struct {
+	loc string
+	key mw2Key
 }
 
 // bind records that a role stores its value under the key.
@@ -163,10 +170,23 @@ func (m *mw2LocalsModule) candidates(key mw2Key) []*mw2Role {
 // key, and that the application does not write itself.
 func (m *mw2LocalsModule) owner(key mw2Key) (*mw2Role, bool) {
 	roles := m.candidates(key)
-	if len(roles) != 1 || m.setters[key] {
+	if _, written := m.setters[key]; len(roles) != 1 || written {
 		return nil, false
 	}
 	return roles[0], true
+}
+
+// unresolvedRead returns the location of a read whose key is not a constant and
+// that no config or write of the application accounts for, so that it may be a
+// read of a key the middleware stores under; "" when there is none.
+func (m *mw2LocalsModule) unresolvedRead() string {
+	for _, r := range m.exprReads {
+		_, written := m.setters[r.key]
+		if len(m.bindings[r.key]) == 0 && !written {
+			return r.loc
+		}
+	}
+	return ""
 }
 
 // collect reads the facts of one file: the middleware it uses, the keys it
@@ -261,10 +281,12 @@ func (m *mw2LocalsModule) collectLocals(f *mw2LocalsFile, call *ast.CallExpr) {
 	}
 
 	if len(call.Args) > 1 {
-		m.setters[key] = true
+		if _, seen := m.setters[key]; !seen {
+			m.setters[key] = f.location(sel)
+		}
 		return
 	}
-	if key.expr && m.dynamic == "" {
-		m.dynamic = f.location(sel)
+	if key.expr {
+		m.exprReads = append(m.exprReads, mw2ExprRead{key: key, loc: f.location(sel)})
 	}
 }

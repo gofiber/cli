@@ -119,7 +119,7 @@ func whoami(c *fiber.Ctx) error {
 	require.Len(t, run.notes, 1)
 	assert.Equal(t, "handlers.go", run.notes[0].File)
 	assert.Equal(t, 9, run.notes[0].Line)
-	assert.Contains(t, run.notes[0].Message, "your own code stores a value under that key too")
+	assert.Contains(t, run.notes[0].Message, "your own code stores a value under that key too (handlers.go:5)")
 	assert.Contains(t, run.notes[0].Message, "keyauth.TokenFromContext(c)")
 }
 
@@ -819,6 +819,7 @@ func main() {
 	require.Len(t, run.notes, 1)
 	assert.Equal(t, 12, run.notes[0].Line)
 	assert.Contains(t, run.notes[0].Message, "main.go:8")
+	assert.Contains(t, run.notes[0].Message, "cannot be resolved")
 	assert.Contains(t, run.notes[0].Message, "requestid.FromContext(c)")
 }
 
@@ -894,4 +895,40 @@ func good(c *fiber.Ctx) string { return c.Locals("requestid").(string) }
 	assert.Contains(t, run.file(t, "b_good.go"), "requestid.FromContext(c)")
 	require.Len(t, run.notes, 1)
 	assert.Contains(t, run.notes[0].Message, "does not parse")
+}
+
+func Test_MigrateMiddlewareLocals_KeyOfAnotherPackage(t *testing.T) {
+	t.Parallel()
+
+	run := mw2Apply(t, v3.MigrateMiddlewareLocals, map[string]string{
+		"go.mod": "module sample\n\ngo 1.25\n",
+		"keys/keys.go": `package keys
+
+const RequestID = "rid"
+`,
+		"main.go": `package main
+
+import (
+	"sample/keys"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{ContextKey: keys.RequestID}))
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendString(c.Locals(keys.RequestID).(string))
+	})
+}
+`,
+	})
+
+	main := run.file(t, "main.go")
+	assert.Contains(t, main, "return c.SendString(requestid.FromContext(c))")
+	assert.NotContains(t, main, "ContextKey")
+	require.Len(t, run.notes, 1)
+	assert.Contains(t, run.notes[0].Message, "The value of its key could not be resolved")
+	assert.Contains(t, run.notes[0].Message, "requestid.FromContext(c)")
 }

@@ -160,6 +160,8 @@ func unrelated(o other) string { return o.Timestamp.Load().(string) }
 	assert.Contains(t, content, `return output.WriteString("[" + d.Timestamp + "]")`)
 	assert.Contains(t, content, "o.Timestamp.Load().(string)", "only the Data of the logger is a string in v3")
 	assert.Contains(t, run.out, "Migrating logger middleware configs")
+	require.Len(t, run.notes, 2)
+	assert.Contains(t, run.notes[0].Message, "only filled in when the logger's Format contains ${time}")
 }
 
 func Test_MigrateLoggerConfig_OutputAndStreamAreLeftAlone(t *testing.T) {

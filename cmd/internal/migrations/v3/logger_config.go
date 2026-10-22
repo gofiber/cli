@@ -13,7 +13,8 @@ import (
 
 // MigrateLoggerConfig moves the logger middleware to its v3 config: Config.Output
 // is called Stream, and Data.Timestamp, an atomic.Value in v2, is a plain string,
-// so data.Timestamp.Load().(string) is data.Timestamp. Config literals and
+// so data.Timestamp.Load().(string) is data.Timestamp (v3 only fills it in for
+// formats with a ${time} tag, which the note says). Config literals and
 // variables, and the Data parameters of custom tags, are found through the import
 // path and the declared types.
 func MigrateLoggerConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -52,7 +53,7 @@ func migrateLoggerConfigContent(content string, fi internal.FileInfo) string {
 				edits.replaceNode(g, x.Sel, "Stream")
 			}
 		case *ast.TypeAssertExpr:
-			migrateLoggerTimestamp(g, &edits, x, names, stack)
+			migrateLoggerTimestamp(g, &edits, fi, x, names, stack)
 		}
 		return true
 	})
@@ -78,7 +79,7 @@ func migrateLoggerLiteral(g *goSource, edits *editSet, fi internal.FileInfo, n *
 
 // migrateLoggerTimestamp turns data.Timestamp.Load().(string) on a *logger.Data
 // into data.Timestamp.
-func migrateLoggerTimestamp(g *goSource, edits *editSet, assert *ast.TypeAssertExpr, names []string, stack []ast.Node) {
+func migrateLoggerTimestamp(g *goSource, edits *editSet, fi internal.FileInfo, assert *ast.TypeAssertExpr, names []string, stack []ast.Node) {
 	if !isIdentNamed(assert.Type, "string") {
 		return
 	}
@@ -103,4 +104,7 @@ func migrateLoggerTimestamp(g *goSource, edits *editSet, assert *ast.TypeAssertE
 		return
 	}
 	edits.replaceNode(g, assert, g.text(field))
+	internal.Notef(fi, g.line(assert.Pos()),
+		"%s is a plain string in v3, and it is only filled in when the logger's Format contains ${time}. Add the tag to the format, or read the time yourself.",
+		g.text(field))
 }
