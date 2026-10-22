@@ -582,6 +582,11 @@ func (m *ctxModule) initType(f *modFile, e ast.Expr, idx int, importPath string,
 		if idx == 0 && x.Type != nil {
 			return m.translatedType(x.Type, f.g.file, importPath, true)
 		}
+	case *ast.FuncLit:
+		// a variable that holds a function
+		if idx == 0 {
+			return m.translatedType(x.Type, f.g.file, importPath, true)
+		}
 	case *ast.TypeAssertExpr:
 		if idx == 0 && x.Type != nil {
 			return m.translatedType(x.Type, f.g.file, importPath, true)

@@ -758,3 +758,97 @@ func f() {
 	}
 	assert.Equal(t, want, ctxModuleKinds(t, files, "cmd/api/main.go"))
 }
+
+func Test_ctxEnv_moreWaysToReachAContextOfAnotherPackage(t *testing.T) {
+	t.Parallel()
+
+	files := map[string]string{
+		"internal/web/web.go": ctxModuleWeb + `
+// WithProvider embeds the interface.
+type WithProvider struct{ Provider }
+
+// Getter2 holds a function.
+var Getter2 = func() *fiber.Ctx { return nil }
+
+// Getter returns a function.
+func (h *Holder) Getter() func() *fiber.Ctx { return nil }
+
+// Job holds a function that takes and returns a context.
+type Job struct {
+	Run func(c *fiber.Ctx) *fiber.Ctx
+}
+
+// Named is a function type.
+type Named func() *Context
+
+// Chain returns a chain of contexts.
+func Chain(c *fiber.Ctx) (*fiber.Ctx, error) { return c, nil }
+`,
+		"cmd/api/main.go": `package main
+
+import "example.com/app/internal/web"
+
+func handlers(wp *web.WithProvider, h *web.Holder, j *web.Job, v any, ch <-chan *web.Context, n web.Named) {
+	wp.Ctx().probe("method promoted from an embedded interface")
+	web.Getter2().probe("package variable that holds a function")
+	h.Getter()().probe("function returned by a method")
+	j.Run(nil).probe("function field")
+	f := h.Current
+	f().probe("method value")
+	(&web.Holder{}).Ctx.probe("field of a literal")
+	v.(web.Provider).Ctx().probe("method of an asserted interface")
+	web.Named(nil)().probe("conversion to a function type")
+	(<-ch).probe("receive from a parameter")
+	n().probe("call of a value of a function type")
+	got, err := web.Chain(nil)
+	got.probe("first result of a call that returns an error")
+	_ = err
+	var arr [2]*web.Context
+	arr[0].probe("element of an array")
+	for i := range arr {
+		arr[i].probe("element by index")
+	}
+	func(c *web.Context) { c.probe("parameter of a literal") }(nil)
+	defer func() { h.Ctx.probe("field read in a deferred closure") }()
+	go func() { h.Aliased.probe("alias field read in a goroutine") }()
+}
+`,
+	}
+
+	got := ctxModuleKinds(t, files, "cmd/api/main.go")
+	for key, kind := range got {
+		assert.Equal(t, ctxYes, kind, key)
+	}
+	assert.Len(t, got, 16)
+}
+
+func Test_ctxEnv_callsOfValuesOfAFunctionType(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Named func() *fiber.Ctx
+
+type Holder struct {
+	handlers []func() *fiber.Ctx
+	byName   map[string]func(*fiber.Ctx) *fiber.Ctx
+}
+
+func (h *Holder) Getter() func() *fiber.Ctx { return nil }
+
+func f(h *Holder, c *fiber.Ctx) {
+	Named(nil)().probe("conversion")
+	h.Getter()().probe("call of a call")
+	h.handlers[0]().probe("element of a slice")
+	h.byName["a"](c).probe("element of a map")
+	(h.Getter())().probe("parenthesized")
+}
+`
+	got := ctxKindsOf(t, src)
+	for key, kind := range got {
+		assert.Equal(t, ctxYes, kind, key)
+	}
+	assert.Len(t, got, 5)
+}

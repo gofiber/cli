@@ -369,6 +369,11 @@ func (env *ctxEnv) elsewhereExprType(e ast.Expr, idx int, file *ast.File, depth 
 		if x.Type != nil && idx == 0 {
 			return env.mod.translatedType(x.Type, file, env.pkgPath, false)
 		}
+	case *ast.FuncLit:
+		// a variable that holds a function
+		if idx == 0 {
+			return env.mod.translatedType(x.Type, file, env.pkgPath, false)
+		}
 	case *ast.TypeAssertExpr:
 		if x.Type != nil && idx == 0 {
 			return env.mod.translatedType(x.Type, file, env.pkgPath, false)

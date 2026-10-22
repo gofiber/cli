@@ -652,13 +652,26 @@ func (env *ctxEnv) callResults(call *ast.CallExpr, stack []ast.Node, depth int) 
 		return env.identCallResults(call, fun, nil, stack, depth)
 	case *ast.IndexExpr:
 		// f[int](x), or the conversion box[int](x)
-		return env.instantiatedCallResults(call, fun.X, []ast.Expr{fun.Index}, stack, depth)
+		if results := env.instantiatedCallResults(call, fun.X, []ast.Expr{fun.Index}, stack, depth); results != nil {
+			return results
+		}
 	case *ast.IndexListExpr:
 		return env.instantiatedCallResults(call, fun.X, fun.Indices, stack, depth)
 	case *ast.FuncLit:
 		return ctxResultTypes(fun.Type)
-	case *ast.ParenExpr, *ast.StarExpr, *ast.ArrayType, *ast.MapType:
+	case *ast.StarExpr, *ast.ArrayType, *ast.MapType:
 		return []ast.Expr{fun}
+	}
+
+	// the call of a value of a function type that is no name: what another call
+	// returns (get()()), an element of a slice or a map (handlers[i](c)), the same in
+	// parentheses
+	if held := env.funcTypeOf(env.typeOfAt(call.Fun, stack, depth+1), depth+1); held != nil {
+		return ctxResultTypes(held)
+	}
+	if paren, ok := call.Fun.(*ast.ParenExpr); ok {
+		// the conversion (*Ctx)(x)
+		return []ast.Expr{paren}
 	}
 	return nil
 }
