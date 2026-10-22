@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -42,10 +43,16 @@ type storageMethod struct {
 }
 
 // storageType is what the package says about one named type: the methods it
-// declares and whether it embeds another type, which can bring methods along.
+// declares and the types it embeds, which can bring methods along.
 type storageType struct {
 	methods map[string]storageMethod
-	embeds  bool
+	// promoted are the methods of an interface type.
+	promoted map[string]bool
+	// embedded are the names of the types of the package that the type embeds.
+	embedded []string
+	// foreign says that it embeds a type of a package outside the standard
+	// library, whose methods the scan does not know.
+	foreign bool
 }
 
 // storagePackages indexes the types of every package below a directory by the
@@ -122,7 +129,7 @@ func (p storagePackages) add(path string, fset *token.FileSet, file *ast.File) {
 	}
 	typ := func(name string) *storageType {
 		if pkg[name] == nil {
-			pkg[name] = &storageType{methods: map[string]storageMethod{}}
+			pkg[name] = &storageType{methods: map[string]storageMethod{}, promoted: map[string]bool{}}
 		}
 		return pkg[name]
 	}
@@ -140,7 +147,7 @@ func (p storagePackages) add(path string, fset *token.FileSet, file *ast.File) {
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				if ts, ok := spec.(*ast.TypeSpec); ok {
-					typ(ts.Name.Name).embeds = typ(ts.Name.Name).embeds || embedsType(ts.Type)
+					typ(ts.Name.Name).declare(ts, file)
 				}
 			}
 		}
@@ -150,6 +157,82 @@ func (p storagePackages) add(path string, fset *token.FileSet, file *ast.File) {
 // receiverTypeName returns the name of the type a method is declared on:
 // *Store, Store and *Store[T] are all Store.
 func receiverTypeName(e ast.Expr) string {
+	if id, ok := receiverBase(e).(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
+}
+
+// declare records what the declaration of a type says about the methods it
+// has: the methods of an interface, and the types that a struct or an interface
+// embeds or an alias names, which the type gets methods from. A type of the
+// standard library cannot have the context methods of fiber.Storage, one of
+// another package might.
+func (t *storageType) declare(spec *ast.TypeSpec, file *ast.File) {
+	switch x := spec.Type.(type) {
+	case *ast.StructType:
+		t.embed(x.Fields, file)
+	case *ast.InterfaceType:
+		for _, m := range x.Methods.List {
+			for _, name := range m.Names {
+				t.promoted[name.Name] = true
+			}
+		}
+		t.embed(x.Methods, file)
+	default:
+		if spec.Assign.IsValid() {
+			t.embedType(x, file)
+		}
+	}
+}
+
+// embed records the embedded fields of a struct or an interface.
+func (t *storageType) embed(fields *ast.FieldList, file *ast.File) {
+	for _, f := range fields.List {
+		if len(f.Names) == 0 {
+			t.embedType(f.Type, file)
+		}
+	}
+}
+
+func (t *storageType) embedType(e ast.Expr, file *ast.File) {
+	switch x := receiverBase(e).(type) {
+	case *ast.Ident:
+		if types.Universe.Lookup(x.Name) == nil {
+			t.embedded = append(t.embedded, x.Name)
+		}
+	case *ast.SelectorExpr:
+		if id, ok := x.X.(*ast.Ident); !ok || !fromStandardLibrary(file, id.Name) {
+			t.foreign = true
+		}
+	default:
+		t.foreign = true
+	}
+}
+
+// fromStandardLibrary reports whether the file binds name to a package of the
+// standard library, whose import paths have no dot in their first element.
+func fromStandardLibrary(file *ast.File, name string) bool {
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			continue
+		}
+		local := defaultImportName(path)
+		if spec.Name != nil {
+			local = spec.Name.Name
+		}
+		if local == name {
+			first, _, _ := strings.Cut(path, "/")
+			return !strings.Contains(first, ".")
+		}
+	}
+	return false
+}
+
+// receiverBase strips the pointer and the type arguments from the type of an
+// embedded field or a receiver.
+func receiverBase(e ast.Expr) ast.Expr {
 	for {
 		switch x := e.(type) {
 		case *ast.StarExpr:
@@ -160,21 +243,40 @@ func receiverTypeName(e ast.Expr) string {
 			e = x.X
 		case *ast.IndexListExpr:
 			e = x.X
-		case *ast.Ident:
-			return x.Name
 		default:
-			return ""
+			return e
 		}
 	}
 }
 
-// embedsType reports whether the type is a struct with an embedded field.
-func embedsType(e ast.Expr) bool {
-	st, ok := e.(*ast.StructType)
-	if !ok {
+// bringsMethods reports whether the types t embeds can bring one of the methods
+// along: a type of another package might, and so does a type of this package
+// that declares one of them.
+func (t *storageType) bringsMethods(pkg map[string]*storageType, methods []string, depth int) bool {
+	if t.foreign {
+		return true
+	}
+	if depth > maxStorageDepth {
 		return false
 	}
-	return slices.ContainsFunc(st.Fields.List, func(f *ast.Field) bool { return len(f.Names) == 0 })
+	for _, name := range t.embedded {
+		inner := pkg[name]
+		if inner == nil {
+			// Declared where the scan could not read it.
+			return true
+		}
+		if slices.ContainsFunc(methods, inner.declares) || inner.bringsMethods(pkg, methods, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// declares reports whether the type has a method of its own with the name, or an
+// interface type lists it.
+func (t *storageType) declares(name string) bool {
+	_, ok := t.methods[name]
+	return ok || t.promoted[name]
 }
 
 // isStorage reports whether the type declares the five methods of Fiber v2's
@@ -282,7 +384,7 @@ func (p storagePackages) addMethods(content string, fi internal.FileInfo) string
 		if len(missing) == 0 {
 			continue
 		}
-		if typ.embeds {
+		if typ.bringsMethods(pkg, missing, 0) {
 			internal.Notef(fi, g.line(fn.Pos()),
 				"%s has the methods of Fiber v2's Storage but embeds another type, so the CLI did not add the context methods of fiber.Storage (%s); add the ones the embedded type does not bring.",
 				name, strings.Join(missing, ", "))

@@ -310,39 +310,109 @@ func (Cache) Close()                            {}
 	}
 }
 
-func Test_MigrateStorageInterface_EmbeddingMayBringTheMethods(t *testing.T) {
-	t.Parallel()
-
-	src := `package a
-
-import (
-	"sync"
-	"time"
-)
-
-type Wrapped struct {
-	sync.Mutex
-	inner map[string][]byte
-}
-
+// storageEmbeddingMethods are the five methods of Fiber v2's Storage on a type
+// named Wrapped.
+const storageEmbeddingMethods = `
 func (w *Wrapped) Get(key string) ([]byte, error)                      { return nil, nil }
 func (w *Wrapped) Set(key string, val []byte, exp time.Duration) error { return nil }
 func (w *Wrapped) Delete(key string) error                             { return nil }
 func (w *Wrapped) Reset() error                                        { return nil }
 func (w *Wrapped) Close() error                                        { return nil }
 `
-	dir := importsTree(t, map[string]string{"wrapped.go": src})
 
-	var buf bytes.Buffer
-	require.NoError(t, v3.MigrateStorageInterface(newCmd(&buf), dir, nil, nil))
+func Test_MigrateStorageInterface_EmbeddingMayBringTheMethods(t *testing.T) {
+	t.Parallel()
 
-	assert.Empty(t, buf.String())
-	assert.Equal(t, src, importsRead(t, dir, "wrapped.go"))
-	notes := importsNotes(dir)
-	require.Len(t, notes, 1)
-	assert.Contains(t, notes[0], "wrapped.go:14: ")
-	assert.Contains(t, notes[0], "Wrapped has the methods of Fiber v2's Storage but embeds another type")
-	assert.Contains(t, notes[0], "GetWithContext, SetWithContext, DeleteWithContext, ResetWithContext")
+	tests := []struct {
+		name string
+		decl string
+		more string
+	}{
+		{
+			name: "a type of another module",
+			decl: "type Wrapped struct {\n\t*memory.Storage\n}\n",
+			more: "import \"github.com/gofiber/storage/memory/v2\"\n\nvar _ = memory.New\n",
+		},
+		{
+			name: "an interface of another module",
+			decl: "type Wrapped struct {\n\tfiber.Storage\n}\n",
+			more: "import \"github.com/gofiber/fiber/v3\"\n\nvar _ fiber.Storage\n",
+		},
+		{
+			name: "a type of the package with one of the methods",
+			decl: "type Base struct{}\n\nfunc (Base) GetWithContext(_ context.Context, key string) ([]byte, error) { return nil, nil }\n\ntype Wrapped struct {\n\tBase\n}\n",
+			more: "import \"context\"\n\nvar _ context.Context\n",
+		},
+		{
+			name: "a type that embeds one with the method",
+			decl: "type Base struct{}\n\nfunc (Base) ResetWithContext(_ context.Context) error { return nil }\n\ntype Middle struct {\n\t*Base\n}\n\ntype Wrapped struct {\n\tMiddle\n}\n",
+			more: "import \"context\"\n\nvar _ context.Context\n",
+		},
+		{
+			name: "an interface of the package with one of the methods",
+			decl: "type Backend interface {\n\tSetWithContext(context.Context, string, []byte, time.Duration) error\n}\n\ntype Wrapped struct {\n\tBackend\n}\n",
+			more: "import \"context\"\n\nvar _ context.Context\n",
+		},
+		{
+			name: "an alias of a type of another module",
+			decl: "type Base = memory.Storage\n\ntype Wrapped struct {\n\tBase\n}\n",
+			more: "import \"github.com/gofiber/storage/memory/v2\"\n\nvar _ memory.Storage\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := "package a\n\nimport \"time\"\n\n" + tt.more + "\n" + tt.decl + storageEmbeddingMethods
+			dir := importsTree(t, map[string]string{"wrapped.go": src})
+
+			var buf bytes.Buffer
+			require.NoError(t, v3.MigrateStorageInterface(newCmd(&buf), dir, nil, nil))
+
+			assert.Empty(t, buf.String())
+			assert.Equal(t, src, importsRead(t, dir, "wrapped.go"))
+			notes := importsNotes(dir)
+			require.Len(t, notes, 1)
+			assert.Contains(t, notes[0], "wrapped.go:")
+			assert.Contains(t, notes[0], "Wrapped has the methods of Fiber v2's Storage but embeds another type")
+			assert.Contains(t, notes[0], "GetWithContext, SetWithContext, DeleteWithContext, ResetWithContext")
+		})
+	}
+}
+
+func Test_MigrateStorageInterface_EmbeddingAnythingElseKeepsTheMethodsComing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		decl string
+	}{
+		{name: "sync.Mutex", decl: "type Wrapped struct {\n\tsync.Mutex\n\tdata map[string][]byte\n}\n"},
+		{name: "a pointer to sync.RWMutex", decl: "type Wrapped struct {\n\t*sync.RWMutex\n\tdata map[string][]byte\n}\n"},
+		{name: "a type of the package without those methods", decl: "type Base struct{ data map[string][]byte }\n\nfunc (Base) Len() int { return 0 }\n\ntype Wrapped struct {\n\tBase\n}\n"},
+		{name: "a field that is not embedded", decl: "type Wrapped struct {\n\tbase memory.Storage\n}\n"},
+		{name: "error", decl: "type Wrapped struct {\n\terror\n}\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := "package a\n\nimport (\n\t\"sync\"\n\t\"time\"\n\n\t\"github.com/gofiber/storage/memory/v2\"\n)\n\nvar (\n\t_ sync.Mutex\n\t_ = memory.New\n)\n\n" + tt.decl + storageEmbeddingMethods
+			dir := importsTree(t, map[string]string{"wrapped.go": src})
+
+			var buf bytes.Buffer
+			require.NoError(t, v3.MigrateStorageInterface(newCmd(&buf), dir, nil, nil))
+
+			assert.Equal(t, "Adding the context methods to fiber.Storage implementations\n", buf.String())
+			assert.Empty(t, importsNotes(dir))
+			out := importsRead(t, dir, "wrapped.go")
+			for _, m := range []string{"GetWithContext", "SetWithContext", "DeleteWithContext", "ResetWithContext"} {
+				assert.Contains(t, out, "func (w *Wrapped) "+m+"(", m)
+			}
+		})
+	}
 }
 
 func Test_MigrateStorageInterface_ContextImport(t *testing.T) {

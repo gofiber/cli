@@ -1,4 +1,4 @@
-// Package gomod rewrites go.mod files. It reads them with
+// Package gomod rewrites go.mod and go.work files. It reads them with
 // golang.org/x/mod/modfile, so that a migration sees requirements, replace
 // directives and the go line the way the go command does: block or single-line,
 // with comments, CRLF line endings and in nested modules. The changes are made
