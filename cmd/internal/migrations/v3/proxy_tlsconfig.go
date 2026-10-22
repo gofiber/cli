@@ -62,7 +62,7 @@ func migrateProxyContent(content string, fi internal.FileInfo) string {
 				}
 			}
 		case *ast.SelectorExpr:
-			if x.Sel.Name == "TlsConfig" && mw2IsTyped(x.X, names, "Config", stack, 0) {
+			if x.Sel.Name == "TlsConfig" && mw2IsTyped(x.X, names, mw2ConfigType, stack, 0) {
 				edits.replaceNode(g, x.Sel, "TLSConfig")
 			}
 		case *ast.CallExpr:

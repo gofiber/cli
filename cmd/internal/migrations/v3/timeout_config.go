@@ -72,7 +72,7 @@ func migrateTimeoutContent(content string, fi internal.FileInfo) string {
 // migrateTimeoutNew rewrites timeout.New(handler, d); a call that already passes
 // a config is left alone.
 func migrateTimeoutNew(g *goSource, edits *editSet, call *ast.CallExpr, pkg string, names []string, stack []ast.Node) {
-	if len(call.Args) != 2 || call.Ellipsis.IsValid() || mw2IsTyped(call.Args[1], names, "Config", stack, 0) {
+	if len(call.Args) != 2 || call.Ellipsis.IsValid() || mw2IsTyped(call.Args[1], names, mw2ConfigType, stack, 0) {
 		return
 	}
 	edits.replaceNode(g, call.Args[1], pkg+".Config{Timeout: "+g.text(call.Args[1])+"}")

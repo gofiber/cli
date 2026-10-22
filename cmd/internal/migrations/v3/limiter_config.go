@@ -107,7 +107,7 @@ func (r *mw2LimiterRewriter) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	}
 
 	replacement, ok := mw2LimiterRenames[sel.Sel.Name]
-	if !ok || !mw2IsTyped(sel.X, r.names, "Config", stack, 0) {
+	if !ok || !mw2IsTyped(sel.X, r.names, mw2ConfigType, stack, 0) {
 		return
 	}
 	r.edits.replaceNode(r.g, sel.Sel, replacement)

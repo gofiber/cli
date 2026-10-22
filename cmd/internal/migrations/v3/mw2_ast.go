@@ -22,7 +22,12 @@ var (
 	mw2Limiter    = mw2Middleware("limiter")
 	mw2Logger     = mw2Middleware("logger")
 	mw2Proxy      = mw2Middleware("proxy")
+	mw2RequestID  = mw2Middleware("requestid")
+	mw2BasicAuth  = mw2Middleware("basicauth")
+	mw2CSRF       = mw2Middleware("csrf")
 	mw2Log        = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/log$`)
+	mw2JWT        = regexp.MustCompile(`^github\.com/gofiber/(?:contrib(?:/v\d+)?/jwt(?:/v\d+)?|jwt/v\d+)$`)
+	mw2Paseto     = regexp.MustCompile(`^github\.com/gofiber/contrib(?:/v\d+)?/paseto(?:/v\d+)?$`)
 	mw2Timeout    = mw2Middleware("timeout")
 	mw2Extractors = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/extractors$`)
 	mw2Fasthttp   = regexp.MustCompile(`^github\.com/valyala/fasthttp$`)
@@ -33,8 +38,13 @@ func mw2Middleware(name string) *regexp.Regexp {
 	return regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/` + regexp.QuoteMeta(name) + `$`)
 }
 
-// mw2New is the name of the constructor every middleware package has.
-const mw2New = "New"
+// Names of the API the migrations look for.
+const (
+	// mw2New is the name of the constructor every middleware package has.
+	mw2New = "New"
+	// mw2ConfigType is the name of the config type of a middleware.
+	mw2ConfigType = "Config"
+)
 
 // mw2IsSelector reports whether e is the selector name.sel where name is one of
 // the identifiers a file binds to a package.
@@ -51,7 +61,7 @@ func mw2IsSelector(e ast.Expr, names []string, sel string) bool {
 // bound to names, for example keyauth.Config{...}.
 func mw2ConfigLit(n ast.Node, names []string) (*ast.CompositeLit, bool) {
 	lit, ok := n.(*ast.CompositeLit)
-	if !ok || lit.Type == nil || !isFiberType(lit.Type, names, "Config") {
+	if !ok || lit.Type == nil || !isFiberType(lit.Type, names, mw2ConfigType) {
 		return nil, false
 	}
 	return lit, true
@@ -100,7 +110,7 @@ func mw2IsTyped(e ast.Expr, names []string, typeName string, stack []ast.Node, d
 	case *ast.CompositeLit:
 		return x.Type != nil && isFiberType(x.Type, names, typeName)
 	case *ast.SelectorExpr:
-		return typeName == "Config" && mw2IsSelector(x, names, "ConfigDefault")
+		return typeName == mw2ConfigType && mw2IsSelector(x, names, "ConfigDefault")
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		if !ok {
@@ -112,6 +122,24 @@ func mw2IsTyped(e ast.Expr, names []string, typeName string, stack []ast.Node, d
 		return d.init != nil && mw2IsTyped(d.init, names, typeName, stack, depth+1)
 	}
 	return false
+}
+
+// mw2Inspect walks the tree below root the way goSource.walk walks a file: fn
+// gets every node together with the chain of its ancestors, outermost first.
+// Returning false skips the children.
+func mw2Inspect(root ast.Node, fn func(n ast.Node, stack []ast.Node) bool) {
+	var stack []ast.Node
+	ast.Inspect(root, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		if !fn(n, stack) {
+			return false
+		}
+		stack = append(stack, n)
+		return true
+	})
 }
 
 // mw2RemoveElement schedules the removal of the element i of lit. The comma that
@@ -229,6 +257,24 @@ func mw2ConstString(e ast.Expr, lookup func(name string) (ast.Expr, bool), depth
 	return "", false
 }
 
+// mw2TypeText renders a (possibly qualified) type name; it is empty for every
+// other kind of type expression.
+func mw2TypeText(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		if id, ok := x.X.(*ast.Ident); ok {
+			return id.Name + "." + x.Sel.Name
+		}
+	case *ast.StarExpr:
+		if inner := mw2TypeText(x.X); inner != "" {
+			return "*" + inner
+		}
+	}
+	return ""
+}
+
 // mw2Const is a package-level constant declaration.
 type mw2Const struct {
 	// typ is the declared type, nil for an untyped constant.
@@ -242,8 +288,9 @@ type mw2Const struct {
 // package a file belongs to.
 type mw2Package struct {
 	consts map[string]mw2Const
-	// decls holds every name declared at package level.
+	// decls holds every name declared at package level, types the ones that are types.
 	decls map[string]bool
+	types map[string]bool
 }
 
 // mw2Packages reads the packages of a project on demand and remembers them.
@@ -263,7 +310,7 @@ func (p *mw2Packages) of(dir, name string) *mw2Package {
 		return pkg
 	}
 
-	pkg := &mw2Package{consts: map[string]mw2Const{}, decls: map[string]bool{}}
+	pkg := &mw2Package{consts: map[string]mw2Const{}, decls: map[string]bool{}, types: map[string]bool{}}
 	p.cache[key] = pkg
 
 	entries, err := os.ReadDir(dir)
@@ -302,6 +349,7 @@ func (p *mw2Package) addGen(decl *ast.GenDecl) {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
 			p.decls[s.Name.Name] = true
+			p.types[s.Name.Name] = true
 		case *ast.ValueSpec:
 			for i, name := range s.Names {
 				p.decls[name.Name] = true

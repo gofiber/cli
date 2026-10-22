@@ -252,7 +252,7 @@ func (r *mw2KeyAuthRewriter) lookupAssignment(as *ast.AssignStmt, stack []ast.No
 	if !ok || (sel.Sel.Name != "KeyLookup" && sel.Sel.Name != "AuthScheme") {
 		return "", "", false
 	}
-	if _, isVar := sel.X.(*ast.Ident); !isVar || !mw2IsTyped(sel.X, r.names, "Config", stack, 0) {
+	if _, isVar := sel.X.(*ast.Ident); !isVar || !mw2IsTyped(sel.X, r.names, mw2ConfigType, stack, 0) {
 		return "", "", false
 	}
 	return r.g.text(sel.X), r.g.text(sel), true
