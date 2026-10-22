@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	utilsModulePath    = "github.com/gofiber/utils/v2"
-	testifyRequirePath = "github.com/stretchr/testify/require"
-	syncAtomicPath     = "sync/atomic"
+	utilsModulePath       = "github.com/gofiber/utils/v2"
+	importsTestifyRequire = "github.com/stretchr/testify/require"
+	importsSyncAtomic     = "sync/atomic"
 )
 
 // reFiberUtilsPath matches the import path of the utils package of the core
@@ -71,7 +71,7 @@ func migrateUtilsContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	m := &utilsMigration{g: g, fi: fi, atomic: importsNameOf(g, syncAtomicPath, "atomic")}
+	m := &utilsMigration{g: g, fi: fi, atomic: importsNameOf(g, importsSyncAtomic, "atomic")}
 	for _, s := range specs {
 		importsRewritePath(g, &m.edits, s, utilsModulePath)
 		switch {
@@ -91,7 +91,7 @@ func migrateUtilsContent(content string, fi internal.FileInfo) string {
 			return content
 		}
 		var imp editSet
-		importsAdd(g2, &imp, m.requireAlias, testifyRequirePath)
+		importsAdd(g2, &imp, m.requireAlias, importsTestifyRequire)
 		out = imp.apply(out)
 	}
 	return out
@@ -222,7 +222,7 @@ func (m *utilsMigration) requireName() string {
 		return m.require
 	}
 
-	m.require = importsNameOf(m.g, testifyRequirePath, "require")
+	m.require = importsNameOf(m.g, importsTestifyRequire, "require")
 	if m.require != "" {
 		return m.require
 	}
