@@ -304,3 +304,20 @@ func ctxMentionsBefore(n ast.Node, name string, pos token.Pos) bool {
 	})
 	return found
 }
+
+// collectFunc takes every name of the function that holds the innermost node of stack: its
+// parameters, its results and everything its body uses.
+func (n ctxNamer) collectFunc(stack []ast.Node) {
+	for _, node := range slices.Backward(stack) {
+		switch node.(type) {
+		case *ast.FuncDecl, *ast.FuncLit:
+			ast.Inspect(node, func(x ast.Node) bool {
+				if id, ok := x.(*ast.Ident); ok {
+					n[id.Name] = true
+				}
+				return true
+			})
+			return
+		}
+	}
+}

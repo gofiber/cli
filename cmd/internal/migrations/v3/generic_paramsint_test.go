@@ -326,6 +326,10 @@ func in(c *fiber.Ctx) func() (int, error) {
 func plus(c *fiber.Ctx) (int, error, bool) {
 	return 1, nil, true
 }
+
+func results(c *fiber.Ctx) (value int, err error) {
+	return c.ParamsInt("id")
+}
 `,
 			want: `package main
 
@@ -344,9 +348,9 @@ func userID(c *fiber.Ctx) (int, error) {
 }
 
 func named(c *fiber.Ctx) (id int, err error) {
-	value, err := strconv.Atoi(c.Params("id"))
-	if err != nil {
-		return 0, err
+	value, err2 := strconv.Atoi(c.Params("id"))
+	if err2 != nil {
+		return 0, err2
 	}
 	return value, nil
 }
@@ -363,6 +367,14 @@ func in(c *fiber.Ctx) func() (int, error) {
 
 func plus(c *fiber.Ctx) (int, error, bool) {
 	return 1, nil, true
+}
+
+func results(c *fiber.Ctx) (value int, err error) {
+	value2, err2 := strconv.Atoi(c.Params("id"))
+	if err2 != nil {
+		return 0, err2
+	}
+	return value2, nil
 }
 `,
 			msg:   msg,

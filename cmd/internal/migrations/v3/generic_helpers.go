@@ -165,7 +165,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 					noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
 				case ctxErrReturned:
 					noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
-					ctxQueueParamsIntReturn(&plan, env, errUse.ret, call, sel, env.pkgAt(call.Pos(), "strconv"), via)
+					ctxQueueParamsIntReturn(&plan, env, errUse.ret, call, sel, env.pkgAt(call.Pos(), "strconv"), via, stack)
 					return true
 				case ctxErrOther:
 					noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
@@ -278,11 +278,14 @@ func ctxQueueHelper(plan *ctxPlan, g *goSource, call *ast.CallExpr, sel *ast.Sel
 //	    return 0, err
 //	}
 //	return value, nil
-func ctxQueueParamsIntReturn(plan *ctxPlan, env *ctxEnv, ret *ast.ReturnStmt, call *ast.CallExpr, sel *ast.SelectorExpr, strconvName, via string) {
+func ctxQueueParamsIntReturn(plan *ctxPlan, env *ctxEnv, ret *ast.ReturnStmt, call *ast.CallExpr, sel *ast.SelectorExpr, strconvName, via string, stack []ast.Node) {
 	g := env.g
+	// the names stay clear of every name of the function: a result called value or err would
+	// be declared already (the stack is only good while the walk is at the call)
+	namer := newCtxNamer([]ast.Expr{sel.X, call.Args[0]}, append(ctxFiberNames(env), strconvName)...)
+	namer.collectFunc(stack)
+	value, errName := namer.fresh("value"), namer.fresh("err")
 	plan.add(func(e *editSet) {
-		namer := newCtxNamer([]ast.Expr{sel.X, call.Args[0]}, append(ctxFiberNames(env), strconvName)...)
-		value, errName := namer.fresh("value"), namer.fresh("err")
 
 		recv := ctxRenderNode(e, g, sel.X)
 		if via != "" {
