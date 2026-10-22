@@ -316,3 +316,92 @@ func Test_Edit_KeepsDirectivesThisVersionDoesNotKnow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "module a\n\ngo 1.26.0\n\nfuture directive\n", read(t, path))
 }
+
+func Test_File_KeepsTheFormattingItDoesNotChange(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := write(t, dir, "go.mod", "module   a\n\ngo 1.21\n\nrequire   (\n\t\"github.com/gofiber/fiber/v2\"\tv2.52.15   // pinned\n\tgithub.com/google/uuid    v1.6.0\n)\n\nreplace github.com/gofiber/template/html/v2   v2.1.3   =>   ../html\n")
+
+	_, err := gomod.Edit(dir, func(f *gomod.File) error {
+		f.SetRequire(f.Requires("github.com/gofiber/fiber/v2"), "github.com/gofiber/fiber/v3", "v3.6.1")
+		f.SetReplaceOld(f.Replace[0], "github.com/gofiber/template/html/v3", "v3.0.0")
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "module   a\n\ngo 1.21\n\nrequire   (\n\tgithub.com/gofiber/fiber/v3\tv3.6.1   // pinned\n\tgithub.com/google/uuid    v1.6.0\n)\n\nreplace github.com/gofiber/template/html/v3   v3.0.0   =>   ../html\n", read(t, path))
+}
+
+func Test_File_SetReplaceOld_VersionHandling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		src  string
+		vers string
+		want string
+	}{
+		{
+			name: "adds a version",
+			src:  "module a\n\nreplace x/old => ../old\n",
+			vers: "v2.0.0",
+			want: "module a\n\nreplace y/new v2.0.0 => ../old\n",
+		},
+		{
+			name: "drops the version",
+			src:  "module a\n\nreplace x/old v1.0.0 => ../old\n",
+			vers: "",
+			want: "module a\n\nreplace y/new => ../old\n",
+		},
+		{
+			name: "changes the version",
+			src:  "module a\n\nreplace (\n\tx/old v1.0.0 => ../old\n)\n",
+			vers: "v2.0.0",
+			want: "module a\n\nreplace (\n\ty/new v2.0.0 => ../old\n)\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			path := write(t, dir, "go.mod", tc.src)
+
+			_, err := gomod.Edit(dir, func(f *gomod.File) error {
+				f.SetReplaceOld(f.Replace[0], "y/new", tc.vers)
+				return nil
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, read(t, path))
+		})
+	}
+}
+
+func Test_File_RaiseGo_NoTrailingNewline(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := write(t, dir, "go.mod", "module a")
+
+	_, err := gomod.Edit(dir, func(f *gomod.File) error {
+		assert.True(t, f.RaiseGo("1.26.0"))
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "module a\n\ngo 1.26.0\n", read(t, path))
+}
+
+func Test_File_RaiseGo_CRLFInsertion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := write(t, dir, "go.mod", "module a\r\n\r\nrequire github.com/google/uuid v1.6.0\r\n")
+
+	_, err := gomod.Edit(dir, func(f *gomod.File) error {
+		assert.True(t, f.RaiseGo("1.26.0"))
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "module a\r\n\r\ngo 1.26.0\r\n\r\nrequire github.com/google/uuid v1.6.0\r\n", read(t, path))
+}
