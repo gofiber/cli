@@ -24,6 +24,9 @@ type ctxCase struct {
 	name string
 	// file is the name of the file, main.go when empty.
 	file string
+	// others are more files of the project, by name; they are migrated too, but
+	// only file is looked at.
+	others map[string]string
 	// in is the v2 source. § stands for a backquote, which a raw string literal
 	// can not hold.
 	in string
@@ -43,7 +46,7 @@ func ctxSrc(s string) string {
 // ctxRun runs the migration on a project that has one file, main.go unless a
 // name is given, and returns the file afterwards, what the migration printed and
 // its notes.
-func ctxRun(t *testing.T, migrate ctxMigrateFn, name, in string) (out, printed string, notes []internal.Note) {
+func ctxRun(t *testing.T, migrate ctxMigrateFn, name, in string, others map[string]string) (out, printed string, notes []internal.Note) {
 	t.Helper()
 
 	if name == "" {
@@ -52,6 +55,9 @@ func ctxRun(t *testing.T, migrate ctxMigrateFn, name, in string) (out, printed s
 	dir := t.TempDir()
 	file := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(file, []byte(in), 0o600))
+	for other, src := range others {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, other), []byte(ctxSrc(src)), 0o600))
+	}
 
 	var buf bytes.Buffer
 	require.NoError(t, migrate(newCmd(&buf), dir, nil, nil))
@@ -69,7 +75,7 @@ func ctxRunCases(t *testing.T, migrate ctxMigrateFn, cases []ctxCase) {
 			t.Parallel()
 
 			in := ctxSrc(tc.in)
-			out, printed, notes := ctxRun(t, migrate, tc.file, in)
+			out, printed, notes := ctxRun(t, migrate, tc.file, in, tc.others)
 
 			want := in
 			if tc.want != "" {
@@ -90,7 +96,7 @@ func ctxRunCases(t *testing.T, migrate ctxMigrateFn, cases []ctxCase) {
 				}
 			}
 
-			again, printedAgain, _ := ctxRun(t, migrate, tc.file, out)
+			again, printedAgain, _ := ctxRun(t, migrate, tc.file, out, tc.others)
 			assert.Equal(t, out, again, "the second run changed the file")
 			assert.Empty(t, printedAgain, "the second run printed")
 		})

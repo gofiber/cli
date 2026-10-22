@@ -30,7 +30,7 @@ const ctxAllParams = "AllParams"
 // Only methods of a fiber context are rewritten.
 func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	methods := []string{"BodyParser", "CookieParser", "ParamsParser", "QueryParser", ctxAllParams}
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return ctxMigrateParserCalls(content, fi, run, methods)
 	})
@@ -48,7 +48,7 @@ func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 
 // ctxMigrateParserCalls rewrites the calls of the given parser methods of the
 // request context, and reports those whose receiver it cannot tell.
-func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRunNotes, methods []string) string {
+func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, methods []string) string {
 	if !ctxContainsAny(content, methods...) {
 		return content
 	}
@@ -61,7 +61,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRunNote
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -71,7 +71,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRunNote
 			return true
 		}
 
-		switch env.ctxKindOf(sel.X, stack) {
+		switch env.receiverKind(sel, stack, "Bind") {
 		case ctxYes:
 			if sel.Sel.Name == ctxAllParams {
 				ctxQueueAllParams(&plan, noter, env, sel, stack)

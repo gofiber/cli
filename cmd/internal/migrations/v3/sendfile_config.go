@@ -21,7 +21,7 @@ const ctxDownload = "Download"
 // seeking, resumed downloads) working. Download has no config in v3 and so no
 // byte ranges either: it is reported.
 func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return migrateSendFileContent(content, fi, run)
 	})
@@ -37,7 +37,7 @@ func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
+func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !strings.Contains(content, "SendFile") && !strings.Contains(content, ctxDownload) {
 		return content
 	}
@@ -50,7 +50,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRunNot
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var edits editSet
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
@@ -65,7 +65,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRunNot
 
 		switch sel.Sel.Name {
 		case "SendFile":
-			switch env.ctxKindOf(sel.X, stack) {
+			switch env.receiverKind(sel, stack) {
 			case ctxYes:
 				rewriteSendFileCall(g, &edits, fi, call, names, stack)
 			case ctxUnknown:
@@ -77,7 +77,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRunNot
 			case ctxNo:
 			}
 		case ctxDownload:
-			if env.ctxKindOf(sel.X, stack) == ctxYes {
+			if env.receiverKind(sel, stack) == ctxYes {
 				noter.oncef("download", sel.Pos(),
 					"%s no longer serves byte ranges (resumable downloads) in Fiber v3. Where that matters, call %s.Attachment(name), then %s.SendFile(path, %sSendFile{ByteRange: true})",
 					g.text(sel), g.text(sel.X), g.text(sel.X), env.qual(""))

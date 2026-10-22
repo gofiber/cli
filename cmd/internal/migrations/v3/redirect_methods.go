@@ -27,7 +27,7 @@ const (
 //
 // Only methods of a fiber context are rewritten.
 func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return migrateRedirectContent(content, fi, run)
 	})
@@ -43,7 +43,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-func migrateRedirectContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
+func migrateRedirectContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !strings.Contains(content, ctxRedirect) {
 		return content
 	}
@@ -56,7 +56,7 @@ func migrateRedirectContent(content string, fi internal.FileInfo, run *ctxRunNot
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -81,7 +81,7 @@ func migrateRedirectContent(content string, fi internal.FileInfo, run *ctxRunNot
 			return true
 		}
 
-		switch env.ctxKindOf(sel.X, stack) {
+		switch env.receiverKind(sel, stack, ctxRedirect) {
 		case ctxYes:
 			ctxQueueRedirect(&plan, noter, env, call, sel)
 		case ctxUnknown:

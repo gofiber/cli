@@ -13,7 +13,7 @@ import (
 // Only methods of a fiber context are rewritten. The reqHeader struct tag it
 // reads is renamed by MigrateParamsTagKeys.
 func MigrateReqHeaderParser(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return ctxMigrateParserCalls(content, fi, run, []string{"ReqHeaderParser"})
 	})

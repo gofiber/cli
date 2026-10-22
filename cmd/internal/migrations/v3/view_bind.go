@@ -14,7 +14,7 @@ import (
 // c.ViewBind(vars): v3 uses Bind for the request binders. Only the calls of a
 // fiber context are rewritten.
 func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return migrateViewBindContent(content, fi, run)
 	})
@@ -30,7 +30,7 @@ func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error
 	return nil
 }
 
-func migrateViewBindContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
+func migrateViewBindContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ".Bind(") {
 		return content
 	}
@@ -43,7 +43,7 @@ func migrateViewBindContent(content string, fi internal.FileInfo, run *ctxRunNot
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -57,7 +57,7 @@ func migrateViewBindContent(content string, fi internal.FileInfo, run *ctxRunNot
 			return true
 		}
 
-		switch env.ctxKindOf(sel.X, stack) {
+		switch env.receiverKind(sel, stack, "ViewBind") {
 		case ctxYes:
 			plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, "ViewBind") })
 		case ctxUnknown:

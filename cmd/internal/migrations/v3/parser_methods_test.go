@@ -339,6 +339,54 @@ func handler(c *fiber.Ctx) error {
 			msg: "Migrating parser methods",
 		},
 		{
+			name: "types of the other files of the package",
+			others: map[string]string{
+				"context.go": `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+type Input struct{ Name string }
+
+// AppContext is the context handlers get.
+type AppContext struct {
+	*f.Ctx
+	User string
+}
+`,
+			},
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *AppContext, other *elsewhere.Ctx) error {
+	var in Input
+	if err := c.BodyParser(&in); err != nil {
+		return err
+	}
+	_ = other.BodyParser(&in)
+	return c.Next()
+}
+
+var _ = fiber.New
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *AppContext, other *elsewhere.Ctx) error {
+	var in Input
+	if err := c.Bind().Body(&in); err != nil {
+		return err
+	}
+	_ = other.BodyParser(&in)
+	return c.Next()
+}
+
+var _ = fiber.New
+`,
+			msg: "Migrating parser methods",
+		},
+		{
 			name: "no fiber import",
 			in: `package main
 

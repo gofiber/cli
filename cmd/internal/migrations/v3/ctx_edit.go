@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -50,12 +52,21 @@ func ctxCommentsIn(g *goSource, from, to token.Pos) []string {
 	return out
 }
 
-// ctxRunNotes collects what a migration has to say once for the whole project
+// ctxRun collects what a migration has to say once for the whole project
 // rather than at each place: a behavior change that applies to every use of an
 // API is reported at its first use, with the number of the others.
-type ctxRunNotes struct {
+type ctxRun struct {
 	kinds map[string]*ctxKindNote
+	// pkgs are the parsed files of the directories looked at, by directory.
+	pkgs  map[string][]ctxPackageFile
 	order []string
+}
+
+// ctxPackageFile is a parsed file of a directory.
+type ctxPackageFile struct {
+	file  *ast.File
+	path  string
+	names []string
 }
 
 // ctxKindNote is the first place of a kind of note, and how many places there are.
@@ -66,12 +77,58 @@ type ctxKindNote struct {
 	places  int
 }
 
-func newCtxRunNotes() *ctxRunNotes {
-	return &ctxRunNotes{kinds: map[string]*ctxKindNote{}}
+func newCtxRun() *ctxRun {
+	return &ctxRun{kinds: map[string]*ctxKindNote{}, pkgs: map[string][]ctxPackageFile{}}
+}
+
+// siblings returns the other files of the package of the file fi, g, which
+// declare the types, functions and methods the file may use. The files of a
+// directory are read once per run.
+func (r *ctxRun) siblings(fi internal.FileInfo, g *goSource) []ctxSibling {
+	dir := filepath.Dir(fi.Path)
+	files, loaded := r.pkgs[dir]
+	if !loaded {
+		files = ctxParseDir(dir)
+		r.pkgs[dir] = files
+	}
+
+	var siblings []ctxSibling
+	for _, f := range files {
+		if f.path != fi.Path && f.file.Name.Name == g.file.Name.Name {
+			siblings = append(siblings, ctxSibling{file: f.file, names: f.names})
+		}
+	}
+	return siblings
+}
+
+// ctxParseDir parses the Go files of dir, without those that do not parse.
+func ctxParseDir(dir string) []ctxPackageFile {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	var files []ctxPackageFile
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		src, err := os.ReadFile(path) // #nosec G304 -- a file of the project that is migrated
+		if err != nil {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, src, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		files = append(files, ctxPackageFile{file: file, path: path, names: fiberNames(string(src))})
+	}
+	return files
 }
 
 // report records the collected notes for the project in root.
-func (r *ctxRunNotes) report(root string) {
+func (r *ctxRun) report(root string) {
 	for _, kind := range r.order {
 		k := r.kinds[kind]
 		msg := k.message
@@ -85,11 +142,11 @@ func (r *ctxRunNotes) report(root string) {
 // ctxNoter hands the notes of one file to the internal package.
 type ctxNoter struct {
 	g   *goSource
-	run *ctxRunNotes
+	run *ctxRun
 	fi  internal.FileInfo
 }
 
-func newCtxNoter(fi internal.FileInfo, g *goSource, run *ctxRunNotes) *ctxNoter {
+func newCtxNoter(fi internal.FileInfo, g *goSource, run *ctxRun) *ctxNoter {
 	return &ctxNoter{fi: fi, g: g, run: run}
 }
 

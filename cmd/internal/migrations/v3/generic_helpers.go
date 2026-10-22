@@ -38,7 +38,7 @@ const ctxParamsInt = "ParamsInt"
 // fiber.Params[int](c, key, default), error(nil), because v2 never returned an
 // error then. Only methods of a fiber context are rewritten.
 func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return migrateGenericHelpersContent(content, fi, run)
 	})
@@ -54,7 +54,7 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
+func migrateGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ctxParamsInt, "QueryInt", "QueryFloat", "QueryBool") {
 		return content
 	}
@@ -67,7 +67,7 @@ func migrateGenericHelpersContent(content string, fi internal.FileInfo, run *ctx
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	strconvName := ctxImportName(content, "strconv", "strconv")
 	if strconvName == "" {
@@ -91,7 +91,7 @@ func migrateGenericHelpersContent(content string, fi internal.FileInfo, run *ctx
 		}
 
 		generic := env.qual(helper.fn) + "[" + helper.typ + "]"
-		switch env.ctxKindOf(sel.X, stack) {
+		switch env.receiverKind(sel, stack, "Params") {
 		case ctxYes:
 			if call.Ellipsis.IsValid() || len(call.Args) == 0 {
 				noter.notef(sel.Pos(),

@@ -55,36 +55,39 @@ type ctxEnv struct {
 	fields map[string][]ast.Expr
 	// names are the identifiers the file binds to the core fiber package.
 	names []string
+	// pkgNames are the names the file and the other files of its package bind
+	// to the fiber package: the declarations of those files are part of the
+	// environment, and they spell the fiber types their own way.
+	pkgNames []string
 }
 
-// newCtxEnv indexes the declarations of g. names are the identifiers the file
-// binds to the fiber package (see fiberNames).
-func newCtxEnv(g *goSource, names []string) *ctxEnv {
+// ctxSibling is another file of the package of the file that is migrated. Its
+// type, function and method declarations are known to the environment.
+type ctxSibling struct {
+	file  *ast.File
+	names []string
+}
+
+// newCtxEnv indexes the declarations of g and of the sibling files of its
+// package. names are the identifiers g binds to the fiber package (see
+// fiberNames).
+func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 	env := &ctxEnv{
 		g:        g,
 		names:    names,
+		pkgNames: slices.Clone(names),
 		typeDecl: map[string]*ast.TypeSpec{},
 		funcDecl: map[string]*ast.FuncDecl{},
 		methods:  map[string]*ast.FuncDecl{},
 		fields:   map[string][]ast.Expr{},
 	}
 
-	for _, decl := range g.file.Decls {
-		switch d := decl.(type) {
-		case *ast.GenDecl:
-			if d.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range d.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok {
-					env.typeDecl[ts.Name.Name] = ts
-				}
-			}
-		case *ast.FuncDecl:
-			if d.Recv == nil {
-				env.funcDecl[d.Name.Name] = d
-			} else if recv := ctxTypeName(ctxFirstFieldType(d.Recv)); recv != "" {
-				env.methods[recv+"."+d.Name.Name] = d
+	env.index(g.file)
+	for _, sibling := range siblings {
+		env.index(sibling.file)
+		for _, name := range sibling.names {
+			if name != "." && !slices.Contains(env.pkgNames, name) {
+				env.pkgNames = append(env.pkgNames, name)
 			}
 		}
 	}
@@ -108,6 +111,34 @@ func newCtxEnv(g *goSource, names []string) *ctxEnv {
 	})
 
 	return env
+}
+
+// index adds the type, function and method declarations of file to the
+// environment. A declaration that is known already stays: the file that is
+// migrated comes first.
+func (env *ctxEnv) index(file *ast.File) {
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.GenDecl:
+			if d.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range d.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok && env.typeDecl[ts.Name.Name] == nil {
+					env.typeDecl[ts.Name.Name] = ts
+				}
+			}
+		case *ast.FuncDecl:
+			if d.Recv != nil {
+				recv := ctxTypeName(ctxFirstFieldType(d.Recv))
+				if key := recv + "." + d.Name.Name; recv != "" && env.methods[key] == nil {
+					env.methods[key] = d
+				}
+			} else if env.funcDecl[d.Name.Name] == nil {
+				env.funcDecl[d.Name.Name] = d
+			}
+		}
+	}
 }
 
 // ctxFirstFieldType returns the type of the first field of fl, nil if there is none.
@@ -209,7 +240,7 @@ func (env *ctxEnv) typeIsAt(t ast.Expr, wanted []string, depth int) ctxKind {
 		if !ok {
 			return ctxUnknown
 		}
-		if slices.Contains(env.names, id.Name) && slices.Contains(wanted, x.Sel.Name) {
+		if slices.Contains(env.pkgNames, id.Name) && slices.Contains(wanted, x.Sel.Name) {
 			return ctxYes
 		}
 		return ctxNo
@@ -454,9 +485,42 @@ func (env *ctxEnv) isFiberPackage(e ast.Expr) bool {
 	return ok && slices.Contains(env.names, id.Name)
 }
 
-// ctxKindOf says whether e is a fiber request context.
-func (env *ctxEnv) ctxKindOf(e ast.Expr, stack []ast.Node) ctxKind {
-	return env.typeIs(env.typeOf(e, stack), ctxTypeCtx)
+// receiverKind says whether the method sel selects is a method of the fiber
+// request context. A struct that embeds the context but declares a method or a
+// field of the same name hides the one of the context: its calls are its own.
+// The same goes for the names the rewrite of the call introduces.
+func (env *ctxEnv) receiverKind(sel *ast.SelectorExpr, stack []ast.Node, introduced ...string) ctxKind {
+	t := env.typeOf(sel.X, stack)
+	kind := env.typeIs(t, ctxTypeCtx)
+	if kind != ctxYes {
+		return kind
+	}
+
+	if name := ctxTypeName(t); name != "" {
+		if env.declares(name, sel.Sel.Name) || slices.ContainsFunc(introduced, func(n string) bool { return env.declares(name, n) }) {
+			return ctxNo
+		}
+	}
+	return ctxYes
+}
+
+// declares reports whether the type declared in the file has a method or a field
+// of its own called name.
+func (env *ctxEnv) declares(typeName, name string) bool {
+	if env.methods[typeName+"."+name] != nil {
+		return true
+	}
+	spec := env.typeDecl[typeName]
+	if spec == nil {
+		return false
+	}
+	st, ok := spec.Type.(*ast.StructType)
+	if !ok || st.Fields == nil {
+		return false
+	}
+	return slices.ContainsFunc(st.Fields.List, func(f *ast.Field) bool {
+		return slices.ContainsFunc(f.Names, func(id *ast.Ident) bool { return id.Name == name })
+	})
 }
 
 // declsNamed returns the types and the initializing expressions of every

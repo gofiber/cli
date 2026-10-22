@@ -262,6 +262,40 @@ func handler(c *fiber.Ctx) error {
 			msg: "Migrating redirect methods",
 		},
 		{
+			name: "a wrapper that has a method of its own",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Context struct{ *fiber.Ctx }
+
+// Redirect hides the one of the embedded context.
+func (c *Context) Redirect(to string) error { return c.Ctx.Redirect(to, 301) }
+
+func (c *Context) Back() error { return c.RedirectBack("/") }
+
+func handler(c *Context) error {
+	return c.Redirect("/x")
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Context struct{ *fiber.Ctx }
+
+// Redirect hides the one of the embedded context.
+func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().Status(301).To(to) }
+
+func (c *Context) Back() error { return c.RedirectBack("/") }
+
+func handler(c *Context) error {
+	return c.Redirect("/x")
+}
+`,
+			msg: "Migrating redirect methods",
+		},
+		{
 			name: "other receivers stay",
 			in: `package main
 

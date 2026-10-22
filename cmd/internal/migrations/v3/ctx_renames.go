@@ -28,7 +28,7 @@ const (
 //
 // Only methods of a fiber context are rewritten.
 func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return migrateCtxRenamesContent(content, fi, run)
 	})
@@ -44,7 +44,7 @@ func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	return nil
 }
 
-func migrateCtxRenamesContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
+func migrateCtxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ".Format(", ".Protocol(", ".Hostname(", ".Range(") {
 		return content
 	}
@@ -57,7 +57,7 @@ func migrateCtxRenamesContent(content string, fi internal.FileInfo, run *ctxRunN
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -84,7 +84,7 @@ func migrateCtxRenamesContent(content string, fi internal.FileInfo, run *ctxRunN
 		default:
 			return true
 		}
-		if env.ctxKindOf(sel.X, stack) != ctxYes {
+		if env.receiverKind(sel, stack, rename) != ctxYes {
 			return true
 		}
 

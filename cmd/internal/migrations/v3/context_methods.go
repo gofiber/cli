@@ -35,7 +35,7 @@ const (
 //
 // Only methods of a fiber context are rewritten.
 func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	run := newCtxRunNotes()
+	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		return migrateContextMethodsContent(content, fi, run)
 	})
@@ -51,7 +51,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateContextMethodsContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
+func migrateContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if strings.Contains(content, ctxContextMarker) ||
 		!ctxContainsAny(content, ctxContextCallName, ctxUserContext, ctxSetUserContext) {
 		return content
@@ -65,7 +65,7 @@ func migrateContextMethodsContent(content string, fi internal.FileInfo, run *ctx
 		return content
 	}
 
-	env := newCtxEnv(g, names)
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 
 	// A context that already has SetContext, the v3 name, was migrated by hand
@@ -83,17 +83,17 @@ func migrateContextMethodsContent(content string, fi internal.FileInfo, run *ctx
 		switch sel.Sel.Name {
 		case ctxContext:
 			call, isCall := ctxParentCall(sel, stack)
-			if isCall && len(call.Args) == 0 && env.ctxKindOf(sel.X, stack) == ctxYes {
+			if isCall && len(call.Args) == 0 && env.receiverKind(sel, stack, ctxRequestCtxName) == ctxYes {
 				contextCalls = append(contextCalls, sel)
 			}
 		case ctxSetContext:
-			v3Style = v3Style || env.ctxKindOf(sel.X, stack) == ctxYes
+			v3Style = v3Style || env.receiverKind(sel, stack) == ctxYes
 		case ctxUserContext, ctxSetUserContext:
 			renamed := ctxContext
 			if sel.Sel.Name == ctxSetUserContext {
 				renamed = ctxSetContext
 			}
-			switch env.ctxKindOf(sel.X, stack) {
+			switch env.receiverKind(sel, stack, renamed) {
 			case ctxYes:
 				plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, renamed) })
 			case ctxUnknown:
