@@ -57,10 +57,10 @@ type depsUse struct {
 
 // ReviewDependencies leaves a note for each dependency of the project that is built for Fiber v2. It runs
 // after the go.mod work: github.com/gofiber/fiber/v2 is still a requirement of go.mod then only because
-// something needs it, and the packages of the dependencies are in the module cache. With --skip_go_mod
-// the go command is not asked and go.mod is not tidied, so only the direct requirements whose go.mod is
-// in the module cache are looked at, and the note says so.
-func ReviewDependencies(cwd string, skipGoMod bool) {
+// something needs it, and the packages of the dependencies are in the module cache. When go.mod was not
+// tidied (the work was skipped with --skip_go_mod, or failed) the go command is not asked, so only the
+// direct requirements whose go.mod is in the module cache are looked at, and the note says so.
+func ReviewDependencies(cwd string, tidied bool) {
 	paths, err := gomod.Paths(cwd)
 	if err != nil {
 		return
@@ -78,27 +78,27 @@ func ReviewDependencies(cwd string, skipGoMod bool) {
 		dir := filepath.Dir(path)
 
 		var uses []*depsUse
-		if skipGoMod {
-			uses = depsFromCache(cwd, dir, f)
-		} else {
+		if tidied {
 			uses = depsFromGoList(cwd, dir, f)
+		} else {
+			uses = depsFromCache(cwd, dir, f)
 		}
 		for _, use := range uses {
-			reportDependency(cwd, use, skipGoMod)
+			reportDependency(cwd, use, !tidied)
 		}
 	}
 }
 
 // reportDependency leaves the note of one dependency, at its first import.
-func reportDependency(root string, use *depsUse, skipGoMod bool) {
+func reportDependency(root string, use *depsUse, fromCache bool) {
 	if len(use.places) == 0 {
 		return
 	}
 
 	var why string
 	switch {
-	case skipGoMod:
-		why = "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied and the go command was not run, because of --skip_go_mod; this comes from its go.mod in the module cache)"
+	case fromCache:
+		why = "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied by the migration, so the go command could not tell which packages reach Fiber v2: this comes from its go.mod in the module cache)"
 	case use.via != "":
 		why = "is built for Fiber v2 (through " + use.via + ", whose package " + use.user + " imports github.com/gofiber/fiber/v2, which go.mod keeps as an indirect requirement because of it)"
 	default:

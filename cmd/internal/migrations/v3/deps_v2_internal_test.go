@@ -64,10 +64,10 @@ func depsWrite(t *testing.T, dir, name, content string) {
 }
 
 // depsNotes runs the review and returns the notes as "file:line: message".
-func depsNotes(t *testing.T, dir string, skipGoMod bool) []string {
+func depsNotes(t *testing.T, dir string, tidied bool) []string {
 	t.Helper()
 
-	ReviewDependencies(dir, skipGoMod)
+	ReviewDependencies(dir, tidied)
 	var out []string
 	for _, n := range internal.DrainNotes(dir) {
 		out = append(out, n.String())
@@ -135,7 +135,7 @@ var _ = session.New
 			goListLine("example.com/app/internal/web [example.com/app/internal/web.test]", "example.com/app", "", true, "github.com/gofiber/fiber/v3", "github.com/gofiber/session/v2"),
 		"", 0)
 
-	notes := depsNotes(t, dir, false)
+	notes := depsNotes(t, dir, true)
 
 	assert.Equal(t, []string{"go", "list", "-e", "-deps", "-test"}, (*asked)[:5])
 	require.Len(t, notes, 2, "%v", notes)
@@ -163,7 +163,7 @@ func Test_ReviewDependencies_NamesTheModuleThatReachesFiberV2ThroughAnother(t *t
 			goListLine("example.com/app", "example.com/app", "", true, "example.org/wrapper"),
 		"", 0)
 
-	notes := depsNotes(t, dir, false)
+	notes := depsNotes(t, dir, true)
 
 	require.Len(t, notes, 1, "%v", notes)
 	assert.Contains(t, notes[0], "main.go:3: example.org/wrapper v1.2.0 is built for Fiber v2 (through example.org/legacy, whose package example.org/legacy imports github.com/gofiber/fiber/v2")
@@ -180,7 +180,7 @@ func Test_ReviewDependencies_PackagesThatDoNotReachFiberV2AreNoDependenciesOnIt(
 			goListLine("example.com/app", "example.com/app", "", true, "github.com/gofiber/storage/azureblob", "github.com/gofiber/fiber/v2"),
 		"", 0)
 
-	assert.Empty(t, depsNotes(t, dir, false), "azureblob is not built for Fiber v2, and a project file that imports Fiber v2 itself is another note")
+	assert.Empty(t, depsNotes(t, dir, true), "azureblob is not built for Fiber v2, and a project file that imports Fiber v2 itself is another note")
 }
 
 func Test_ReviewDependencies_NothingToDoWithoutFiberV2InGoMod(t *testing.T) {
@@ -189,7 +189,7 @@ func Test_ReviewDependencies_NothingToDoWithoutFiberV2InGoMod(t *testing.T) {
 	depsWrite(t, dir, "main.go", "package main\n")
 	asked := stubDepsGoList(t, "", "", 0)
 
-	assert.Empty(t, depsNotes(t, dir, false))
+	assert.Empty(t, depsNotes(t, dir, true))
 	assert.Empty(t, *asked, "the go command is not asked when go.mod does not keep Fiber v2")
 }
 
@@ -199,7 +199,7 @@ func Test_ReviewDependencies_WhenTheGoCommandFails(t *testing.T) {
 	depsWrite(t, dir, "main.go", "package main\n")
 	stubDepsGoList(t, "", "go: updates to go.mod needed; to update it:\n\tgo mod tidy\n", 1)
 
-	notes := depsNotes(t, dir, false)
+	notes := depsNotes(t, dir, true)
 
 	require.Len(t, notes, 1)
 	assert.Contains(t, notes[0], "go.mod:11: go.mod still requires github.com/gofiber/fiber/v2: a dependency of the project is built for Fiber v2")
@@ -219,7 +219,7 @@ func Test_ReviewDependencies_NestedModulesAreLookedAtOneByOne(t *testing.T) {
 			goListLine("example.com/app/tools", "example.com/app/tools", "", true, "github.com/gofiber/session/v2"),
 		"", 0)
 
-	notes := depsNotes(t, dir, false)
+	notes := depsNotes(t, dir, true)
 
 	require.Len(t, notes, 1, "the root module keeps no Fiber v2; the nested one does")
 	assert.Contains(t, notes[0], "tools/tool.go:3: github.com/gofiber/session/v2 v2.0.2 is built for Fiber v2")
@@ -260,12 +260,12 @@ var _ = session.New
 	})
 	asked := stubDepsGoList(t, "", "", 0)
 
-	notes := depsNotes(t, dir, true)
+	notes := depsNotes(t, dir, false)
 
-	assert.Empty(t, *asked, "--skip_go_mod: the go command is not run")
+	assert.Empty(t, *asked, "go.mod was not tidied: the go command is not run")
 	require.Len(t, notes, 2, "%v", notes)
 	for _, n := range notes {
-		assert.Contains(t, n, "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied and the go command was not run, because of --skip_go_mod; this comes from its go.mod in the module cache)")
+		assert.Contains(t, n, "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied by the migration, so the go command could not tell which packages reach Fiber v2: this comes from its go.mod in the module cache)")
 	}
 	assert.Contains(t, notes[0]+notes[1], "main.go:4: github.com/ansrivas/fiberprometheus/v2 v2.6.1 requires")
 	assert.Contains(t, notes[0]+notes[1], "main.go:6: github.com/gofiber/session/v2 v2.0.2 requires")

@@ -29,10 +29,11 @@ type Migration struct {
 	// migrations could not finish or could not make behave the same.
 	Review func(cwd string)
 	// Dependencies, when set, runs after the go.mod work and before Review, if the
-	// migration applied. skipGoMod says that the go.mod work was skipped. It looks
-	// at the dependencies of the project, which only a tidied go.mod and a module
-	// cache that holds them can tell, and records notes.
-	Dependencies func(cwd string, skipGoMod bool)
+	// migration applied. tidied says that go.mod was tidied by it: false when the
+	// go.mod work was skipped or failed. It looks at the dependencies of the
+	// project, which only a tidied go.mod and a module cache that holds them can
+	// tell, and records notes.
+	Dependencies func(cwd string, tidied bool)
 	From         string
 	To           string
 	Functions    []MigrationFn
@@ -200,7 +201,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	var errs []error
 	var notes []internal.Note
 	var reviews []func(cwd string)
-	var dependencies []func(cwd string, skipGoMod bool)
+	var dependencies []func(cwd string, tidied bool)
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
 		var err error
@@ -247,6 +248,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	}
 	notes = followLines(notes, moved)
 
+	tidied := false
 	if !skipGoMod {
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
@@ -258,10 +260,12 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
 			internal.AddNote(cwd, internal.Note{Message: goModFailedNote})
+		} else {
+			tidied = true
 		}
 	}
 	for _, review := range dependencies {
-		review(cwd, skipGoMod)
+		review(cwd, tidied)
 	}
 	for _, review := range reviews {
 		review(cwd)
