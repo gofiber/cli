@@ -35,6 +35,8 @@ type appSourceField struct {
 	v2      string
 	v3      string
 	occs    []appOccurrence
+	// dropped is set when the setting was removed because it has no effect.
+	dropped bool
 }
 
 // appOccurrence is a place that sets or reads a setting.

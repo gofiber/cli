@@ -404,3 +404,76 @@ func main() {
 	}
 	assert.False(t, isFiberRouter(src, "main"))
 }
+
+func Test_appOrigins_ExportedAcrossPackages(t *testing.T) {
+	t.Parallel()
+
+	files := appTestFiles(t, map[string]string{
+		"go.mod": "module example.com/demo\n",
+		"internal/server/server.go": `package server
+
+import "github.com/gofiber/fiber/v2"
+
+type Runner struct{ App *fiber.App }
+
+func NewRunner() *Runner {
+	return &Runner{App: fiber.New(fiber.Config{AppName: "runner"})}
+}
+
+var Shared *fiber.App
+
+var Other = fiber.New(fiber.Config{AppName: "other"})
+
+func Init() { Shared = fiber.New(fiber.Config{AppName: "shared"}) }
+`,
+		"cmd/main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+
+	"example.com/demo/internal/server"
+)
+
+func main() {
+	r := server.NewRunner()
+	r.App.Listen(":runner")
+	server.Shared.Listen(":shared")
+	server.Other.Listen(":other")
+
+	other := &server.Runner{}
+	other.App = fiber.New(fiber.Config{AppName: "assigned"})
+	r.App.Listen(":again")
+	server.Shared = fiber.New(fiber.Config{AppName: "main"})
+}
+`,
+	})
+
+	f := files["cmd/main.go"]
+	got := map[string]appOrigins{}
+	for _, recv := range appTestCalls(f, "Listen") {
+		call, ok := f.parent[f.parent[recv]].(*ast.CallExpr)
+		require.True(t, ok)
+		label, ok := call.Args[0].(*ast.BasicLit)
+		require.True(t, ok)
+		got[label.Value] = f.originsOf(recv, 0, 0)
+	}
+
+	names := func(o appOrigins) []string {
+		var out []string
+		for _, n := range o.news {
+			lit, ok := n.call.Args[0].(*ast.CompositeLit)
+			require.True(t, ok)
+			kv, ok := lit.Elts[0].(*ast.KeyValueExpr)
+			require.True(t, ok)
+			out = append(out, n.file.g.text(kv.Value))
+		}
+		return out
+	}
+
+	assert.ElementsMatch(t, []string{`"runner"`, `"assigned"`}, names(got[`":runner"`]))
+	assert.True(t, got[`":runner"`].complete)
+	assert.ElementsMatch(t, []string{`"shared"`, `"main"`}, names(got[`":shared"`]))
+	assert.True(t, got[`":shared"`].complete)
+	assert.ElementsMatch(t, []string{`"other"`}, names(got[`":other"`]))
+	assert.True(t, got[`":other"`].complete)
+}

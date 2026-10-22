@@ -308,8 +308,32 @@ func appResultCount(ft *ast.FuncType) int {
 	return n
 }
 
+// packageVar finds the variable pkg.Name that a selector refers to, when pkg is
+// another package of the project.
+func (f *appFile) packageVar(sel *ast.SelectorExpr) (appBinding, *appPackage, bool) {
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return appBinding{}, nil, false
+	}
+	if _, bound := f.binding(id); bound {
+		return appBinding{}, nil, false
+	}
+	pkg := f.packageNamed(id.Name)
+	if pkg == nil {
+		return appBinding{}, nil, false
+	}
+	v := pkg.vars[sel.Sel.Name]
+	if v == nil {
+		return appBinding{}, nil, false
+	}
+	return v.binding(), pkg, true
+}
+
 // selectorKind returns what the field a.b is.
 func (f *appFile) selectorKind(sel *ast.SelectorExpr, depth int) appKind {
+	if b, _, ok := f.packageVar(sel); ok {
+		return b.file.bindingKind(b, depth+1)
+	}
 	t, tf := f.valueType(sel.X, depth+1)
 	if t == nil {
 		return appKindNone
@@ -405,6 +429,9 @@ func (f *appFile) valueType(e ast.Expr, depth int) (ast.Expr, *appFile) {
 	case *ast.CallExpr:
 		return f.callType(x, 0, depth+1)
 	case *ast.SelectorExpr:
+		if b, _, ok := f.packageVar(x); ok {
+			return b.file.bindingType(b, depth+1)
+		}
 		t, tf := f.valueType(x.X, depth+1)
 		if t == nil {
 			return nil, nil
@@ -551,6 +578,11 @@ func (f *appFile) binding(id *ast.Ident) (appBinding, bool) {
 	if v == nil || v.file == f {
 		return appBinding{}, false
 	}
+	return v.binding(), true
+}
+
+// binding describes the package-level variable.
+func (v *appVarDecl) binding() appBinding {
 	b := appBinding{file: v.file, typ: v.spec.Type, count: len(v.spec.Names), index: v.index}
 	switch {
 	case len(v.spec.Values) == len(v.spec.Names):
@@ -559,7 +591,7 @@ func (f *appFile) binding(id *ast.Ident) (appBinding, bool) {
 		b.init = v.spec.Values[0]
 	}
 	b.node = appDeclNode(b.init, b.typ)
-	return b, true
+	return b
 }
 
 // bindingOf describes the declaration d of the variable called name.
@@ -699,6 +731,9 @@ func (f *appFile) originsOf(e ast.Expr, idx, depth int) appOrigins {
 	case *ast.Ident:
 		return f.identOrigins(x, depth+1)
 	case *ast.SelectorExpr:
+		if o, ok := f.packageVarOrigins(x, depth+1); ok {
+			return o
+		}
 		return f.fieldOrigins(x, depth+1)
 	}
 	return appOrigins{}
@@ -813,6 +848,56 @@ func (f *appFile) assignedOrigins(b appBinding, name string, depth int) appOrigi
 	return out
 }
 
+// packageVarOrigins follows pkg.Var, a variable of another package of the
+// project, to its initializer and to every assignment to it in the project.
+func (f *appFile) packageVarOrigins(sel *ast.SelectorExpr, depth int) (appOrigins, bool) {
+	b, pkg, ok := f.packageVar(sel)
+	if !ok {
+		return appOrigins{}, false
+	}
+
+	out := appOrigins{complete: true}
+	if b.init != nil {
+		out.merge(b.file.originsOf(b.init, 0, depth))
+	}
+	out.merge(b.file.assignedOrigins(b, sel.Sel.Name, depth))
+
+	// from other packages the variable is assigned as pkg.Var = ...
+	for _, pf := range f.ix.moduleFiles() {
+		if pf.ix.pkgOf(pf) == pkg {
+			continue
+		}
+		ast.Inspect(pf.g.file, func(n ast.Node) bool {
+			as, isAssign := n.(*ast.AssignStmt)
+			if !isAssign || as.Tok != token.ASSIGN {
+				return true
+			}
+			for i, lhs := range as.Lhs {
+				s, isSel := lhs.(*ast.SelectorExpr)
+				if !isSel || s.Sel.Name != sel.Sel.Name {
+					continue
+				}
+				if other, _, same := pf.packageVar(s); !same || other.node != b.node {
+					continue
+				}
+				switch {
+				case len(as.Lhs) == len(as.Rhs):
+					out.merge(pf.originsOf(as.Rhs[i], 0, depth))
+				case len(as.Rhs) == 1:
+					out.merge(pf.originsOf(as.Rhs[0], i, depth))
+				default:
+					out.complete = false
+				}
+			}
+			return true
+		})
+	}
+	if b.init == nil && len(out.news) == 0 {
+		out.complete = false
+	}
+	return out, true
+}
+
 // fieldOrigins follows a struct field to everything that sets it: composite
 // literals that name it and assignments to it, within the package that
 // declares the struct. An exported field may be set from anywhere, so its
@@ -830,15 +915,22 @@ func (f *appFile) fieldOrigins(sel *ast.SelectorExpr, depth int) appOrigins {
 }
 
 func (f *appFile) setsOfField(td *appTypeDecl, field string, depth int) appOrigins {
-	out := appOrigins{complete: !appIsExported(field)}
+	out := appOrigins{complete: true}
 	pkg := f.ix.pkgOf(f)
 	if pkg == nil {
 		return appOrigins{}
 	}
 	unique := pkg.fieldOwners(field) <= 1
 
+	// an exported field can be set from every package of the project
+	files := pkg.files
+	if appIsExported(field) {
+		files = f.ix.moduleFiles()
+	}
+
 	found := false
-	for _, pf := range pkg.files {
+	for _, pf := range files {
+		otherPkg := f.ix.pkgOf(pf) != pkg
 		ast.Inspect(pf.g.file, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.CompositeLit:
@@ -871,8 +963,8 @@ func (f *appFile) setsOfField(td *appTypeDecl, field string, depth int) appOrigi
 					case bt != nil:
 						same = btf.resolveNamedType(bt) == td
 					default:
-						same = unique
-						if !unique {
+						same = unique && !otherPkg
+						if !same {
 							out.complete = false
 						}
 					}

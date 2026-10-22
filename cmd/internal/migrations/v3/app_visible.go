@@ -2,6 +2,7 @@ package v3
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"slices"
 )
@@ -16,6 +17,10 @@ type appValueNeeds struct {
 	pkgLevel bool
 	// hasFunc is set when the expression holds a function literal.
 	hasFunc bool
+	// effects is set when evaluating the expression changes something, as
+	// defining a flag or receiving from a channel does, so that evaluating it
+	// later or more than once is not the same.
+	effects bool
 	// unknown is set when an identifier could not be classified.
 	unknown bool
 }
@@ -27,6 +32,14 @@ func (f *appFile) valueNeeds(e ast.Expr) appValueNeeds {
 		switch x := n.(type) {
 		case *ast.FuncLit:
 			needs.hasFunc = true
+		case *ast.UnaryExpr:
+			needs.effects = needs.effects || x.Op == token.ARROW
+		case *ast.CallExpr:
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+				if id, isIdent := sel.X.(*ast.Ident); isIdent && f.importPathOf(id.Name) == "flag" {
+					needs.effects = true
+				}
+			}
 		case *ast.Ident:
 			f.classifyIdent(x, e, &needs)
 		}
@@ -123,6 +136,9 @@ func (f *appFile) valueProblem(e ast.Expr, target *appFile, at ast.Node, imps *a
 	needs := f.valueNeeds(e)
 	if needs.unknown {
 		return "it uses a name that could not be resolved"
+	}
+	if needs.effects {
+		return "evaluating it has side effects, which would happen later"
 	}
 	if needs.hasFunc {
 		decl := f.enclosingDecl(e)

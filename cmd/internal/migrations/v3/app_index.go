@@ -25,6 +25,7 @@ type appIndex struct {
 	pkgs     map[appPkgKey]*appPackage
 	root     string
 	mods     []appModule
+	all      []*appFile
 	modsDone bool
 }
 
@@ -357,6 +358,35 @@ func (ix *appIndex) loadModules() {
 		return nil
 	})
 	slices.SortFunc(ix.mods, func(a, b appModule) int { return len(b.path) - len(a.path) })
+}
+
+// moduleFiles returns every Go file below the root that can be parsed.
+func (ix *appIndex) moduleFiles() []*appFile {
+	if ix.all != nil {
+		return ix.all
+	}
+	ix.all = []*appFile{}
+
+	//nolint:errcheck // an unreadable directory only means its files are not looked at
+	_ = filepath.WalkDir(ix.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // keep walking
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case appVendorDir, ".git", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".go") {
+			if f := ix.fileAt(path); f != nil {
+				ix.all = append(ix.all, f)
+			}
+		}
+		return nil
+	})
+	return ix.all
 }
 
 // appVendorDir is the directory the migrations never touch.

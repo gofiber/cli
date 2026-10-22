@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -88,6 +89,10 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 
 	var files []*appFile
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		// only a file that mentions fiber or starts an app can matter
+		if !strings.Contains(content, "fiber") && !strings.Contains(content, ".Listen") {
+			return content
+		}
 		if f, ok := ix.openFile(fi, content); ok {
 			files = append(files, f)
 		}
@@ -128,25 +133,50 @@ type appMoveStart struct {
 	rewrite appStartRewrite
 }
 
-// move plans the move of every setting of the source that can move, and
-// returns why it could not when it cannot.
-func (pl *appPlanner) move(src *appListenSource) string {
+// movableFields returns the settings of the source that can move.
+func (src *appListenSource) movableFields() []*appSourceField {
 	var movable []*appSourceField
 	for _, fld := range src.fields {
 		if fld.problem == "" {
 			movable = append(movable, fld)
 		}
 	}
-	if len(movable) == 0 {
+	return movable
+}
+
+// move plans the move of every setting of the source that can move, and
+// returns why none could when it cannot.
+func (pl *appPlanner) move(src *appListenSource) string {
+	if len(src.movableFields()) == 0 {
 		return ""
 	}
 	if len(src.creations) == 0 {
 		return "this fiber.Config is not handed straight to fiber.New"
 	}
 
-	linked, reason := pl.linkedStarts(src)
+	linked, never, reason := pl.linkedStarts(src)
 	if reason != "" {
+		if never && src.onlyInTests() {
+			return pl.dropCosmetic(src, src.movableFields(), reason)
+		}
 		return reason
+	}
+
+	// a setting moves only if its value means the same at every call
+	for _, s := range linked {
+		if !s.file.walked {
+			return fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)
+		}
+		for _, fld := range src.movableFields() {
+			imps := appImports{reqs: slices.Clone(pl.plan.fileOf(s.file).imps.reqs)}
+			if why := src.file.valueProblem(fld.value, s.file, s.call, &imps); why != "" {
+				fld.problem = fmt.Sprintf("its value cannot move to the call that starts the app, at line %d: %s", s.file.g.line(s.call.Pos()), why)
+			}
+		}
+	}
+	movable := src.movableFields()
+	if len(movable) == 0 {
+		return ""
 	}
 
 	var work appMovePlan
@@ -161,17 +191,12 @@ func (pl *appPlanner) move(src *appListenSource) string {
 
 	imports := map[*appFile]appImports{}
 	for _, s := range linked {
-		if !s.file.walked {
-			return fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)
-		}
 		imps, seen := imports[s.file]
 		if !seen {
 			imps = appImports{reqs: slices.Clone(pl.plan.fileOf(s.file).imps.reqs)}
 		}
 		for _, fld := range movable {
-			if why := src.file.valueProblem(fld.value, s.file, s.call, &imps); why != "" {
-				return fmt.Sprintf("the value of %s cannot move to the call that starts the app, at line %d: %s", fld.v2, s.file.g.line(s.call.Pos()), why)
-			}
+			src.file.valueProblem(fld.value, s.file, s.call, &imps) // records the imports it needs
 		}
 		rw := s.rewrite(extras, imps)
 		if rw.problem != "" {
@@ -224,7 +249,10 @@ func (src *appListenSource) planRemoval(movable []*appSourceField, edits *editSe
 // linkedStarts finds the calls that start the apps the source creates. It
 // fails, with the reason, unless every app is started by a call that starts no
 // other app.
-func (pl *appPlanner) linkedStarts(src *appListenSource) (linked []*appStartInfo, reason string) {
+//
+// never is set when the reason is that no call starts one of the apps at all,
+// as opposed to a call that might start it.
+func (pl *appPlanner) linkedStarts(src *appListenSource) (linked []*appStartInfo, never bool, reason string) {
 	creations := src.creations
 	for _, s := range pl.starts {
 		hit, miss := 0, 0
@@ -238,9 +266,9 @@ func (pl *appPlanner) linkedStarts(src *appListenSource) (linked []*appStartInfo
 		switch {
 		case hit == 0:
 		case !s.origins.complete:
-			return nil, fmt.Sprintf("the call at line %d may start it, but where its app comes from could not be traced completely", s.file.g.line(s.call.Pos()))
+			return nil, false, fmt.Sprintf("the call at line %d may start it, but where its app comes from could not be traced completely", s.file.g.line(s.call.Pos()))
 		case miss > 0:
-			return nil, fmt.Sprintf("the call at line %d may start this app or another one", s.file.g.line(s.call.Pos()))
+			return nil, false, fmt.Sprintf("the call at line %d may start this app or another one", s.file.g.line(s.call.Pos()))
 		default:
 			linked = append(linked, s)
 		}
@@ -249,10 +277,45 @@ func (pl *appPlanner) linkedStarts(src *appListenSource) (linked []*appStartInfo
 	for _, c := range creations {
 		started := slices.ContainsFunc(linked, func(s *appStartInfo) bool { return slices.Contains(s.origins.news, c) })
 		if !started {
-			return nil, fmt.Sprintf("no Listen call that starts the app created at line %d could be found", c.file.g.line(c.call.Pos()))
+			return nil, true, fmt.Sprintf("no Listen call that starts the app created at line %d could be found", c.file.g.line(c.call.Pos()))
 		}
 	}
-	return linked, ""
+	return linked, false, ""
+}
+
+// onlyInTests reports whether every app of the source is created in a test
+// file, where nothing outside the package can start it.
+func (src *appListenSource) onlyInTests() bool {
+	return !slices.ContainsFunc(src.creations, func(c appNew) bool { return !strings.HasSuffix(c.file.path, "_test.go") })
+}
+
+// appCosmeticFields are the settings that only change what Listen prints.
+var appCosmeticFields = []string{appFieldQuiet, appFieldPrintRoutes}
+
+// dropCosmetic removes the settings that only change what Listen prints from a
+// source whose apps are never started: they have no effect there. The others
+// stay, with the reason.
+func (pl *appPlanner) dropCosmetic(src *appListenSource, movable []*appSourceField, reason string) string {
+	var cosmetic []*appSourceField
+	for _, fld := range movable {
+		if slices.Contains(appCosmeticFields, fld.v2) {
+			cosmetic = append(cosmetic, fld)
+		}
+	}
+	if len(cosmetic) == 0 {
+		return reason
+	}
+
+	var removal editSet
+	if src.planRemoval(cosmetic, &removal) != "" {
+		return reason
+	}
+	fp := pl.plan.fileOf(src.file)
+	fp.edits.edits = append(fp.edits.edits, removal.edits...)
+	for _, fld := range cosmetic {
+		fld.dropped = true
+	}
+	return reason
 }
 
 // noteLeftovers tells the user about the settings that stay where they are:
@@ -264,7 +327,7 @@ func noteLeftovers(src *appListenSource, reason string) {
 		if why == "" {
 			why = reason
 		}
-		if why == "" || !src.file.walked || len(fld.occs) == 0 {
+		if why == "" || fld.dropped || !src.file.walked || len(fld.occs) == 0 {
 			continue
 		}
 		for _, occ := range fld.occs {

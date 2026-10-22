@@ -199,9 +199,15 @@ func appJoinFields(fields []appListenField) string {
 var appListenerFieldNames = []struct{ v2, v3 string }{
 	{"Prefork", "EnablePrefork"},
 	{"Network", "ListenerNetwork"},
-	{"DisableStartupMessage", "DisableStartupMessage"},
-	{"EnablePrintRoutes", "EnablePrintRoutes"},
+	{appFieldQuiet, appFieldQuiet},
+	{appFieldPrintRoutes, appFieldPrintRoutes},
 }
+
+// The settings of fiber.Config that only change what Listen prints.
+const (
+	appFieldQuiet       = "DisableStartupMessage"
+	appFieldPrintRoutes = "EnablePrintRoutes"
+)
 
 // appListenerFieldV3 returns the ListenConfig name of a fiber.Config field that
 // moved, empty for every other field.

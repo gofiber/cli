@@ -498,7 +498,7 @@ func Test_MigrateConfigListenerFields_BrokenFileDoesNotStopTheRest(t *testing.T)
 	t.Parallel()
 
 	dir := appProject(t, map[string]string{
-		"a_broken.go": "package main\n\nfunc broken( {\n",
+		"a_broken.go": "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\nvar _ = fiber.New\n\nfunc broken( {\n",
 		"b_good.go": `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -516,4 +516,84 @@ func main() {
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "a_broken.go", notes[0].File)
+}
+
+func Test_MigrateConfigListenerFields_TestAppsThatNeverListen(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"app_test.go": `package main
+
+import (
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func TestQuiet(t *testing.T) {
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+		EnablePrintRoutes:     true,
+		Prefork:               true,
+		AppName:               "test",
+	})
+	_, _ = app.Test(httptest.NewRequest("GET", "/", nil))
+}
+`,
+		"app.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newApp() *fiber.App {
+	return fiber.New(fiber.Config{DisableStartupMessage: true})
+}
+`,
+	})
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	// printing is all those two settings change, and the app is never started
+	test := appRead(t, dir, "app_test.go")
+	assert.NotContains(t, test, "DisableStartupMessage")
+	assert.NotContains(t, test, "EnablePrintRoutes")
+	assert.Contains(t, test, "Prefork:")
+	assert.Contains(t, test, `AppName: "test"`)
+	// an app of the program itself may be started from anywhere
+	assert.Contains(t, appRead(t, dir, "app.go"), "DisableStartupMessage: true")
+
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 2)
+	assert.Equal(t, "app.go", notes[0].File)
+	assert.Equal(t, "app_test.go", notes[1].File)
+	assert.Contains(t, notes[1].Message, "EnablePrefork")
+}
+
+func Test_MigrateConfigListenerFields_ValuesWithSideEffectsStay(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"flag"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	app := fiber.New(fiber.Config{Prefork: *flag.Bool("prefork", false, "prefork"), DisableStartupMessage: true})
+	flag.Parse()
+	app.Listen(":3000")
+}
+`)
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	// the setting that can move does, the one that would be evaluated later stays
+	content := appRead(t, dir, "main.go")
+	assert.Contains(t, content, `fiber.New(fiber.Config{Prefork: *flag.Bool("prefork", false, "prefork")})`)
+	assert.Contains(t, content, `app.Listen(":3000", fiber.ListenConfig{DisableStartupMessage: true})`)
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "side effects")
 }
