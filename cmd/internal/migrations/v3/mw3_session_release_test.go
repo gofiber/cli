@@ -443,12 +443,7 @@ type App struct{ Sessions *session.Store }
 `,
 		"handlers.go": `package main
 
-import (
-	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/session"
-)
-
-var _ = session.NewStore
+import "github.com/gofiber/fiber/v3"
 
 func get(c fiber.Ctx, app *App) error {
 	sess, err := Store.Get(c)

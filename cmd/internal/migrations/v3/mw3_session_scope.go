@@ -2,6 +2,8 @@ package v3
 
 import (
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"slices"
 	"strings"
@@ -150,12 +152,41 @@ func mw3OpenSessionFile(fi internal.FileInfo, src string, pkgs *mw3Pkgs) (*mw3Se
 	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, names: names, fiber: fiberNames(src)}, true
 }
 
+// mw3OpenStoreUser is mw3OpenSessionFile for the migrations of what is done
+// with a store and its sessions, which a file can do without importing the
+// session package: the store is a variable, a field or a function of the
+// package that another file declares. cheap tells from the text whether the
+// file has any call the migration looks for, so that the package is only read
+// for files that may use a store.
+func mw3OpenStoreUser(fi internal.FileInfo, src string, pkgs *mw3Pkgs, cheap func(src string) bool) (*mw3SessionFile, bool) {
+	if !cheap(src) {
+		return nil, false
+	}
+	if f, ok := mw3OpenSessionFile(fi, src, pkgs); ok {
+		return f, true
+	}
+
+	head, err := parser.ParseFile(token.NewFileSet(), fi.Path, src, parser.PackageClauseOnly)
+	if err != nil {
+		return nil, false
+	}
+	facts := pkgs.of(fi, head.Name.Name).sessions()
+	if len(facts.storeVars)+len(facts.storeFields)+len(facts.storeFuncs) == 0 {
+		return nil, false
+	}
+	g, ok := parseFile(fi, src)
+	if !ok {
+		return nil, false
+	}
+	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, fiber: fiberNames(src)}, true
+}
+
 // facts returns what the package says about session stores.
 func (f *mw3SessionFile) facts() *mw3SessionFacts {
 	if f.pkg == nil {
 		f.pkg = f.pkgs.of(f.fi, f.g.file.Name.Name)
 	}
-	return &f.pkg.session
+	return f.pkg.sessions()
 }
 
 // strings returns the reader of string values of the file.

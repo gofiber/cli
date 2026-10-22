@@ -268,13 +268,27 @@ func (p *mw3FSPass) isHTTP(e ast.Expr, member string, stack []ast.Node) bool {
 	return !shadowed
 }
 
+// existingStaticName returns the identifier the file already uses for the
+// static middleware. A dot import is no name to write a qualifier with, so it is
+// not one, and neither is any import in a file that dot imports the filesystem
+// package, which has no qualifier to rename.
+func (p *mw3FSPass) existingStaticName() string {
+	if p.dot {
+		return ""
+	}
+	for _, name := range importNames(p.g.src, reStaticPath, "static") {
+		if name != "." {
+			return name
+		}
+	}
+	return ""
+}
+
 // chooseStaticName decides which identifier the static package goes by.
 func (p *mw3FSPass) chooseStaticName() {
-	src := p.g.src
-
 	// A file that has the static middleware already keeps that name.
-	if names := importNames(src, reStaticPath, "static"); len(names) > 0 {
-		p.static = names[0]
+	if name := p.existingStaticName(); name != "" {
+		p.static = name
 		return
 	}
 
@@ -286,14 +300,11 @@ func (p *mw3FSPass) chooseStaticName() {
 		}
 	}
 
-	if p.pkg == nil {
-		p.pkg = p.pkgs.of(p.fi, p.g.file.Name.Name)
-	}
 	p.static = mw3FreeName(func(name string) bool {
 		if _, taken := p.declared[name]; taken {
 			return true
 		}
-		_, taken := p.pkg.names[name]
+		_, taken := p.packageFacts().declared()[name]
 		return taken
 	}, "static", "staticmw", "fiberstatic")
 }
@@ -301,7 +312,7 @@ func (p *mw3FSPass) chooseStaticName() {
 // rewriteImport points the filesystem import at the static package. A file
 // that imports static already just loses the filesystem import.
 func (p *mw3FSPass) rewriteImport() {
-	staticImported := len(importNames(p.g.src, reStaticPath, "static")) > 0
+	staticImported := p.existingStaticName() != ""
 	for _, spec := range p.g.file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
 		if err != nil || !reFilesystemPath.MatchString(path) || (spec.Name != nil && spec.Name.Name == "_") {

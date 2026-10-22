@@ -27,7 +27,7 @@ func newMw3Pkgs() *mw3Pkgs {
 
 // mw3Pkg holds the facts about the files of one package, which a single file
 // cannot know: a constant declared in a sibling file, a session store kept in a
-// package level variable.
+// package level variable. A kind of fact is read when it is first asked for.
 type mw3Pkg struct {
 	// strs are the package level string constants, and the string variables
 	// that are initialized with a constant expression and never assigned.
@@ -36,6 +36,11 @@ type mw3Pkg struct {
 	names map[string]struct{}
 	// session is what the package says about the fiber session middleware.
 	session mw3SessionFacts
+	dir     string
+	name    string
+	// declsRead and sessionRead tell which kinds of fact were read.
+	declsRead   bool
+	sessionRead bool
 	// httpFS is whether the package has the adapter of an http.FileSystem.
 	httpFS bool
 }
@@ -48,7 +53,13 @@ func (p *mw3Pkgs) of(fi internal.FileInfo, pkgName string) *mw3Pkg {
 	if pkg, ok := p.pkgs[key]; ok {
 		return pkg
 	}
-	pkg := mw3ScanPackage(dir, pkgName)
+	pkg := &mw3Pkg{
+		strs:    map[string]string{},
+		names:   map[string]struct{}{},
+		session: newMw3SessionFacts(),
+		dir:     dir,
+		name:    pkgName,
+	}
 	p.pkgs[key] = pkg
 	return pkg
 }
@@ -59,38 +70,48 @@ type mw3StrDecl struct {
 	isConst bool
 }
 
-func mw3ScanPackage(dir, pkgName string) *mw3Pkg {
-	pkg := &mw3Pkg{
-		strs:    map[string]string{},
-		names:   map[string]struct{}{},
-		session: newMw3SessionFacts(),
-	}
-
-	entries, err := os.ReadDir(dir)
+// goFiles calls read with the content and the syntax of every file of the
+// package whose text contains need. A file that does not parse, or declares
+// another package, is not read.
+func (p *mw3Pkg) goFiles(need string, read func(file *ast.File, src string)) {
+	entries, err := os.ReadDir(p.dir)
 	if err != nil {
-		return pkg
+		return
 	}
-
-	decls := map[string]mw3StrDecl{}
-	duplicated := map[string]struct{}{}
-	assigned := map[string]struct{}{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304 -- a file of the project being migrated
+		data, err := os.ReadFile(filepath.Join(p.dir, entry.Name())) // #nosec G304 -- a file of the project being migrated
 		if err != nil {
 			continue
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), src, parser.SkipObjectResolution)
-		if err != nil || file.Name.Name != pkgName {
+		src := string(data)
+		if !strings.Contains(src, need) {
 			continue
 		}
-
-		pkg.scanDecls(file, decls, duplicated)
-		mw3CollectAssigned(file, assigned)
-		pkg.session.scan(file, string(src))
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), src, parser.SkipObjectResolution)
+		if err != nil || file.Name.Name != p.name {
+			continue
+		}
+		read(file, src)
 	}
+}
+
+// loadDecls reads what the files declare at package level.
+func (p *mw3Pkg) loadDecls() {
+	if p.declsRead {
+		return
+	}
+	p.declsRead = true
+
+	decls := map[string]mw3StrDecl{}
+	duplicated := map[string]struct{}{}
+	assigned := map[string]struct{}{}
+	p.goFiles("", func(file *ast.File, _ string) {
+		p.scanDecls(file, decls, duplicated)
+		mw3CollectAssigned(file, assigned)
+	})
 
 	for name := range duplicated {
 		delete(decls, name)
@@ -100,10 +121,33 @@ func mw3ScanPackage(dir, pkgName string) *mw3Pkg {
 			continue
 		}
 		if value, ok := mw3EvalPackageString(decl.expr, decls, assigned, 0); ok {
-			pkg.strs[name] = value
+			p.strs[name] = value
 		}
 	}
-	return pkg
+}
+
+// constants returns the string constants of the package.
+func (p *mw3Pkg) constants() map[string]string {
+	p.loadDecls()
+	return p.strs
+}
+
+// declared returns the names the package declares.
+func (p *mw3Pkg) declared() map[string]struct{} {
+	p.loadDecls()
+	return p.names
+}
+
+// sessions returns what the package says about session stores, read from the
+// files that mention the session middleware.
+func (p *mw3Pkg) sessions() *mw3SessionFacts {
+	if !p.sessionRead {
+		p.sessionRead = true
+		p.goFiles("middleware/session", func(file *ast.File, src string) {
+			p.session.scan(file, src)
+		})
+	}
+	return &p.session
 }
 
 // scanDecls records the names the file declares at package level, and the ones
@@ -291,7 +335,7 @@ func (s mw3Strings) evalIdent(id *ast.Ident, stack []ast.Node, depth int) (strin
 		}
 		return s.eval(d.init, stack, depth+1)
 	}
-	value, ok := s.pkg.strs[id.Name]
+	value, ok := s.pkg.constants()[id.Name]
 	return value, ok
 }
 

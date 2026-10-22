@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"slices"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -49,7 +50,10 @@ type mw3SessionMethodsPass struct {
 }
 
 func mw3SessionMethodsContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
-	f, ok := mw3OpenSessionFile(fi, src, pkgs)
+	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
+		return strings.Contains(src, ".SetExpiry(") || strings.Contains(src, ".Reset(") ||
+			strings.Contains(src, ".Delete(") || strings.Contains(src, ".Keys(")
+	})
 	if !ok {
 		return src
 	}

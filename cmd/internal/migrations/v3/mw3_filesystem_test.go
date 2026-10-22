@@ -1215,3 +1215,78 @@ func main() {
 	assert.Empty(t, second.out)
 	assert.Empty(t, second.notes)
 }
+
+func Test_MigrateFilesystemMiddleware_DotImportsWithStaticAround(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ name, in, want string }{
+		{
+			name: "the filesystem package is dot imported, static has a name",
+			in: `package main
+
+import (
+	"net/http"
+
+	. "github.com/gofiber/fiber/v3/middleware/filesystem"
+	"github.com/gofiber/fiber/v3/middleware/static"
+)
+
+var _ = static.New("./x")
+
+var _ = New(Config{Root: http.Dir(".")})
+`,
+			want: `package main
+
+import (
+	"os"
+
+	"github.com/gofiber/fiber/v3/middleware/static"
+	. "github.com/gofiber/fiber/v3/middleware/static"
+)
+
+var _ = static.New("./x")
+
+var _ = New("", Config{FS: os.DirFS(".")})
+`,
+		},
+		{
+			name: "static is dot imported, filesystem has a name",
+			in: `package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v3/middleware/filesystem"
+	. "github.com/gofiber/fiber/v3/middleware/static"
+)
+
+var _ = New("./x")
+
+var _ = filesystem.New(filesystem.Config{Root: http.Dir(".")})
+`,
+			want: `package main
+
+import (
+	"os"
+
+	"github.com/gofiber/fiber/v3/middleware/static"
+	. "github.com/gofiber/fiber/v3/middleware/static"
+)
+
+var _ = New("./x")
+
+var _ = static.New("", static.Config{FS: os.DirFS(".")})
+`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, res := mw3RunOne(t, tc.in, v3.MigrateFilesystemMiddleware)
+			assert.Equal(t, tc.want, got)
+			assert.Empty(t, res.notes)
+		})
+	}
+}

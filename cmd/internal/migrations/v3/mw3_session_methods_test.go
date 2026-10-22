@@ -283,6 +283,8 @@ func keys(c fiber.Ctx) []string {
 	assert.Empty(t, res.out, "a note is no change")
 }
 
+// A handler file need not import the session package to use a store that
+// another file of the package declares.
 func Test_MigrateSessionMethods_PackageLevelStoreOfAnotherFile(t *testing.T) {
 	t.Parallel()
 
@@ -296,10 +298,16 @@ var Store = sess.NewStore()
 type App struct{ Sessions *sess.Store }
 
 func newStore() *sess.Store { return Store }
+
+func get() *sess.Session { return nil }
 `,
 		"handlers.go": `package main
 
-import "github.com/gofiber/fiber/v3"
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+)
 
 func purge(c fiber.Ctx, app *App) error {
 	if err := Store.Reset(); err != nil {
@@ -308,15 +316,41 @@ func purge(c fiber.Ctx, app *App) error {
 	if err := newStore().Delete("x"); err != nil {
 		return err
 	}
+	get().SetExpiry(time.Hour)
 	return app.Sessions.Delete(c.Params("id"))
 }
 `,
+		"other.go": `package main
+
+type cache struct{}
+
+func (cache) Reset() error { return nil }
+
+func clear(c cache) error { return c.Reset() }
+`,
 	}, v3.MigrateSessionMethods)
 
-	// handlers.go does not import the session package, so it is out of reach
-	// of a migration keyed by that import; store.go has nothing to change.
-	assert.Contains(t, res.files["handlers.go"], "Store.Reset()")
-	assert.Empty(t, res.out)
+	assert.Equal(t, `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+)
+
+func purge(c fiber.Ctx, app *App) error {
+	if err := Store.Reset(c); err != nil {
+		return err
+	}
+	if err := newStore().Delete(c, "x"); err != nil {
+		return err
+	}
+	get().SetIdleTimeout(time.Hour)
+	return app.Sessions.Delete(c, c.Params("id"))
+}
+`, res.files["handlers.go"])
+	assert.Contains(t, res.files["other.go"], "return c.Reset()")
+	assert.Empty(t, res.notes)
 }
 
 func Test_MigrateSessionMethods_Idempotent(t *testing.T) {

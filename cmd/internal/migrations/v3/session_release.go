@@ -56,10 +56,12 @@ func MigrateSessionRelease(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 
 func mw3SessionReleaseContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	// Skip v2 imports - this migration only works with v3.
-	if !strings.Contains(src, "middleware/session") || len(importNames(src, reSessionV3Path, "session")) == 0 {
+	if strings.Contains(src, "middleware/session") && len(importNames(src, reSessionV3Path, "session")) == 0 {
 		return src
 	}
-	f, ok := mw3OpenSessionFile(fi, src, pkgs)
+	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
+		return strings.Contains(src, ".Get(") || strings.Contains(src, ".GetByID(")
+	})
 	if !ok {
 		return src
 	}

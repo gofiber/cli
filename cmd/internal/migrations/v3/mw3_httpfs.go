@@ -81,7 +81,7 @@ func (p *mw3Pkgs) ensureHTTPFSAdapter(fi internal.FileInfo, pkgName string) bool
 
 	path := filepath.Join(filepath.Dir(fi.Path), mw3HTTPFSFile)
 	data, err := os.ReadFile(path) // #nosec G304 -- next to a file of the project being migrated
-	_, declared := pkg.names[mw3HTTPFSType]
+	_, declared := pkg.declared()[mw3HTTPFSType]
 	switch {
 	case err == nil && bytes.Contains(data, []byte(mw3HTTPFSMarker)):
 		// Added by an earlier run.
@@ -94,7 +94,7 @@ func (p *mw3Pkgs) ensureHTTPFSAdapter(fi internal.FileInfo, pkgName string) bool
 		}
 	}
 
-	pkg.names[mw3HTTPFSType] = struct{}{}
+	pkg.declared()[mw3HTTPFSType] = struct{}{}
 	pkg.httpFS = true
 	return true
 }
