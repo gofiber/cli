@@ -137,26 +137,34 @@ func (f *contribFile) pasetoLookup(c *contribConfig, names []string) (parts []co
 		}
 	}
 
+	var plain contribExtractor
 	switch source {
 	case contribSourceQuery:
-		parts = []contribExtractor{{fn: nameFromQuery, arg: strconv.Quote(name)}}
+		plain = contribExtractor{fn: nameFromQuery, arg: strconv.Quote(name)}
 	case contribSourceParam:
-		parts = []contribExtractor{{fn: nameFromParam, arg: strconv.Quote(name)}}
+		plain = contribExtractor{fn: nameFromParam, arg: strconv.Quote(name)}
 	case contribSourceCookie:
-		parts = []contribExtractor{{fn: "FromCookie", arg: strconv.Quote(name)}}
+		plain = contribExtractor{fn: "FromCookie", arg: strconv.Quote(name)}
 	default:
 		// v2 read every source it did not know from a header.
-		e, ok := contribHeaderExtractor(name, prefix)
-		if !ok {
-			return nil, fmt.Sprintf("v2 expected the TokenPrefix (%s) in front of the token in the %s header, which no built-in extractor reads", prefix.text, name)
+		e, why := f.contribHeaderExtractor(name, prefix, false)
+		if why != "" {
+			return nil, fmt.Sprintf("v2 expected the TokenPrefix (%s) in front of the token in the %s header, %s", prefix.text, name, why)
 		}
 		return []contribExtractor{e}, ""
 	}
 
-	if !prefix.known || prefix.value != "" {
-		return nil, fmt.Sprintf("v2 expected the TokenPrefix (%s) in front of the token in the %s %s, which no built-in extractor reads", prefix.text, source, name)
+	switch {
+	case !prefix.known:
+		return nil, fmt.Sprintf("v2 expected the TokenPrefix (%s) in front of the token in the %s %s, %s", prefix.text, source, name, contribNotConstant)
+	case prefix.value == "":
+		return []contribExtractor{plain}, ""
 	}
-	return parts, ""
+	e, why := f.stripExtractor(source, name, prefix.value, false)
+	if why != "" {
+		return nil, fmt.Sprintf("v2 expected the TokenPrefix (%s) in front of the token in the %s %s, %s", prefix.text, source, name, why)
+	}
+	return []contribExtractor{e}, ""
 }
 
 // pasetoSource reads the [2]string{source, name} of a TokenLookup, with the

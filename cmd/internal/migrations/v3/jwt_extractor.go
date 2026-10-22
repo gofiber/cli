@@ -21,10 +21,26 @@ var contribJWTMentionRe = regexp.MustCompile(`github\.com/gofiber/(?:contrib/(?:
 // contribAuthorizationHeader is the header the Authorization extractors read.
 const contribAuthorizationHeader = "Authorization"
 
-// contribExtractor is a call of the extractors package: FromCookie("jwt").
+// contribExtractor is a call of the extractors package: FromCookie("jwt"), or,
+// when strip is set, an extractors.FromCustom that takes a prefix off the value.
 type contribExtractor struct {
-	fn  string
-	arg string
+	strip *contribStrip
+	fn    string
+	arg   string
+}
+
+// contribStrip describes the extractor of a source whose value carries a prefix
+// in front of the token. Only the Authorization header has an extractor that
+// takes such a prefix off, so any other lookup gets a function that does what v2
+// did.
+type contribStrip struct {
+	source string
+	name   string
+	// prefix is what stands in front of the token, the space after it included.
+	prefix string
+	// fold is set when v2 matched the prefix without regard to case and trimmed
+	// the token (the jwt middleware), and not when it matched it exactly (paseto).
+	fold bool
 }
 
 // contribString is a string a config sets: the text of its expression and, when
@@ -35,33 +51,84 @@ type contribString struct {
 	known bool
 }
 
+// The reasons a prefix in front of a token cannot be taken off by a function
+// written into the config.
+const (
+	contribNotConstant = "which is only translated when it is a constant"
+	contribStringsUsed = "but this file uses the name strings for something else, and the function that takes it off needs that package"
+)
+
 // contribHeaderExtractor returns the extractor of a header whose value carries
-// the scheme in front of the token, and ok is false when no extractor of the
-// extractors package reads such a header. Only the Authorization header has one
-// that strips a scheme, and it takes whatever the scheme is; any other header can
-// be read when there is no scheme.
-func contribHeaderExtractor(name string, scheme contribString) (e contribExtractor, ok bool) {
+// the scheme in front of the token. reason says why there is none. The
+// Authorization header has an extractor that takes any scheme off; any other
+// header is read as it is when there is no scheme, and otherwise by a function
+// that takes the scheme off the way v2 did, for which the scheme must be a
+// constant. fold tells how v2 matched it.
+func (f *contribFile) contribHeaderExtractor(name string, scheme contribString, fold bool) (e contribExtractor, reason string) {
 	switch {
 	case strings.EqualFold(name, contribAuthorizationHeader):
-		return contribExtractor{fn: "FromAuthHeader", arg: scheme.text}, true
-	case scheme.known && scheme.value == "":
-		return contribExtractor{fn: nameFromHeader, arg: strconv.Quote(name)}, true
+		return contribExtractor{fn: "FromAuthHeader", arg: scheme.text}, ""
+	case !scheme.known:
+		return contribExtractor{}, contribNotConstant
+	case scheme.value == "":
+		return contribExtractor{fn: nameFromHeader, arg: strconv.Quote(name)}, ""
 	}
-	return contribExtractor{}, false
+	return f.stripExtractor(contribSourceHeader, name, scheme.value, fold)
+}
+
+// stripExtractor returns the extractor that reads a source and takes the prefix
+// and the space after it off the value; reason says why it cannot be written.
+func (f *contribFile) stripExtractor(source, name, prefix string, fold bool) (e contribExtractor, reason string) {
+	if fold && !f.hasStd(mw3StringsPkg) {
+		return contribExtractor{}, contribStringsUsed
+	}
+	return contribExtractor{strip: &contribStrip{source: source, name: name, prefix: prefix + " ", fold: fold}}, ""
 }
 
 // renderExtractors writes the extractors as one expression, importing the
 // extractors package.
 func (f *contribFile) renderExtractors(parts []contribExtractor) string {
-	pkg := f.extractorsName()
 	exprs := make([]string, len(parts))
 	for i, p := range parts {
-		exprs[i] = pkg + "." + p.fn + "(" + p.arg + ")"
+		exprs[i] = f.renderExtractor(p)
 	}
 	if len(exprs) == 1 {
 		return exprs[0]
 	}
-	return pkg + ".Chain(" + strings.Join(exprs, ", ") + ")"
+	return f.extractorsName() + ".Chain(" + strings.Join(exprs, ", ") + ")"
+}
+
+func (f *contribFile) renderExtractor(e contribExtractor) string {
+	pkg := f.extractorsName()
+	if e.strip == nil {
+		return pkg + "." + e.fn + "(" + e.arg + ")"
+	}
+	s := e.strip
+
+	read := map[string]string{
+		contribSourceHeader: appMethodGet, contribSourceCookie: "Cookies", contribSourceQuery: ctxFnQuery, contribSourceParam: "Params",
+	}[s.source]
+	name := strconv.Quote(s.name)
+
+	// Both conditions are the ones of v2: paseto compared the prefix exactly, jwt
+	// without regard to case and with a token of at least two characters.
+	cond, result := "len(value) > len(prefix) && value[:len(prefix)] == prefix", "value[len(prefix):]"
+	if s.fold {
+		strs, _ := f.stdName(mw3StringsPkg)
+		cond = "len(value) > len(prefix)+1 && " + strs + ".EqualFold(value[:len(prefix)], prefix)"
+		result = strs + ".TrimSpace(value[len(prefix):])"
+	}
+
+	return strings.Join([]string{
+		pkg + ".FromCustom(" + name + ", func(c " + f.fiberName() + ".Ctx) (string, error) {",
+		"const prefix = " + strconv.Quote(s.prefix),
+		"value := c." + read + "(" + name + ")",
+		"if " + cond + " {",
+		"return " + result + ", nil",
+		"}",
+		"return \"\", " + pkg + ".ErrNotFound",
+		"})",
+	}, "\n")
 }
 
 // MigrateJWTExtractor moves the token lookup of the jwt middleware to the
@@ -182,9 +249,9 @@ func (f *contribFile) jwtLookup(c *contribConfig) (parts []contribExtractor, rea
 
 		switch src[0] {
 		case contribSourceHeader:
-			e, ok := contribHeaderExtractor(src[1], scheme)
-			if !ok {
-				return nil, fmt.Sprintf("v2 expected the AuthScheme (%s) in front of the token in the %s header, which no built-in extractor reads", scheme.text, src[1])
+			e, why := f.contribHeaderExtractor(src[1], scheme, true)
+			if why != "" {
+				return nil, fmt.Sprintf("v2 expected the AuthScheme (%s) in front of the token in the %s header, %s", scheme.text, src[1], why)
 			}
 			parts = append(parts, e)
 		case contribSourceQuery:

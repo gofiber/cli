@@ -197,9 +197,114 @@ func Test_MigrateJWTExtractor_KeepsTheAcceptedCredential(t *testing.T) {
 	}
 }
 
-// No extractor of v3 strips a scheme from a header other than Authorization, and
-// a lookup that is computed cannot be read: both stay as they are, which does not
-// compile, and are reported.
+// No extractor of v3 takes a scheme off a header other than Authorization, so
+// the function that does it is written into the config, the way v2 did it: the
+// scheme and a space, compared without regard to case, and the token trimmed.
+func Test_MigrateJWTExtractor_StripsTheSchemeItself(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config string
+		key    string
+		scheme string
+		want   string // the extractor around the function, "%s" being the function
+	}{
+		{
+			name:   "scheme on another header",
+			config: "TokenLookup: \"header:X-Auth-Token\",\n\tAuthScheme: \"Bearer\",",
+			key:    "X-Auth-Token",
+			scheme: "Bearer ",
+			want:   "Extractor: %s,",
+		},
+		{
+			name:   "scheme in a constant",
+			config: "TokenLookup: \"header:X-Auth-Token\",\n\tAuthScheme: schemeConst,",
+			key:    "X-Auth-Token",
+			scheme: "Token ",
+			want:   "Extractor: %s,",
+		},
+		{
+			name:   "next to the Authorization header, in a chain",
+			config: "TokenLookup: \"header:Authorization,header:X-Auth-Token\",\n\tAuthScheme: \"Token\",",
+			key:    "X-Auth-Token",
+			scheme: "Token ",
+			want:   `Extractor: extractors.Chain(extractors.FromAuthHeader("Token"), %s),`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			file := writeTempFile(t, dir, jwtConfigSource("const schemeConst = \"Token\"\n"+
+				"var _ = jwtware.New(jwtware.Config{\n\tSigningKey: jwtware.SigningKey{Key: key},\n\t"+tt.config+"\n})"))
+
+			out := contribMigrate(t, dir, v3.MigrateHandlerSignatures, v3.MigrateJWTExtractor)
+
+			content := readFile(t, file)
+			contribRequireParses(t, content)
+			assert.NotContains(t, content, "TokenLookup")
+			assert.NotContains(t, content, "AuthScheme")
+			fn := `extractors.FromCustom("` + tt.key + `", func(c fiber.Ctx) (string, error) {
+				const prefix = "` + tt.scheme + `"
+				value := c.Get("` + tt.key + `")
+				if len(value) > len(prefix)+1 && strings.EqualFold(value[:len(prefix)], prefix) {
+					return strings.TrimSpace(value[len(prefix):]), nil
+				}
+				return "", extractors.ErrNotFound
+			})`
+			assert.Contains(t, contribCompact(content), contribCompact(strings.Replace(tt.want, "%s", fn, 1)))
+			assert.Contains(t, content, "\t\"strings\"\n")
+			assert.Contains(t, out, "Migrating jwt middleware configs")
+			assert.Empty(t, internal.DrainNotes(dir))
+
+			// The config holds its Extractor now: a second run has nothing to do.
+			again := contribMigrate(t, dir, v3.MigrateJWTExtractor)
+			assert.Equal(t, content, readFile(t, file))
+			assert.Empty(t, again)
+		})
+	}
+}
+
+// The function needs strings; a file that uses that name for something else
+// keeps its config, which does not compile, and gets a note.
+func Test_MigrateJWTExtractor_StripsTheSchemeItself_NameTaken(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	source := `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	jwtware "github.com/gofiber/contrib/jwt"
+)
+
+var strings = []string{"a"}
+
+var _ = fiber.New
+
+var _ = jwtware.New(jwtware.Config{
+	SigningKey:  jwtware.SigningKey{Key: []byte("k")},
+	TokenLookup: "header:X-Auth-Token",
+	AuthScheme:  "Bearer",
+})
+`
+	file := writeTempFile(t, dir, source)
+
+	out := contribMigrate(t, dir, v3.MigrateJWTExtractor)
+
+	assert.Equal(t, source, readFile(t, file))
+	assert.Empty(t, out)
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "uses the name strings for something else")
+}
+
+// A lookup that is computed cannot be read, and neither can a scheme that is
+// computed on a header other than Authorization: both stay as they are, which
+// does not compile, and are reported.
 func Test_MigrateJWTExtractor_LeavesWhatItCannotTranslate(t *testing.T) {
 	t.Parallel()
 
@@ -208,11 +313,6 @@ func Test_MigrateJWTExtractor_LeavesWhatItCannotTranslate(t *testing.T) {
 		config  string
 		message string
 	}{
-		{
-			name:    "scheme on another header",
-			config:  "TokenLookup: \"header:X-Auth-Token\",\n\tAuthScheme: \"Bearer\",",
-			message: `the AuthScheme ("Bearer") in front of the token in the X-Auth-Token header`,
-		},
 		{
 			name:    "computed scheme on another header",
 			config:  "TokenLookup: \"header:X-Auth-Token\",\n\tAuthScheme: scheme,",

@@ -133,6 +133,13 @@ func (f *contribFile) imports(path string) bool {
 	return slices.ContainsFunc(f.g.file.Imports, func(spec *ast.ImportSpec) bool { return spec.Path.Value == want })
 }
 
+// hasStd reports whether stdName can give the file the standard library package
+// path, which it cannot when the file uses the name of the package for something
+// else.
+func (f *contribFile) hasStd(path string) bool {
+	return f.imports(path) || !f.idents[defaultImportName(path)]
+}
+
 // stdName returns the name of a standard library package in this file, adding the
 // import when it is missing. ok is false when the file uses the name for
 // something else.

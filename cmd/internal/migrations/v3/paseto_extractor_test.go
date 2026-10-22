@@ -165,9 +165,115 @@ func Test_MigratePasetoExtractor_KeepsTheAcceptedCredential(t *testing.T) {
 	}
 }
 
-// Nothing in the extractors package reads a prefix from a place other than the
-// Authorization header: those configs stay as they are, which does not compile,
-// and are reported.
+// No extractor of the extractors package takes a prefix off a value other than
+// the Authorization header, so for any other place the function that does it is
+// written into the config, the way v2 did it: the prefix and a space, compared
+// exactly.
+func Test_MigratePasetoExtractor_StripsThePrefixItself(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config string
+		read   string
+		key    string
+		prefix string
+	}{
+		{
+			name:   "prefix on another header",
+			config: "TokenLookup: [2]string{\"header\", \"X-Token\"},\n\tTokenPrefix: \"Bearer\",",
+			read:   `c.Get("X-Token")`,
+			key:    "X-Token",
+			prefix: "Bearer ",
+		},
+		{
+			name:   "prefix in a cookie",
+			config: "TokenLookup: [2]string{pasetoware.LookupCookie, \"session\"},\n\tTokenPrefix: \"v2\",",
+			read:   `c.Cookies("session")`,
+			key:    "session",
+			prefix: "v2 ",
+		},
+		{
+			name:   "prefix in the query",
+			config: "TokenLookup: [2]string{\"query\", \"token\"},\n\tTokenPrefix: prefixConst,",
+			read:   `c.Query("token")`,
+			key:    "token",
+			prefix: "Token ",
+		},
+		{
+			name:   "prefix in a param",
+			config: "TokenLookup: [2]string{\"param\", \"token\"},\n\tTokenPrefix: \"Bearer\" + \"X\",",
+			read:   `c.Params("token")`,
+			key:    "token",
+			prefix: "BearerX ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			file := writeTempFile(t, dir, pasetoConfigSource("var _ = pasetoware.New(pasetoware.Config{\n\tSymmetricKey: key,\n\t"+tt.config+"\n})"))
+
+			out := contribMigrate(t, dir, v3.MigrateHandlerSignatures, v3.MigratePasetoExtractor)
+
+			content := readFile(t, file)
+			contribRequireParses(t, content)
+			assert.NotContains(t, content, "TokenLookup")
+			assert.NotContains(t, content, "TokenPrefix")
+			want := `Extractor: extractors.FromCustom("` + tt.key + `", func(c fiber.Ctx) (string, error) {
+				const prefix = "` + tt.prefix + `"
+				value := ` + tt.read + `
+				if len(value) > len(prefix) && value[:len(prefix)] == prefix {
+					return value[len(prefix):], nil
+				}
+				return "", extractors.ErrNotFound
+			}),`
+			assert.Contains(t, contribCompact(content), contribCompact(want))
+			assert.Contains(t, content, "\t\"github.com/gofiber/fiber/v3/extractors\"\n")
+			assert.Contains(t, out, "Migrating paseto middleware configs")
+			assert.Empty(t, internal.DrainNotes(dir))
+
+			// The config holds its Extractor now: a second run has nothing to do.
+			again := contribMigrate(t, dir, v3.MigratePasetoExtractor)
+			assert.Equal(t, content, readFile(t, file))
+			assert.Empty(t, again)
+		})
+	}
+}
+
+// The function needs the fiber package for its parameter: a file that has only
+// the config gets the import.
+func Test_MigratePasetoExtractor_StripsThePrefixItself_ImportsFiber(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := writeTempFile(t, dir, `package auth
+
+import (
+	pasetoware "github.com/gofiber/contrib/paseto"
+)
+
+var Config = pasetoware.Config{
+	SymmetricKey: []byte("secret-key-of-32-bytes-length!!!"),
+	TokenLookup:  [2]string{"cookie", "session"},
+	TokenPrefix:  "Bearer",
+}
+`)
+
+	contribMigrate(t, dir, v3.MigratePasetoExtractor)
+
+	content := readFile(t, file)
+	contribRequireParses(t, content)
+	assert.Contains(t, content, "\t\"github.com/gofiber/fiber/v3\"\n")
+	assert.Contains(t, content, "\t\"github.com/gofiber/fiber/v3/extractors\"\n")
+	assert.Contains(t, content, "func(c fiber.Ctx) (string, error)")
+	assert.Empty(t, internal.DrainNotes(dir))
+}
+
+// Only a prefix that is computed has no function: it stays as it is, which does
+// not compile, and is reported.
 func Test_MigratePasetoExtractor_LeavesWhatItCannotTranslate(t *testing.T) {
 	t.Parallel()
 
@@ -176,16 +282,6 @@ func Test_MigratePasetoExtractor_LeavesWhatItCannotTranslate(t *testing.T) {
 		config  string
 		message string
 	}{
-		{
-			name:    "prefix on another header",
-			config:  "TokenLookup: [2]string{\"header\", \"X-Token\"},\n\tTokenPrefix: \"Bearer\",",
-			message: `the TokenPrefix ("Bearer") in front of the token in the X-Token header`,
-		},
-		{
-			name:    "prefix in a cookie",
-			config:  "TokenLookup: [2]string{\"cookie\", \"session\"},\n\tTokenPrefix: \"v2\",",
-			message: `the TokenPrefix ("v2") in front of the token in the cookie session`,
-		},
 		{
 			name:    "computed lookup",
 			config:  `TokenLookup: lookup,`,
