@@ -194,6 +194,81 @@ func configure(own *session.Store) {
 `, got)
 }
 
+// The init and the post statement of a for, the init of a switch, the body of a
+// closure that is called, started or deferred, and a tuple assignment are places
+// where an assignment is no statement of a list: the target is replaced by _, or
+// the body is left empty, and the program compiles and looks where it did.
+func Test_MigrateSessionExtractor_StoreWritesInLoopsAndClosures(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New()
+
+func odd() {
+	for store.CookieName = "a"; len(os.Args) > 5; store.KeyLookup = "b" {
+		fmt.Println("loop")
+	}
+	func() { store.KeyLookup = "x" }()
+	done := make(chan struct{})
+	go func() {
+		store.KeyLookup = "y"
+		close(done)
+	}()
+	<-done
+	defer func() { store.CookieName = "z" }()
+	store.KeyLookup, store.CookieName = "a", "b"
+	switch store.KeyLookup = "q"; {
+	case len(os.Args) > 3:
+		fmt.Println("three")
+	}
+}
+`, v3.MigrateSessionExtractor)
+
+	assert.Equal(t, `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New()
+
+func odd() {
+	for _ = "a"; len(os.Args) > 5; _ = "b" {
+		fmt.Println("loop")
+	}
+	func() {}()
+	done := make(chan struct{})
+	go func() {
+		close(done)
+	}()
+	<-done
+	defer func() {}()
+	_, _ = "a", "b"
+	switch _ = "q"; {
+	case len(os.Args) > 3:
+		fmt.Println("three")
+	}
+}
+`, got)
+	assert.Len(t, mw3Messages(res.notes), 8)
+
+	again, second := mw3RunOne(t, got, v3.MigrateSessionExtractor)
+	assert.Equal(t, got, again)
+	assert.Empty(t, second.out)
+	assert.Empty(t, second.notes)
+}
+
 // A statement that shares its line with other code, and one that is not in a
 // list of statements, keep what is around them.
 func Test_MigrateSessionExtractor_StoreWritesInOddPlaces(t *testing.T) {

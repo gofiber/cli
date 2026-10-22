@@ -223,6 +223,63 @@ func main() {
 	assert.Contains(t, main, "fmt.Sprint(key)")
 }
 
+// A struct that embeds an instance of a generic type of another package has the
+// members of the type promoted: the field that holds a store is a store there.
+func Test_SessionMigrations_PromotedThroughAnEmbeddedGenericType(t *testing.T) {
+	t.Parallel()
+
+	res := mw3RunModule(t, map[string]string{
+		"internal/auth/auth.go": `package auth
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+type Manager[T any] struct {
+	S     *session.Store
+	Items map[string]T
+}
+
+func NewManager[T any]() *Manager[T] {
+	return &Manager[T]{S: session.New(session.Config{KeyLookup: "header:X-Auth"})}
+}
+
+func (m *Manager[T]) Wipe() error { return m.S.Reset() }
+`,
+		"internal/svc/svc.go": `package svc
+
+import "example.com/app/internal/auth"
+
+type Service struct {
+	auth.Manager[string]
+	Name string
+}
+
+func New() *Service { return &Service{Manager: *auth.NewManager[string]()} }
+`,
+		"main.go": `package main
+
+import (
+	"fmt"
+
+	"example.com/app/internal/svc"
+)
+
+func main() {
+	s := svc.New()
+	fmt.Println(s.S.KeyLookup, s.Wipe(), s.S.Reset())
+}
+`,
+	}, mw3SessionChain...)
+
+	got := res.files["main.go"]
+	assert.Contains(t, got, "s.S.Reset(context.Background())")
+	assert.Contains(t, got, "}(s.S.Extractor)")
+	assert.NotContains(t, got, "KeyLookup")
+	assert.Contains(t, res.files["internal/auth/auth.go"], "m.S.Reset(context.Background())")
+
+	again := mw3RunModule(t, res.files, mw3SessionChain...)
+	assert.Equal(t, res.files, again.files)
+}
+
 // A session that an interface of the program hands out is released like one that
 // comes from the store.
 func Test_SessionMigrations_SessionsOfAnInterface(t *testing.T) {
@@ -393,4 +450,6 @@ func main() {
 
 	again := mw3RunModule(t, res.files, mw3SessionChain...)
 	assert.Equal(t, res.files, again.files)
+	assert.Empty(t, again.out)
+	assert.Empty(t, again.notes)
 }
