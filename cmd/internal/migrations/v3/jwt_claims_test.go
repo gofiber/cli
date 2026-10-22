@@ -307,7 +307,7 @@ import (
 
 const Issuer = "app"
 
-func claims(seconds int64, aud []string) jwt.Claims {
+func claims(seconds int64, aud []string, audience string) jwt.Claims {
 	_ = aud
 	return jwt.StandardClaims{
 		Audience:  "web",
@@ -317,12 +317,21 @@ func claims(seconds int64, aud []string) jwt.Claims {
 	}
 }
 
+func other(audience string) jwt.Claims {
+	_ = jwt.StandardClaims{
+		Audience: "",
+	}
+	return jwt.StandardClaims{Audience: audience}
+}
+
 func list() jwt.Claims { return jwt.StandardClaims{"web", 1, "id", 2, "iss", 3, "sub"} }
 `,
 	})
 
 	helper := readFile(t, filepath.Join(dir, "helper", "helper.go"))
 	assert.Contains(t, helper, `Audience:  jwt.ClaimStrings{"web"},`)
+	assert.Contains(t, helper, "func(aud string) jwt.ClaimStrings {", "a string that the program knows when it runs may be empty")
+	assert.Contains(t, helper, "Audience: nil,", "an empty string was left out of the token")
 	assert.Contains(t, helper, "ExpiresAt: jwt.NewNumericDate((time.Now().Add(time.Minute))),")
 	assert.Contains(t, helper, "NotBefore: seconds,", "left for the user, who is told")
 	assert.Contains(t, helper, "jwt.RegisteredClaims{\"web\", 1,", "an unkeyed literal cannot be mapped")

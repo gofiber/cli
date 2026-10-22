@@ -168,6 +168,9 @@ func (r *jwtClaimsRun) module(fi internal.FileInfo, g *goSource) *jwtModule {
 	}
 	ix := r.indexes.of(fi)
 	m.moved = len(ix.importers(jwtMiddlewarePath)) > 0
+	if !m.moved {
+		return m
+	}
 	for _, lib := range jwtLibs {
 		for _, f := range ix.importers(lib.root) {
 			m.embeds = m.embeds || strings.Contains(f.g.src, jwtStandardClaims)
@@ -349,7 +352,7 @@ func (p *jwtClaimsPass) notef(pos token.Pos, format string, args ...any) {
 	internal.Notef(p.fi, p.g.line(pos), format, args...)
 }
 
-// notefOnce reports a kind of construct at its first place in the file.
+// notefOncef reports a kind of construct at its first place in the file.
 func (p *jwtClaimsPass) notefOncef(kind string, pos token.Pos, format string, args ...any) {
 	if p.said[kind] {
 		return
@@ -572,7 +575,7 @@ func (p *jwtClaimsPass) standardLiteral(lit *ast.CompositeLit, pkg string, lib j
 // for the string of golang-jwt and dgrijalva, and for the []string of form3tech.
 func (p *jwtClaimsPass) audience(kv *ast.KeyValueExpr, pkg string, lib jwtLib) {
 	if !lib.audienceList {
-		p.edits.replaceNode(p.g, kv.Value, pkg+".ClaimStrings{"+p.g.text(kv.Value)+"}")
+		p.stringAudience(kv.Value, pkg)
 		return
 	}
 	if lit, ok := kv.Value.(*ast.CompositeLit); ok {
@@ -582,6 +585,25 @@ func (p *jwtClaimsPass) audience(kv *ast.KeyValueExpr, pkg string, lib jwtLib) {
 		}
 	}
 	p.edits.replaceNode(p.g, kv.Value, pkg+".ClaimStrings("+p.g.text(kv.Value)+")")
+}
+
+// stringAudience wraps the audience of the libraries that held a string. An empty
+// string was left out of the token by the library (omitempty), and a list that holds
+// it is not: the empty string is nil, and so is the result for a string that is only
+// known when the program runs.
+func (p *jwtClaimsPass) stringAudience(value ast.Expr, pkg string) {
+	text := p.g.text(value)
+	if lit, ok := ast.Unparen(value).(*ast.BasicLit); ok && lit.Kind == token.STRING {
+		if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+			if unquoted == "" {
+				p.edits.replaceNode(p.g, value, "nil")
+				return
+			}
+			p.edits.replaceNode(p.g, value, pkg+".ClaimStrings{"+text+"}")
+			return
+		}
+	}
+	p.edits.replaceNode(p.g, value, "func(aud string) "+pkg+".ClaimStrings {\nif aud == \"\" {\nreturn nil\n}\nreturn "+pkg+".ClaimStrings{aud}\n}("+text+")")
 }
 
 // jwtUnixTime returns t of an expression t.Unix(), the Unix seconds of a time.
