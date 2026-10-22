@@ -105,9 +105,17 @@ type appStartInfo struct {
 
 // appPlanner works out the plan.
 type appPlanner struct {
-	plan    *appListenPlan
-	shims   map[*appPackage]*appShimPkg
+	plan *appListenPlan
+	// shims are the registries of the modules, by the directory of their go.mod.
+	shims map[string]*appShimModule
+	// mods remembers the module of a directory.
+	mods map[string]appModuleOf
+	// unknown remembers the first call on a value of unknown type of a file.
+	unknown map[*appFile]int
+	root    string
+	files   []*appFile
 	starts  []*appStartInfo
+	values  []*appValueInfo
 	sources []*appListenSource
 }
 
@@ -131,7 +139,14 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		return nil, fmt.Errorf("read the project: %w", err)
 	}
 
-	pl := &appPlanner{plan: &appListenPlan{files: map[string]*appFilePlan{}}, shims: map[*appPackage]*appShimPkg{}}
+	pl := &appPlanner{
+		plan:    &appListenPlan{files: map[string]*appFilePlan{}},
+		shims:   map[string]*appShimModule{},
+		mods:    map[string]appModuleOf{},
+		unknown: map[*appFile]int{},
+		root:    cwd,
+		files:   files,
+	}
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
@@ -139,6 +154,10 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		for _, f := range files {
 			for _, s := range f.startsIn() {
 				pl.starts = append(pl.starts, &appStartInfo{appStart: s, origins: f.originsOf(s.sel.X, 0, 0)})
+			}
+			for _, v := range f.startValuesIn() {
+				v.origins = f.originsOf(v.sel.X, 0, 0)
+				pl.values = append(pl.values, v)
 			}
 		}
 
@@ -249,9 +268,14 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 
 	if ip.never {
-		if commit, _ := pl.dropDead(src); commit != nil {
+		if commit, dropped := pl.dropDead(src); commit != nil {
 			commit()
-			return ip.reason
+			ip.dropped = append(ip.dropped, dropped...)
+			if !src.hasLeftovers(ip) {
+				return ip.reason
+			}
+			_, refusal := pl.carry(src)
+			return src.explain(ip.reason, refusal)
 		}
 	}
 
@@ -265,18 +289,26 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 
 	ip.apply()
-	if refusal.tell {
-		suffix := "; " + appShimFile + ", which would keep it with the app, is not an option: " + refusal.why
-		for _, fld := range src.fields {
-			if fld.problem != "" {
-				fld.problem += suffix
-			}
-		}
-		if ip.reason != "" {
-			ip.reason += suffix
+	return src.explain(ip.reason, refusal)
+}
+
+// explain adds to the reasons why the settings stay the reason why the registry
+// does not keep them with the app, when that is not obvious from the code.
+func (src *appListenSource) explain(reason string, refusal appShimRefusal) string {
+	if !refusal.tell {
+		return reason
+	}
+
+	suffix := "; the registry in " + moduleShimDir + ", which would keep it with the app, is not an option: " + refusal.why
+	for _, fld := range src.fields {
+		if fld.problem != "" {
+			fld.problem += suffix
 		}
 	}
-	return ip.reason
+	if reason != "" {
+		reason += suffix
+	}
+	return reason
 }
 
 // moveInPlace plans the move of the settings of the source to the calls that

@@ -465,7 +465,7 @@ func Test_MigrateConfigListenerFields_ListenCallsThatCannotTakeTheSettings(t *te
 		{
 			name:   "a config held by a variable",
 			listen: `app.Listen(":3000", listenCfg)`,
-			want:   `app.Listen(":3000", fiberMigrateListenConfig(app, listenCfg))`,
+			want:   `app.Listen(":3000", fibermigrate.ListenConfig(app, listenCfg))`,
 			notes:  1, // the note about the shim
 		},
 		{
@@ -503,12 +503,12 @@ func main() {
 
 			assert.Contains(t, content, "fiber.New(fiber.Config{Prefork: true})", "the setting stays")
 			assert.Contains(t, content, tt.listen, "the call stays")
-			assert.NoFileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
+			assert.NoFileExists(t, filepath.Join(dir, shimFile))
 			require.Len(t, notes, 1)
 			assert.Equal(t, 8, notes[0].Line)
 			assert.Contains(t, notes[0].Message, "EnablePrefork")
 			assert.Contains(t, notes[0].Message, "cannot take them: "+tt.problem)
-			assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
+			assert.Contains(t, notes[0].Message, shimDir)
 		})
 	}
 }
@@ -566,13 +566,13 @@ func second() {
 	assert.Contains(t, config, "var other fiber.Config\nvar otherListen = fiber.ListenConfig{}\n")
 	assert.Contains(t, config, "otherListen.DisableStartupMessage = true")
 	assert.NotContains(t, config, "other.DisableStartupMessage")
-	assert.Contains(t, main, "app := fiberMigrateNew(other, otherListen)")
-	assert.Contains(t, main, `app.Listen(":3002", fiberMigrateListenConfig(app))`)
-	assert.FileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
+	assert.Contains(t, main, "app := fibermigrate.NewApp(other, otherListen)")
+	assert.Contains(t, main, `app.Listen(":3002", fibermigrate.ListenConfig(app))`)
+	assert.FileExists(t, filepath.Join(dir, shimFile))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "main.go", notes[0].File)
-	assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
+	assert.Contains(t, notes[0].Message, shimFile)
 }
 
 func Test_MigrateConfigListenerFields_NotesConfigsItDoesNotFollow(t *testing.T) {
@@ -643,13 +643,15 @@ func main() {
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	assert.Contains(t, appRead(t, dir, "app.go"), "return fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: prefork})")
-	assert.Equal(t, "package main\n\nfunc main() {\n\tapp := newApp(true)\n\tapp.Listen(\":3000\", fiberMigrateListenConfig(app))\n}\n", appRead(t, dir, "main.go"))
-	assert.FileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
+	assert.Contains(t, appRead(t, dir, "app.go"), "return fibermigrate.NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrefork: prefork})")
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, `"example.com/demo/internal/fibermigrate"`)
+	assert.Contains(t, main, "func main() {\n\tapp := newApp(true)\n\tapp.Listen(\":3000\", fibermigrate.ListenConfig(app))\n}\n")
+	assert.FileExists(t, filepath.Join(dir, shimFile))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "app.go", notes[0].File)
-	assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
+	assert.Contains(t, notes[0].Message, shimFile)
 }
 
 func Test_MigrateConfigListenerFields_OtherPackage(t *testing.T) {
@@ -857,8 +859,8 @@ func main() {
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
 	content := appRead(t, dir, "main.go")
-	assert.Contains(t, content, `app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: *flag.Bool("prefork", false, "prefork"), DisableStartupMessage: true})`)
-	assert.Contains(t, content, `app.Listen(":3000", fiberMigrateListenConfig(app))`)
+	assert.Contains(t, content, `app := fibermigrate.NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrefork: *flag.Bool("prefork", false, "prefork"), DisableStartupMessage: true})`)
+	assert.Contains(t, content, `app.Listen(":3000", fibermigrate.ListenConfig(app))`)
 }
 
 func Test_MigrateConfigListenerFields_ConfigReturnedByAFunction(t *testing.T) {

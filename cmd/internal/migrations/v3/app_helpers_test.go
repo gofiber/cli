@@ -2,6 +2,7 @@ package v3_test
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,11 +16,17 @@ import (
 type appMigration = func(cmd *cobra.Command, cwd string, curr, target *semver.Version) error
 
 // appProject writes files (path relative to the project to source) in a new
-// directory and returns it.
+// directory and returns it. The directory is a module unless the files have a
+// go.mod of their own: the migrations that add a package of their own to the
+// module need one.
 func appProject(t *testing.T, files map[string]string) string {
 	t.Helper()
 
 	dir := t.TempDir()
+	if _, ok := files["go.mod"]; !ok {
+		files = maps.Clone(files)
+		files["go.mod"] = "module example.com/app\n\ngo 1.25\n"
+	}
 	for name, src := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
