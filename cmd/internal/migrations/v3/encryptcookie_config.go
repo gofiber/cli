@@ -25,7 +25,10 @@ var mw1Encryptcookie = newMW1Package("encryptcookie")
 //     v2 did, so the values that were stored with v2 stay readable.
 //   - GenerateKey takes the length of the key: 32 bytes, what v2 generated.
 func MigrateEncryptcookieConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateEncryptcookieContent)
+	idx := newMW1Index(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateEncryptcookieContent(content, fi, idx)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate encryptcookie configs: %w", err)
 	}
@@ -50,10 +53,11 @@ const (
 type encryptcookieMigration struct {
 	g     *goSource
 	rep   *mw1Reporter
+	idx   *mw1Index
 	edits editSet
 }
 
-func migrateEncryptcookieContent(content string, fi internal.FileInfo) string {
+func migrateEncryptcookieContent(content string, fi internal.FileInfo, idx *mw1Index) string {
 	names := mw1Qualifiers(mw1Encryptcookie.names(content))
 	if len(names) == 0 {
 		return content
@@ -63,7 +67,7 @@ func migrateEncryptcookieContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	m := &encryptcookieMigration{g: g, rep: newMW1Reporter(g, fi)}
+	m := &encryptcookieMigration{g: g, rep: newMW1Reporter(g, fi), idx: idx}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CompositeLit:
@@ -144,7 +148,7 @@ func (m *encryptcookieMigration) hook(e ast.Expr, field string, names []string) 
 // wrap replaces a function value with a function literal that calls it,
 // unless the file shows that the function takes the name already.
 func (m *encryptcookieMigration) wrap(e ast.Expr) {
-	if mw1DeclaredWithParams(m.g.file, e, encryptcookieHookArgs+1) {
+	if mw1DeclaredWithParams(m.g.file, m.idx, e, encryptcookieHookArgs+1) {
 		return
 	}
 

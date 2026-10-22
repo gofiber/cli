@@ -28,7 +28,10 @@ var corsListFields = []string{"AllowOrigins", "AllowMethods", "AllowHeaders", "E
 // the headers the request asks for), which in v3 is a missing field, where
 // []string{""} would panic or send an empty header.
 func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateCORSContent)
+	idx := newMW1Index(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateCORSContent(content, fi, idx)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate CORS configs: %w", err)
 	}
@@ -43,12 +46,14 @@ func MigrateCORSConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 // corsMigration is the state of the rewrite of one file.
 type corsMigration struct {
 	g            *goSource
+	idx          *mw1Index
+	path         string
 	stringsName  string
 	edits        editSet
 	needsStrings bool
 }
 
-func migrateCORSContent(content string, fi internal.FileInfo) string {
+func migrateCORSContent(content string, fi internal.FileInfo, idx *mw1Index) string {
 	names := mw1Qualifiers(mw1CORS.names(content))
 	if len(names) == 0 {
 		return content
@@ -58,7 +63,7 @@ func migrateCORSContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	m := &corsMigration{g: g}
+	m := &corsMigration{g: g, idx: idx, path: fi.Path}
 	m.stringsName, m.needsStrings = mw1ImportName(content, "strings", "strings")
 	usedStrings := false
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
@@ -132,7 +137,7 @@ type corsValue struct {
 
 // convert returns the v3 value of a v2 comma separated string expression.
 func (m *corsMigration) convert(e ast.Expr, stack []ast.Node) corsValue {
-	if isSliceExpr(e, stack) {
+	if m.isSlice(e, stack, 0) {
 		return corsValue{keep: true}
 	}
 
@@ -177,20 +182,17 @@ func splitList(s string) []string {
 	return items
 }
 
-// isSliceExpr reports whether e is evidently a slice: a slice literal, a
-// conversion to a slice, the result of the functions that split a string, nil,
-// or a variable declared with one of those.
-func isSliceExpr(e ast.Expr, stack []ast.Node) bool {
-	return isSliceExprDepth(e, stack, 0)
-}
-
-func isSliceExprDepth(e ast.Expr, stack []ast.Node, depth int) bool {
+// isSlice reports whether e is evidently a slice: a slice literal, a conversion
+// to a slice, the result of the functions that split a string, nil, or a
+// variable or a field that is declared as one. What the file does not say, the
+// other files of the project may.
+func (m *corsMigration) isSlice(e ast.Expr, stack []ast.Node, depth int) bool {
 	if depth > 3 {
 		return false
 	}
 	switch x := e.(type) {
 	case *ast.ParenExpr:
-		return isSliceExprDepth(x.X, stack, depth+1)
+		return m.isSlice(x.X, stack, depth+1)
 	case *ast.CompositeLit:
 		_, isArray := x.Type.(*ast.ArrayType)
 		return isArray
@@ -198,17 +200,19 @@ func isSliceExprDepth(e ast.Expr, stack []ast.Node, depth int) bool {
 		if x.Name == mw1NilIdent {
 			return true
 		}
-		d, ok := resolveIdent(x.Name, x.Pos(), stack)
-		if !ok {
-			return false
+		if d, ok := resolveIdent(x.Name, x.Pos(), stack); ok {
+			if d.typ != nil {
+				return isArrayType(d.typ)
+			}
+			return d.init != nil && m.isSlice(d.init, stack, depth+1)
 		}
-		if d.typ != nil {
-			_, isArray := d.typ.(*ast.ArrayType)
-			return isArray
+		if v, ok := m.idx.pkgVar(m.path, x.Name); ok {
+			return v.typ == sliceOfStrings || strings.HasPrefix(v.init, sliceOfStrings+"{")
 		}
-		return d.init != nil && isSliceExprDepth(d.init, stack, depth+1)
+	case *ast.SelectorExpr:
+		return allEqual(m.idx.fieldTypes(x.Sel.Name), sliceOfStrings)
 	case *ast.CallExpr:
-		if _, isArray := x.Fun.(*ast.ArrayType); isArray {
+		if isArrayType(x.Fun) {
 			return true
 		}
 		if id, ok := x.Fun.(*ast.Ident); ok {
@@ -222,6 +226,9 @@ func isSliceExprDepth(e ast.Expr, stack []ast.Node, depth int) bool {
 	}
 	return false
 }
+
+// sliceOfStrings is the type of the list fields of cors.Config in v3.
+const sliceOfStrings = "[]string"
 
 func isArrayType(e ast.Expr) bool {
 	_, ok := e.(*ast.ArrayType)

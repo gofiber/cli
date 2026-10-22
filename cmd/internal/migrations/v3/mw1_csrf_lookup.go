@@ -144,16 +144,22 @@ func (m *csrfMigration) extractor(value ast.Expr, stack []ast.Node) {
 }
 
 // isV3Extractor reports whether the expression is an extractors.Extractor: a
-// member of the extractors package, or a variable declared as one.
+// member of the extractors package, or a variable or field declared as one.
 func (m *csrfMigration) isV3Extractor(e ast.Expr, stack []ast.Node) bool {
+	isExtractor := func(typ string) bool { return typ == m.extractorsName+".Extractor" }
 	switch x := e.(type) {
 	case *ast.SelectorExpr:
-		pkg, _, ok := mw1Selector(x)
-		return ok && pkg == m.extractorsName
+		if pkg, _, ok := mw1Selector(x); ok && pkg == m.extractorsName {
+			return true
+		}
+		fields := m.idx.fieldTypes(x.Sel.Name)
+		return len(fields) > 0 && slices.IndexFunc(fields, func(t string) bool { return !isExtractor(t) }) < 0
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		if !ok {
-			return false
+			// the declaration may be in another file of the package
+			v, found := m.idx.pkgVar(m.path, x.Name)
+			return found && (isExtractor(v.typ) || strings.HasPrefix(v.init, m.extractorsName+"."))
 		}
 		if d.typ != nil {
 			return mw1IsMember(d.typ, []string{m.extractorsName}, "Extractor")

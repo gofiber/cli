@@ -1,6 +1,8 @@
 package v3
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,7 +34,7 @@ import (
 )
 
 var _ = cors.Config{AllowOrigins: os.Getenv("ORIGINS")}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, "\t\"strings\"\n")
 	assert.Contains(t, out, `strings.FieldsFunc(os.Getenv("ORIGINS")`)
@@ -51,7 +53,7 @@ import (
 )
 
 var _ = cors.Config{AllowOrigins: os.Getenv("ORIGINS")}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, `str.FieldsFunc(os.Getenv("ORIGINS")`)
 	assert.Equal(t, 1, strings.Count(out, `"strings"`))
@@ -66,7 +68,7 @@ import "github.com/gofiber/fiber/v3/middleware/cors"
 
 var _ = cors.Config{AllowOrigins: "https://a.com"}
 `
-	out := migrateCORSContent(src, mw1FileInfo(t))
+	out := migrateCORSContent(src, mw1FileInfo(t), nil)
 
 	assert.NotContains(t, out, `"strings"`)
 	assert.Contains(t, out, `[]string{"https://a.com"}`)
@@ -82,7 +84,7 @@ import "github.com/gofiber/fiber/v3/middleware/cors"
 
 var _ = cors.Config{AllowOrigins: "a"
 `
-	assert.Equal(t, src, migrateCORSContent(src, fi))
+	assert.Equal(t, src, migrateCORSContent(src, fi, nil))
 	notes := internal.DrainNotes(fi.Root)
 	require.Len(t, notes, 1)
 	assert.Contains(t, notes[0].Message, "does not parse")
@@ -103,7 +105,7 @@ func authConfig() basicauth.Config {
 		},
 	}
 }
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, "\t\"github.com/gofiber/fiber/v3\"\n")
 	assert.Contains(t, out, "func(user, pass string, _ fiber.Ctx) bool")
@@ -124,7 +126,7 @@ var _ f.Handler
 var cfg = basicauth.Config{Authorizer: check}
 
 func check(user, pass string) bool { return true }
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, "func(user, pass string, _ f.Ctx) bool { return check(user, pass) }")
 	assert.Equal(t, 1, strings.Count(out, "gofiber/fiber/v3\""))
@@ -175,7 +177,7 @@ import (
 
 var _ fiber.Handler
 var _ = csrf.Config{KeyLookup: "header:X-Token", Expiration: time.Hour}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, `"github.com/gofiber/fiber/v3/middleware/csrf"`+"\n\t"+`"github.com/gofiber/fiber/v3/extractors"`)
 }
@@ -192,7 +194,7 @@ import (
 
 var _ = ex.FromHeader
 var _ = csrf.Config{KeyLookup: "header:X-Token"}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, `Extractor: ex.FromHeader("X-Token")`)
 	assert.Equal(t, 1, strings.Count(out, "fiber/v3/extractors"))
@@ -210,7 +212,7 @@ import (
 )
 
 var _ = csrf.Config{Expiration: time.Hour}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.NotContains(t, out, "extractors")
 }
@@ -325,7 +327,7 @@ import (
 var assets http.FileSystem = http.Dir("./static")
 
 var _ = favicon.Config{File: "favicon.ico", FileSystem: assets}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, "\t\"os\"\n")
 	assert.Contains(t, out, "\t\"io/fs\"\n")
@@ -346,8 +348,74 @@ import (
 
 var _ = system.Exit
 var _ = favicon.Config{File: "favicon.ico", FileSystem: http.Dir("./static")}
-`, mw1FileInfo(t))
+`, mw1FileInfo(t), nil)
 
 	assert.Contains(t, out, `system.DirFS("./static")`)
 	assert.Equal(t, 1, strings.Count(out, `"os"`))
+}
+
+func Test_mw1Index(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	write := func(name, src string) {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(src), 0o600))
+	}
+	write("a.go", `package a
+
+type config struct {
+	Origins []string
+	Name, Title string
+}
+
+var origins = []string{"a"}
+
+const prefix = "/p"
+
+func check(user, pass string) bool { return true }
+
+func (config) Check(user, pass string, c any) bool { return true }
+`)
+	write("sub/b.go", "package b\n\nvar origins string\n\nfunc check(a int) {}\n")
+	write("vendor/c.go", "package c\n\nvar vendored int\n")
+	write("broken.go", "package broken\n\nfunc (")
+
+	idx := newMW1Index(dir)
+
+	assert.ElementsMatch(t, []int{2, 1}, idx.funcParams("check"))
+	assert.Equal(t, []int{3}, idx.funcParams("Check"))
+	assert.Nil(t, idx.funcParams("missing"))
+	assert.Equal(t, []string{"[]string"}, idx.fieldTypes("Origins"))
+	assert.Equal(t, []string{"string"}, idx.fieldTypes("Title"))
+
+	v, ok := idx.pkgVar(filepath.Join(dir, "a.go"), "origins")
+	assert.True(t, ok)
+	assert.Equal(t, mw1VarDecl{init: "[]string{…}"}, v)
+	v, ok = idx.pkgVar(filepath.Join(dir, "x.go"), "prefix")
+	assert.True(t, ok)
+	assert.Equal(t, `"/p"`, v.init)
+	// declared in another package
+	v, ok = idx.pkgVar(filepath.Join(dir, "sub", "x.go"), "origins")
+	assert.True(t, ok)
+	assert.Equal(t, "string", v.typ)
+	_, ok = idx.pkgVar(filepath.Join(dir, "vendor", "x.go"), "vendored")
+	assert.False(t, ok)
+
+	// a missing index knows nothing
+	var none *mw1Index
+	assert.Nil(t, none.funcParams("check"))
+	assert.Nil(t, none.fieldTypes("Origins"))
+	_, ok = none.pkgVar("a.go", "origins")
+	assert.False(t, ok)
+}
+
+func Test_allEqual(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, allEqual([]int{3, 3}, 3))
+	assert.False(t, allEqual([]int{3, 2}, 3))
+	assert.False(t, allEqual([]int(nil), 3))
 }

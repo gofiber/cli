@@ -36,9 +36,10 @@ func mw1FuncParamCounts(file *ast.File, name string) []int {
 }
 
 // mw1DeclaredWithParams reports whether e names a function or method that the
-// file declares, every declaration of which takes n parameters. For a selector
-// only the method name counts, since the receiver cannot be told without types.
-func mw1DeclaredWithParams(file *ast.File, e ast.Expr, n int) bool {
+// project declares, every declaration of which takes n parameters. For a
+// selector only the method name counts, since the receiver cannot be told
+// without types. The index covers the files other than the one being migrated.
+func mw1DeclaredWithParams(file *ast.File, idx *mw1Index, e ast.Expr, n int) bool {
 	var name string
 	switch x := e.(type) {
 	case *ast.Ident:
@@ -49,16 +50,8 @@ func mw1DeclaredWithParams(file *ast.File, e ast.Expr, n int) bool {
 		return false
 	}
 
-	counts := mw1FuncParamCounts(file, name)
-	if len(counts) == 0 {
-		return false
-	}
-	for _, c := range counts {
-		if c != n {
-			return false
-		}
-	}
-	return true
+	counts := append(mw1FuncParamCounts(file, name), idx.funcParams(name)...)
+	return allEqual(counts, n)
 }
 
 // mw1AppendParam returns the offset and the text that add a parameter of the

@@ -29,7 +29,10 @@ var mw1NetHTTP = regexp.MustCompile(`^net/http$`)
 //     leading / or ./, and v3 panics at start-up on File: "/favicon.ico", which
 //     http.Dir and http.FS accepted. A literal File is cleaned up accordingly.
 func MigrateFaviconConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateFaviconContent)
+	idx := newMW1Index(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateFaviconContent(content, fi, idx)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate favicon configs: %w", err)
 	}
@@ -45,6 +48,8 @@ func MigrateFaviconConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 type faviconMigration struct {
 	g       *goSource
 	rep     *mw1Reporter
+	idx     *mw1Index
+	path    string
 	httpPkg []string
 	osName  string
 	edits   editSet
@@ -55,7 +60,7 @@ type faviconMigration struct {
 	usesIOFS  bool
 }
 
-func migrateFaviconContent(content string, fi internal.FileInfo) string {
+func migrateFaviconContent(content string, fi internal.FileInfo, idx *mw1Index) string {
 	names := mw1Qualifiers(mw1Favicon.names(content))
 	if len(names) == 0 {
 		return content
@@ -65,7 +70,7 @@ func migrateFaviconContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	m := &faviconMigration{g: g, rep: newMW1Reporter(g, fi)}
+	m := &faviconMigration{g: g, rep: newMW1Reporter(g, fi), idx: idx, path: fi.Path}
 	m.httpPkg = mw1Qualifiers(importNames(content, mw1NetHTTP, "http"))
 	m.osName, m.needsOS = mw1ImportName(content, "os", "os")
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
@@ -143,6 +148,11 @@ func (m *faviconMigration) fileSystem(e ast.Expr, stack []ast.Node) bool {
 		if x.Name == mw1NilIdent || m.declaredAsFS(x, stack) || m.convertVariable(x, stack) {
 			return true
 		}
+	case *ast.SelectorExpr:
+		// a field of a type of the project that holds an fs.FS
+		if types := m.idx.fieldTypes(x.Sel.Name); len(types) > 0 && slices.IndexFunc(types, func(t string) bool { return !isFSType(t) }) < 0 {
+			return true
+		}
 	}
 
 	m.rep.notef(e, "favicon.Config.FileSystem is an fs.FS in v3, not an http.FileSystem, and %s cannot be converted (left as it is): "+
@@ -184,7 +194,9 @@ func (m *faviconMigration) convertVariable(id *ast.Ident, stack []ast.Node) bool
 func (m *faviconMigration) declaredAsFS(id *ast.Ident, stack []ast.Node) bool {
 	d, ok := resolveIdent(id.Name, id.Pos(), stack)
 	if !ok {
-		return false
+		// the declaration may be in another file of the package
+		v, found := m.idx.pkgVar(m.path, id.Name)
+		return found && (isFSType(v.typ) || strings.HasPrefix(v.init, m.osName+".DirFS("))
 	}
 	if d.typ != nil {
 		// fs.FS and embed.FS
@@ -197,4 +209,10 @@ func (m *faviconMigration) declaredAsFS(id *ast.Ident, stack []ast.Node) bool {
 	}
 	pkg, fn, isSel := mw1Selector(call.Fun)
 	return isSel && pkg == m.osName && fn == "DirFS"
+}
+
+// isFSType reports whether the type, as written, is an io/fs.FS: fs.FS or
+// embed.FS, not the http.FS function.
+func isFSType(typ string) bool {
+	return strings.HasSuffix(typ, ".FS") && !strings.HasPrefix(typ, "http.")
 }

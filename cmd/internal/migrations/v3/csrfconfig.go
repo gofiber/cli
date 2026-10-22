@@ -26,7 +26,10 @@ var mw1CSRF = newMW1Package("csrf")
 //   - The error variables that v3 renamed or merged, and the handler that is
 //     read back from the context (csrf.CSRFHandler) are migrated.
 func MigrateCSRFConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateCSRFContent)
+	idx := newMW1Index(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateCSRFContent(content, fi, idx)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate CSRF configs: %w", err)
 	}
@@ -54,8 +57,10 @@ const (
 
 // csrfMigration is the state of the rewrite of one file.
 type csrfMigration struct {
-	g   *goSource
-	rep *mw1Reporter
+	g    *goSource
+	rep  *mw1Reporter
+	idx  *mw1Index
+	path string
 	// customExtractors are the function literals that were given to
 	// extractors.FromCustom: inside them the missing token is
 	// extractors.ErrNotFound.
@@ -67,7 +72,7 @@ type csrfMigration struct {
 	usesExtractors   bool
 }
 
-func migrateCSRFContent(content string, fi internal.FileInfo) string {
+func migrateCSRFContent(content string, fi internal.FileInfo, idx *mw1Index) string {
 	names := mw1Qualifiers(mw1CSRF.names(content))
 	if len(names) == 0 {
 		return content
@@ -77,7 +82,7 @@ func migrateCSRFContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	m := &csrfMigration{g: g, rep: newMW1Reporter(g, fi), names: names, customExtractors: map[*ast.FuncLit]bool{}}
+	m := &csrfMigration{g: g, rep: newMW1Reporter(g, fi), idx: idx, path: fi.Path, names: names, customExtractors: map[*ast.FuncLit]bool{}}
 	m.extractorsName, m.needsExtractors = mw1ImportName(content, csrfExtractorsPath, "extractors")
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {

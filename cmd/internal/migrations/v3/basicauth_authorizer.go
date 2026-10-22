@@ -18,7 +18,10 @@ var mw1Basicauth = newMW1Package("basicauth")
 // the parameter, any other function (a declared function, a method value, a
 // variable) is wrapped.
 func MigrateBasicauthAuthorizer(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateBasicauthAuthorizerContent)
+	idx := newMW1Index(cwd)
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateBasicauthAuthorizerContent(content, fi, idx)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate basicauth authorizer: %w", err)
 	}
@@ -38,13 +41,14 @@ const basicauthAuthorizerParams = 2
 type authorizerMigration struct {
 	g          *goSource
 	rep        *mw1Reporter
+	idx        *mw1Index
 	fiber      string
 	edits      editSet
 	needsFiber bool
 	usesFiber  bool
 }
 
-func migrateBasicauthAuthorizerContent(content string, fi internal.FileInfo) string {
+func migrateBasicauthAuthorizerContent(content string, fi internal.FileInfo, idx *mw1Index) string {
 	names := mw1Qualifiers(mw1Basicauth.names(content))
 	if len(names) == 0 {
 		return content
@@ -54,7 +58,7 @@ func migrateBasicauthAuthorizerContent(content string, fi internal.FileInfo) str
 		return content
 	}
 
-	m := &authorizerMigration{g: g, rep: newMW1Reporter(g, fi)}
+	m := &authorizerMigration{g: g, rep: newMW1Reporter(g, fi), idx: idx}
 	m.fiber, m.needsFiber = mw1FiberName(content)
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		if lit, isConfig := mw1ConfigLit(n, names); isConfig {
@@ -105,7 +109,7 @@ func (m *authorizerMigration) rewrite(e ast.Expr) {
 // wrap replaces a function value with a function literal that calls it, unless
 // the file shows that the function already takes the context.
 func (m *authorizerMigration) wrap(e ast.Expr) {
-	if mw1DeclaredWithParams(m.g.file, e, basicauthAuthorizerParams+1) {
+	if mw1DeclaredWithParams(m.g.file, m.idx, e, basicauthAuthorizerParams+1) {
 		return
 	}
 
