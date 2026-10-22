@@ -540,6 +540,11 @@ var _ = fiber.New
 		"func f(a *session.Store) *session.Store {\n\treturn session.New(session.Config{KeyLookup: a.KeyLookup, /* c */ CookieSecure: true})\n}",
 		"func f(a *session.Store) *session.Store {\n\tcfg := session.ConfigDefault\n\tcfg.KeyLookup = a.KeyLookup\n\treturn session.New(cfg)\n}",
 		"func f(s *session.Store) {\n\ts.KeyLookup = \"x\"\n}",
+		"func f(s *session.Store) (string, string) {\n\treturn s.KeyLookup, s.CookieName\n}",
+		"func f(s *session.Store) {\n\tswitch {\n\tcase s.KeyLookup == \"a\", s.CookieName == \"b\":\n\t\tfmt.Println()\n\t}\n}",
+		"func f(s *session.Store) {\n\tgo func() { fmt.Println(s.KeyLookup) }()\n}",
+		"type t struct{ lookup string }\n\nfunc f(s *session.Store) t {\n\treturn t{lookup: s.KeyLookup}\n}",
+		"func f(stores ...*session.Store) {\n\tfor _, s := range stores {\n\t\tfmt.Println(s.KeyLookup)\n\t}\n}",
 	}
 	run("session source", sessionHeader, sourceBodies, mw3SessionSourceContent)
 	run("session reads", sessionHeader, readBodies, mw3SessionReadsContent)
