@@ -104,6 +104,7 @@ type mw3SessionFile struct {
 	g    *goSource
 	pkgs *mw3Pkgs
 	pkg  *mw3Pkg
+	env  *mw3Env
 	// declared are the names the file declares anywhere, read when first asked for.
 	declared map[string]struct{}
 	fi       internal.FileInfo
@@ -124,7 +125,7 @@ func mw3OpenSessionFile(fi internal.FileInfo, src string, pkgs *mw3Pkgs) (*mw3Se
 	if !ok {
 		return nil, false
 	}
-	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, names: names, fiber: fiberNames(src)}, true
+	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, names: names, fiber: fiberNames(src), env: pkgs.envOf(fi, g.file, src)}, true
 }
 
 // mw3OpenStoreUser is mw3OpenSessionFile for the migrations of what is done
@@ -141,18 +142,19 @@ func mw3OpenStoreUser(fi internal.FileInfo, src string, pkgs *mw3Pkgs, cheap fun
 		return f, true
 	}
 
-	head, err := parser.ParseFile(token.NewFileSet(), fi.Path, src, parser.PackageClauseOnly)
+	head, err := parser.ParseFile(token.NewFileSet(), fi.Path, src, parser.ImportsOnly)
 	if err != nil {
 		return nil, false
 	}
-	if !pkgs.of(fi, head.Name.Name).sessions().holdsSessions() {
+	pkg := pkgs.of(fi, head.Name.Name)
+	if !pkg.sessions().holdsSessions() && !pkg.importsSessions(head) {
 		return nil, false
 	}
 	g, ok := parseFile(fi, src)
 	if !ok {
 		return nil, false
 	}
-	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, fiber: fiberNames(src)}, true
+	return &mw3SessionFile{g: g, pkgs: pkgs, fi: fi, fiber: fiberNames(src), env: pkgs.envOf(fi, g.file, src)}, true
 }
 
 // pkgOf returns what is known about the package the file belongs to.
@@ -261,32 +263,24 @@ func (f *mw3SessionFile) isStoreCall(e ast.Expr, stack []ast.Node) (*ast.CallExp
 
 // reader returns the reader of the kinds of this file.
 func (f *mw3SessionFile) reader() *mw3KindReader {
-	return &mw3KindReader{facts: f.facts(), names: f.names}
+	return f.facts().reader(f.env)
 }
 
-// isStore reports whether e is a session store: a variable declared as one or
+// member says where x.name comes from, for the expression x whose ancestors are
+// stack: the session type that provides it when x is, or embeds, a store, a
+// session or a config. x is a store when it is a variable declared as one or
 // created by session.New, a package level store, a field of a struct that holds
 // one (also of a struct in one that embeds it), an element of a collection of
-// stores, a function that returns one, or a type assertion to one.
-func (f *mw3SessionFile) isStore(e ast.Expr, stack []ast.Node) bool {
-	return f.reader().ofExpr(e, stack).base == mw3KindStore
+// stores, a function that returns one, or a type assertion to one; a session and
+// a config are found in the same ways.
+func (f *mw3SessionFile) member(x ast.Expr, name string, stack []ast.Node) mw3Member {
+	r := f.reader()
+	return r.lookup(r.ofExpr(x, stack), name)
 }
 
-// isSession reports whether e is a session: a variable declared as one, or the
-// result of getting one from a store or of a function that returns one, in the
-// same ways as a store.
-func (f *mw3SessionFile) isSession(e ast.Expr, stack []ast.Node) bool {
-	return f.reader().ofExpr(e, stack).base == mw3KindSession
-}
-
-// isConfig reports whether e is a session Config, or a store, which embeds one.
-func (f *mw3SessionFile) isConfig(e ast.Expr, stack []ast.Node) bool {
-	kind := f.reader().ofExpr(e, stack)
-	return kind.base == mw3KindStore || kind.base == mw3KindConfig
-}
-
-// isConfigValue reports whether e is a session Config: a variable that holds
-// one, a copy of one, a field of that type, or session.ConfigDefault.
-func (f *mw3SessionFile) isConfigValue(e ast.Expr, stack []ast.Node) bool {
-	return f.reader().ofExpr(e, stack).base == mw3KindConfig
+// providedBy is member for the callers that look for one session type: ok is
+// whether x.name is a member of base.
+func (f *mw3SessionFile) providedBy(x ast.Expr, name string, base mw3Base, stack []ast.Node) (m mw3Member, ok bool) {
+	m = f.member(x, name, stack)
+	return m, m.base == base
 }

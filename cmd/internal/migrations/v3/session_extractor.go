@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -69,8 +70,10 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 // mw3SessionExtractorPass is the rewrite of one file by MigrateSessionExtractor.
 type mw3SessionExtractorPass struct {
-	f       *mw3SessionFile
-	fi      internal.FileInfo
+	f  *mw3SessionFile
+	fi internal.FileInfo
+	// handled are the lookup fields that an assignment took care of.
+	handled map[*ast.SelectorExpr]struct{}
 	imports mw3ImportEdits
 	strs    mw3Strings
 	edits   editSet
@@ -85,12 +88,14 @@ type mw3Site struct {
 }
 
 func mw3SessionExtractorContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
-	f, ok := mw3OpenSessionFile(fi, src, pkgs)
+	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
+		return strings.Contains(src, "middleware/session") || strings.Contains(src, "."+mw3KeyLookup) || strings.Contains(src, "."+mw3CookieName)
+	})
 	if !ok {
 		return src
 	}
 
-	p := &mw3SessionExtractorPass{f: f, fi: fi, strs: f.strings()}
+	p := &mw3SessionExtractorPass{f: f, fi: fi, strs: f.strings(), handled: map[*ast.SelectorExpr]struct{}{}}
 	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CompositeLit:
@@ -298,19 +303,22 @@ func (p *mw3SessionExtractorPass) unresolved(kv *ast.KeyValueExpr, field string)
 		field, g.text(kv.Value))
 }
 
-// assign migrates cfg.KeyLookup = ... and cfg.CookieName = ... on a config.
+// assign migrates cfg.KeyLookup = ... and cfg.CookieName = ... on a config, and
+// drops the assignments to the lookup of a store.
 func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 	g := p.f.g
+	p.storeWrites(as, stack)
 	if len(as.Lhs) != 1 || len(as.Rhs) != 1 || as.Tok != token.ASSIGN {
 		return
 	}
 	sel, ok := as.Lhs[0].(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != mw3KeyLookup && sel.Sel.Name != mw3CookieName) || !p.f.isConfig(sel.X, stack) {
+	if !ok || (sel.Sel.Name != mw3KeyLookup && sel.Sel.Name != mw3CookieName) {
 		return
 	}
-	if !p.f.isConfigValue(sel.X, stack) {
-		return // a store: selector reports the read
+	if m, isConfig := p.f.providedBy(sel.X, sel.Sel.Name, mw3KindConfig, stack); !isConfig || m.viaStore {
+		return // a store: storeWrites reports it
 	}
+	p.handled[sel] = struct{}{}
 
 	at := mw3Site{pos: as.Pos(), stack: stack}
 	value, ok := p.strs.value(as.Rhs[0], stack)
@@ -344,6 +352,227 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 			"Set Config.Extractor instead.", g.text(as))
 }
 
+// mw3StoreWriteNote tells what became of an assignment to the lookup of a store.
+const mw3StoreWriteNote = "%s: %s. v2 only changed what the store reports with it: the lookup is fixed when the store is made, from the config it is given, " +
+	"so the store looks where it did before the assignment, and still does. Set Config.Extractor where the store is made to change it. " +
+	"Reading the field back now gives the lookup the store really uses."
+
+// storeWrites drops the assignments to the lookup of a store (store.KeyLookup and
+// store.CookieName, also of the store a type embeds): the fields do not exist in
+// v3, and v2 did not use them to look anything up. An assignment of a literal
+// that stands alone is removed, any other keeps its value evaluated:
+//
+//	store.KeyLookup = "header:X-Session"  ->  (removed)
+//	store.KeyLookup += suffix()           ->  _ = suffix()
+//
+// A variable that the assignment was the last use of stays used.
+func (p *mw3SessionExtractorPass) storeWrites(as *ast.AssignStmt, stack []ast.Node) {
+	g := p.f.g
+	var targets []mw3Target
+	for _, lhs := range as.Lhs {
+		sel, ok := ast.Unparen(lhs).(*ast.SelectorExpr)
+		if !ok || (sel.Sel.Name != mw3KeyLookup && sel.Sel.Name != mw3CookieName) {
+			continue
+		}
+		if m, isConfig := p.f.providedBy(sel.X, sel.Sel.Name, mw3KindConfig, stack); isConfig && m.viaStore {
+			p.handled[sel] = struct{}{}
+			targets = append(targets, mw3Target{lhs: lhs, sel: sel})
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	line := g.line(as.Pos())
+	inList := mw3InStatementList(stack)
+	keep := p.keepsUsed(as, targets, stack)
+	switch {
+	case len(as.Lhs) == 1 && len(as.Rhs) == 1 && mw3IsLiteralOnly(as.Rhs[0]) && inList && keep != "":
+		p.edits.replaceNode(g, as, "_ = "+keep)
+		internal.Notef(p.fi, line, mw3StoreWriteNote, g.text(as), "the assignment was removed")
+	case len(as.Lhs) == 1 && len(as.Rhs) == 1 && mw3IsLiteralOnly(as.Rhs[0]) && inList:
+		mw3DeleteStatement(g, &p.edits, as)
+		internal.Notef(p.fi, line, mw3StoreWriteNote, g.text(as), "the assignment was removed")
+	default:
+		for _, target := range targets {
+			p.edits.replaceNode(g, target.lhs, "_")
+			internal.Notef(p.fi, line, mw3StoreWriteNote, g.text(target.lhs)+" "+as.Tok.String()+" ...",
+				"the target was replaced by _, so the value is still evaluated")
+		}
+		if as.Tok != token.ASSIGN {
+			// store.KeyLookup += x  ->  _ = x
+			p.edits.replace(g.offset(as.Lhs[0].End()), g.offset(as.TokPos)+len(as.Tok.String()), " =")
+		}
+		if keep != "" && inList {
+			end := g.offset(as.End())
+			p.edits.replace(end, end, "\n"+mw3Indent(g.src, g.offset(as.Pos()))+"_ = "+keep)
+		}
+	}
+}
+
+// keepsUsed returns the variable that the targets of an assignment are rooted in
+// when the assignment is the last place the function uses it: taking the
+// assignment out would leave a variable that is declared and not used, which Go
+// refuses. It is empty when there is no such variable.
+func (p *mw3SessionExtractorPass) keepsUsed(as *ast.AssignStmt, targets []mw3Target, stack []ast.Node) string {
+	g := p.f.g
+	var body *ast.BlockStmt
+	var fields []*ast.FieldList
+	for _, node := range slices.Backward(stack) {
+		if fn, ok := node.(*ast.FuncDecl); ok {
+			body, fields = fn.Body, []*ast.FieldList{fn.Recv, fn.Type.Params, fn.Type.Results}
+			break
+		}
+		if fn, ok := node.(*ast.FuncLit); ok {
+			body, fields = fn.Body, []*ast.FieldList{fn.Type.Params, fn.Type.Results}
+			break
+		}
+	}
+	if body == nil {
+		return ""
+	}
+
+	for _, target := range targets {
+		root := mw3RootIdent(target.sel.X)
+		if root == nil || root.Name == "_" || mw3Declares(fields, root.Name) {
+			continue
+		}
+		if mw3OnlyMention(body, as, root.Name) {
+			return g.text(target.sel.X)
+		}
+	}
+	return ""
+}
+
+// mw3Target is a lookup of a store that an assignment writes: the target as
+// written, and the selector in it.
+type mw3Target struct {
+	lhs ast.Expr
+	sel *ast.SelectorExpr
+}
+
+// mw3RootIdent returns the variable an expression such as a.b[i].c starts at.
+func mw3RootIdent(e ast.Expr) *ast.Ident {
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return x
+		case *ast.SelectorExpr:
+			e = x.X
+		case *ast.IndexExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.UnaryExpr:
+			e = x.X
+		default:
+			return nil
+		}
+	}
+}
+
+// mw3Declares reports whether one of the parameter lists declares the name.
+func mw3Declares(lists []*ast.FieldList, name string) bool {
+	for _, list := range lists {
+		if _, found := declInFieldList(name, list); found {
+			return true
+		}
+	}
+	return false
+}
+
+// mw3OnlyMention reports whether the variable that a statement of the body uses
+// is declared in the body, and the statement is the only place that uses it.
+func mw3OnlyMention(body *ast.BlockStmt, stmt ast.Stmt, name string) bool {
+	declared := map[*ast.Ident]struct{}{}
+	define := func(e ast.Expr) {
+		if id, ok := e.(*ast.Ident); ok && id.Name == name {
+			declared[id] = struct{}{}
+		}
+	}
+	mentions := 0
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case nil:
+			return false
+		case *ast.AssignStmt:
+			if x == stmt {
+				return false
+			}
+			if x.Tok == token.DEFINE {
+				for _, lhs := range x.Lhs {
+					define(lhs)
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range x.Names {
+				define(id)
+			}
+		case *ast.RangeStmt:
+			if x.Tok == token.DEFINE {
+				define(x.Key)
+				define(x.Value)
+			}
+		case *ast.Ident:
+			if _, isDecl := declared[x]; !isDecl && x.Name == name {
+				mentions++
+			}
+		}
+		return true
+	})
+	return len(declared) > 0 && mentions == 0
+}
+
+// mw3IsLiteralOnly reports whether the expression is made of literals alone, so
+// that dropping it leaves nothing behind that was used for it.
+func mw3IsLiteralOnly(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		return true
+	case *ast.ParenExpr:
+		return mw3IsLiteralOnly(x.X)
+	case *ast.BinaryExpr:
+		return x.Op == token.ADD && mw3IsLiteralOnly(x.X) && mw3IsLiteralOnly(x.Y)
+	}
+	return false
+}
+
+// mw3InStatementList reports whether the statement whose ancestors are stack is
+// one of a list of statements, where it can be removed.
+func mw3InStatementList(stack []ast.Node) bool {
+	if len(stack) == 0 {
+		return false
+	}
+	switch stack[len(stack)-1].(type) {
+	case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
+		return true
+	}
+	return false
+}
+
+// mw3DeleteStatement schedules the removal of a statement, with its line when it
+// has the line to itself.
+func mw3DeleteStatement(g *goSource, edits *editSet, stmt ast.Stmt) {
+	src := g.src
+	start, end := g.offset(stmt.Pos()), g.offset(stmt.End())
+	lineStart := mw3LineStart(src, start)
+	alone := strings.TrimLeft(src[lineStart:start], " \t") == ""
+	if rest := strings.TrimLeft(src[end:mw3LineEnd(src, end)], " \t"); alone && rest != "" && !strings.HasPrefix(rest, "//") {
+		alone = false
+	}
+	if !alone {
+		edits.replace(start, end, "")
+		return
+	}
+	lineEnd := mw3LineEnd(src, end)
+	if lineEnd < len(src) {
+		lineEnd++
+	}
+	edits.replace(lineStart, lineEnd, "")
+}
+
 // selector reports what the steps before this one left of the session
 // identifiers that v3 no longer has: a Source that could not be written as a
 // string, and a lookup field of a store or a config that is assigned to, whose
@@ -361,17 +590,23 @@ func (p *mw3SessionExtractorPass) selector(sel *ast.SelectorExpr, stack []ast.No
 		return
 	}
 
-	if sel.Sel.Name != mw3KeyLookup && sel.Sel.Name != mw3CookieName {
+	field := sel.Sel.Name
+	if _, done := p.handled[sel]; done || (field != mw3KeyLookup && field != mw3CookieName) {
 		return
 	}
-	if len(stack) > 0 {
-		as, ok := stack[len(stack)-1].(*ast.AssignStmt)
-		if ok && as.Tok == token.ASSIGN && len(as.Lhs) == 1 && len(as.Rhs) == 1 && as.Lhs[0] == ast.Expr(sel) && p.f.isConfigValue(sel.X, stack) {
-			return // assign handles it
-		}
+	if _, isConfig := p.f.providedBy(sel.X, field, mw3KindConfig, stack); !isConfig {
+		return
 	}
-	if p.f.isConfig(sel.X, stack) {
-		internal.Notef(p.fi, g.line(sel.Pos()),
-			"%s no longer exists: the session config has an Extractor instead of KeyLookup and CookieName.", g.text(sel))
+	if use, outer := mw3UseOf(sel, stack); use == mw3UseAddress {
+		internal.Notef(p.fi, g.line(sel.Pos()), mw3ConfigAddressNote, g.text(outer))
+		return
 	}
+	internal.Notef(p.fi, g.line(sel.Pos()),
+		"%s no longer exists: the session config has an Extractor instead of KeyLookup and CookieName.", g.text(sel))
 }
+
+// mw3ConfigAddressNote reports the address of the lookup of a config, which v3
+// has no field for.
+const mw3ConfigAddressNote = "%s: the session Config has no KeyLookup or CookieName in v3 (it has an Extractor), so there is no string to point to. " +
+	"Let the flag or the decoder fill a variable of your own, and set Config.Extractor from it where the store is made, " +
+	"for instance extractors.FromHeader(name) or extractors.FromCookie(name)."

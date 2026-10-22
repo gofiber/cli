@@ -419,19 +419,17 @@ func fromEnv(cfg session.Config) *session.Store {
 }
 
 func write(store *session.Store) {
-	store.KeyLookup = "header:X-SID"
-	store.CookieName = "sid"
 }
 `, got)
 
 	// Assigning to the field of a store only changed what the store reported in v2,
-	// not where it looked for the ID, while a new Extractor would: that is left to
-	// the user.
+	// not where it looked for the ID, while a new Extractor would: the assignments
+	// are dropped, and said so.
 	msgs := mw3Messages(res.notes)
 	require.Len(t, msgs, 3)
 	assert.Contains(t, msgs[0], "KeyLookup is computed")
-	assert.Contains(t, msgs[1], "store.KeyLookup no longer exists")
-	assert.Contains(t, msgs[2], "store.CookieName no longer exists")
+	assert.Contains(t, msgs[1], `store.KeyLookup = "header:X-SID": the assignment was removed`)
+	assert.Contains(t, msgs[2], `store.CookieName = "sid": the assignment was removed`)
 }
 
 func Test_MigrateSessionExtractor_ExistingImports(t *testing.T) {

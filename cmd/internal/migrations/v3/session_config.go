@@ -49,7 +49,9 @@ type mw3SessionConfigPass struct {
 }
 
 func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
-	f, ok := mw3OpenSessionFile(fi, src, pkgs)
+	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
+		return strings.Contains(src, "middleware/session") || strings.Contains(src, "."+cacheExpiration)
+	})
 	if !ok {
 		return src
 	}
@@ -222,9 +224,11 @@ func mw3FromOtherPackage(e ast.Expr, stack []ast.Node) bool {
 // lifetime of a config copied from ConfigDefault.
 func (p *mw3SessionConfigPass) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	g := p.f.g
-	if sel.Sel.Name == cacheExpiration && p.f.isConfig(sel.X, stack) {
-		p.edits.replaceNode(g, sel.Sel, "IdleTimeout")
-		return
+	if sel.Sel.Name == cacheExpiration {
+		if _, isConfig := p.f.providedBy(sel.X, cacheExpiration, mw3KindConfig, stack); isConfig {
+			p.edits.replaceNode(g, sel.Sel, "IdleTimeout")
+			return
+		}
 	}
 	if p.f.isMember(sel, mw3ConfigDefault, stack) {
 		p.configDefault(sel, stack)

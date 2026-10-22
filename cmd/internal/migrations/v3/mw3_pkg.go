@@ -19,6 +19,9 @@ import (
 // run does not change a declaration that a fact is about.
 type mw3Pkgs struct {
 	pkgs map[string]*mw3Pkg
+	// indexes give the view of the whole module, for the facts that reach into
+	// other packages of it.
+	indexes moduleIndexes
 }
 
 func newMw3Pkgs() *mw3Pkgs {
@@ -34,13 +37,22 @@ type mw3Pkg struct {
 	strs map[string]string
 	// names are all the names declared at package level.
 	names map[string]struct{}
+	owner *mw3Pkgs
 	// session is what the package says about the fiber session middleware.
 	session mw3SessionFacts
-	dir     string
-	name    string
+	// fi is a file of the directory: it tells which module the package is in.
+	fi   internal.FileInfo
+	dir  string
+	name string
+	// files are the files of the package, read when first needed.
+	files []mw3PkgFile
 	// declsRead and sessionRead tell which kinds of fact were read.
+	filesRead   bool
 	declsRead   bool
 	sessionRead bool
+	// relevance is whether the package can have anything to do with session
+	// stores: 0 not known yet, 1 it has not, 2 it has.
+	relevance uint8
 	// httpFS is whether the package has the adapter of an http.FileSystem.
 	httpFS bool
 }
@@ -54,14 +66,31 @@ func (p *mw3Pkgs) of(fi internal.FileInfo, pkgName string) *mw3Pkg {
 		return pkg
 	}
 	pkg := &mw3Pkg{
-		strs:    map[string]string{},
-		names:   map[string]struct{}{},
-		session: newMw3SessionFacts(),
-		dir:     dir,
-		name:    pkgName,
+		strs:  map[string]string{},
+		names: map[string]struct{}{},
+		owner: p,
+		fi:    fi,
+		dir:   dir,
+		name:  pkgName,
 	}
+	pkg.session = newMw3SessionFacts(pkg)
 	p.pkgs[key] = pkg
 	return pkg
+}
+
+// index returns the view of the module the package is in, nil outside of one.
+func (p *mw3Pkg) index() *moduleIndex {
+	return p.owner.indexes.of(p.fi)
+}
+
+// peer returns the package of the module that the import path names, nil for any
+// other package.
+func (p *mw3Pkg) peer(importPath string) *mw3Pkg {
+	pkg := p.index().packageAt(importPath)
+	if pkg == nil {
+		return nil
+	}
+	return p.owner.of(internal.FileInfo{Root: p.fi.Root, Path: filepath.Join(pkg.dir, "_.go")}, pkg.name)
 }
 
 // mw3StrDecl is a package level declaration that may hold a string constant.
@@ -70,14 +99,35 @@ type mw3StrDecl struct {
 	isConst bool
 }
 
+// mw3PkgFile is a file of a package, parsed.
+type mw3PkgFile struct {
+	file *ast.File
+	src  string
+}
+
 // goFiles calls read with the content and the syntax of every file of the
 // package whose text contains need. A file that does not parse, or declares
-// another package, is not read.
+// another package, is not read. The files are read once, the first time any of
+// the facts is asked for.
 func (p *mw3Pkg) goFiles(need string, read func(file *ast.File, src string)) {
+	if !p.filesRead {
+		p.filesRead = true
+		p.files = p.readFiles()
+	}
+	for _, f := range p.files {
+		if strings.Contains(f.src, need) {
+			read(f.file, f.src)
+		}
+	}
+}
+
+// readFiles parses the files of the package.
+func (p *mw3Pkg) readFiles() []mw3PkgFile {
 	entries, err := os.ReadDir(p.dir)
 	if err != nil {
-		return
+		return nil
 	}
+	var files []mw3PkgFile
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
 			continue
@@ -87,15 +137,13 @@ func (p *mw3Pkg) goFiles(need string, read func(file *ast.File, src string)) {
 			continue
 		}
 		src := string(data)
-		if !strings.Contains(src, need) {
-			continue
-		}
 		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), src, parser.SkipObjectResolution)
 		if err != nil || file.Name.Name != p.name {
 			continue
 		}
-		read(file, src)
+		files = append(files, mw3PkgFile{file: file, src: src})
 	}
+	return files
 }
 
 // loadDecls reads what the files declare at package level.
@@ -139,22 +187,97 @@ func (p *mw3Pkg) declared() map[string]struct{} {
 }
 
 // sessions returns what the package says about what holds sessions. Nothing is
-// read from a package none of whose files mentions the session middleware; when
-// one does, all of the files are, because a struct in one may have a field of a
-// type that another declares, and that one is the file that imports the session
-// middleware.
+// read from a package that has nothing to do with them: none of its files
+// mentions the session middleware, and none imports a package of the module that
+// does (see relevant). When there is something, all of the files are read,
+// because a struct in one may have a field of a type that another declares, and
+// that one is the file that imports the session middleware.
 func (p *mw3Pkg) sessions() *mw3SessionFacts {
 	if !p.sessionRead {
 		p.sessionRead = true
-		mentioned := false
-		p.goFiles("middleware/session", func(*ast.File, string) { mentioned = true })
-		if mentioned {
+		if p.relevant() {
 			p.goFiles("", func(file *ast.File, src string) {
-				p.session.scan(file, src)
+				p.session.scan(file, p.owner.envOf(p.fi, file, src))
 			})
 		}
 	}
 	return &p.session
+}
+
+// relevant reports whether the package can have anything to do with session
+// stores: one of its files mentions the session middleware, or imports a package
+// of the module that is relevant.
+func (p *mw3Pkg) relevant() bool {
+	if p.relevance != 0 {
+		return p.relevance == mw3Relevant
+	}
+	p.relevance = mw3Irrelevant // a package that is asked about itself does not count
+
+	var imported []string
+	mentioned := false
+	p.goFiles("", func(file *ast.File, src string) {
+		if strings.Contains(src, "middleware/session") {
+			mentioned = true
+		}
+		imported = append(imported, mw3ImportPaths(file)...)
+	})
+
+	relevant := mentioned
+	for _, path := range imported {
+		if relevant {
+			break
+		}
+		if peer := p.peer(path); peer != nil && peer != p {
+			relevant = peer.relevant()
+		}
+	}
+	if relevant {
+		p.relevance = mw3Relevant
+	}
+	return relevant
+}
+
+const (
+	mw3Irrelevant uint8 = iota + 1
+	mw3Relevant
+)
+
+// importsSessions reports whether a file of the package, whose head is given,
+// imports a package of the module that declares something that holds a store, a
+// session or a config.
+func (p *mw3Pkg) importsSessions(head *ast.File) bool {
+	for _, path := range mw3ImportPaths(head) {
+		if peer := p.peer(path); peer != nil && peer != p && peer.sessions().holdsSessions() {
+			return true
+		}
+	}
+	return false
+}
+
+// envOf returns what a file of the module says about the names it uses.
+func (p *mw3Pkgs) envOf(fi internal.FileInfo, file *ast.File, src string) *mw3Env {
+	env := &mw3Env{ix: p.indexes.of(fi)}
+	if strings.Contains(src, "middleware/session") {
+		env.session = importNames(src, mw3SessionPath, "session")
+	}
+	if env.ix == nil {
+		return env
+	}
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || mw3SessionPath.MatchString(path) {
+			continue
+		}
+		if _, inModule := env.ix.dirOf(path); !inModule {
+			continue
+		}
+		imp := mw3ModuleImport{path: path}
+		if spec.Name != nil {
+			imp.alias = spec.Name.Name
+		}
+		env.modules = append(env.modules, imp)
+	}
+	return env
 }
 
 // scanDecls records the names the file declares at package level, and the ones

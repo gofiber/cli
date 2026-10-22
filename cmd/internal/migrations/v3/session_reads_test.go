@@ -242,8 +242,8 @@ func derive(from *session.Store) *session.Store {
 	assert.NotContains(t, got, "KeyLookup")
 }
 
-// An assignment to the field, or its address, is not a read: the code stays, the
-// build fails on it, and it is reported.
+// An assignment to the field of a config that is not a plain "=", or its address,
+// is not a read: the code stays, the build fails on it, and it is reported.
 func Test_MigrateSessionReads_LeavesWhatIsNotARead(t *testing.T) {
 	t.Parallel()
 
@@ -251,13 +251,12 @@ func Test_MigrateSessionReads_LeavesWhatIsNotARead(t *testing.T) {
 
 import "github.com/gofiber/fiber/v2/middleware/session"
 
-var store = session.New()
-
-func write() {
-	store.KeyLookup = "header:X"
-	store.CookieName += "x"
-	p := &store.KeyLookup
+func write(cfg session.Config) {
+	cfg.KeyLookup += "x"
+	p := &cfg.CookieName
 	_ = p
+	for cfg.KeyLookup = range []string{"a"} {
+	}
 }
 `
 	got, res := mw3RunOne(t, src, v3.MigrateSessionExtractor)
@@ -265,9 +264,9 @@ func write() {
 
 	msgs := mw3Messages(res.notes)
 	require.Len(t, msgs, 3)
-	assert.Contains(t, msgs[0], "store.KeyLookup no longer exists")
-	assert.Contains(t, msgs[1], "store.CookieName no longer exists")
-	assert.Contains(t, msgs[2], "store.KeyLookup no longer exists")
+	assert.Contains(t, msgs[0], "cfg.KeyLookup no longer exists")
+	assert.Contains(t, msgs[1], "&cfg.CookieName: the session Config has no KeyLookup or CookieName in v3")
+	assert.Contains(t, msgs[2], "cfg.KeyLookup no longer exists")
 }
 
 // Other things that have a KeyLookup are not sessions.

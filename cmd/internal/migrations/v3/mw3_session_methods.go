@@ -80,24 +80,53 @@ func (p *mw3SessionMethodsPass) call(call *ast.CallExpr, stack []ast.Node) {
 		return
 	}
 
-	switch {
-	case sel.Sel.Name == "SetExpiry" && len(call.Args) == 1:
-		if p.f.isSession(sel.X, stack) {
-			p.edits.replaceNode(g, sel.Sel, "SetIdleTimeout")
-			return
-		}
-		if !mw3TypeIsShown(sel.X, stack) {
+	switch name := sel.Sel.Name; {
+	case name == mw3SetExpiry && len(call.Args) == 1:
+		m, isSession := p.f.providedBy(sel.X, name, mw3KindSession, stack)
+		switch {
+		case isSession && !m.unsure:
+			p.edits.replaceNode(g, sel.Sel, mw3SetIdle)
+		case isSession:
+			p.noteUnsure(call, name, "SetExpiry is called SetIdleTimeout in v3")
+		case !m.user && !mw3TypeIsShown(sel.X, stack):
 			internal.Notef(p.fi, g.line(call.Pos()),
 				"if %s is a session, SetExpiry is called SetIdleTimeout in v3.", g.text(sel.X))
 		}
-	case sel.Sel.Name == "Reset" && len(call.Args) == 0 && p.f.isStore(sel.X, stack):
+	case name == mw3Reset && len(call.Args) == 0 && p.isStore(call, sel, stack, "Reset takes a context in v3: Reset(ctx)"):
 		p.edits.replace(g.offset(call.Lparen)+1, g.offset(call.Rparen), p.context(call, stack))
-	case sel.Sel.Name == nameDelete && len(call.Args) == 1 && p.f.isStore(sel.X, stack):
+	case name == nameDelete && len(call.Args) == 1 && p.isStore(call, sel, stack, "Delete takes a context in v3: Delete(ctx, id)"):
 		start := g.offset(call.Args[0].Pos())
 		p.edits.replace(start, start, p.context(call, stack)+", ")
-	case sel.Sel.Name == "Keys" && len(call.Args) == 0 && p.f.isSession(sel.X, stack):
-		p.keys(call, stack)
+	case name == mw3KeysMethod && len(call.Args) == 0:
+		m, isSession := p.f.providedBy(sel.X, name, mw3KindSession, stack)
+		switch {
+		case isSession && !m.unsure:
+			p.keys(call, stack)
+		case isSession:
+			p.noteUnsure(call, name, "Keys returns []any in v3 (v2: []string)")
+		}
 	}
+}
+
+// isStore reports whether the method called by the selector is one of a session
+// store. A call that may be, because a type that the source does not show sits
+// above the store in what the receiver embeds, is reported with what changed.
+func (p *mw3SessionMethodsPass) isStore(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast.Node, change string) bool {
+	m, ok := p.f.providedBy(sel.X, sel.Sel.Name, mw3KindStore, stack)
+	if ok && m.unsure {
+		p.noteUnsure(call, sel.Sel.Name, change)
+		return false
+	}
+	return ok
+}
+
+// noteUnsure reports a call that is the method of a session type if no type
+// above it declares the same name.
+func (p *mw3SessionMethodsPass) noteUnsure(call *ast.CallExpr, method, change string) {
+	internal.Notef(p.fi, p.f.g.line(call.Pos()),
+		"%s: if this is the %s of the session type that its receiver embeds, %s. It cannot be told here, "+
+			"because a type that the receiver embeds above it may declare %s as well.",
+		p.f.g.text(call.Fun), method, change, method)
 }
 
 // keys makes the keys of a session the strings they were in v2:

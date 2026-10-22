@@ -21,6 +21,9 @@ const (
 	mw3KeyLookupConfigNote = mw3KeyLookupReadNote + " A config that was given a CookieName had no KeyLookup in v2, and has the extractor of that cookie here."
 	mw3CookieNameReadNote  = "%s is the name of the cookie the Extractor reads, and empty when it reads none, because v3 has no CookieName. " +
 		"v2 returned the CookieName that the config was given, which is empty when the config used KeyLookup, so the value differs in that case."
+	// v3 has no field to point to.
+	mw3LookupAddressNote = "%s is the address of a copy of the %s that the store reports now: v3 has no such field. " +
+		"v2 did not use the field to look anything up either (the lookup is fixed when the store is made), so writing through the pointer never changed where the store looks, and still does not."
 )
 
 // mw3SessionReadsPass is the rewrite of the reads of one file by MigrateSessionExtractor.
@@ -81,20 +84,19 @@ func mw3SessionReadsContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) str
 	return p.imports.apply(out)
 }
 
-// owner tells whether x holds a config that carries a lookup: a store, a
-// variable that holds a session.Config, or session.ConfigDefault. unset is
-// whether the config may have no extractor, which only one built by hand can.
-func (p *mw3SessionReadsPass) owner(x ast.Expr, stack []ast.Node) (unset, ok bool) {
-	switch {
-	case p.f.isStore(x, stack), p.f.isMember(x, mw3ConfigDefault, stack):
+// owner tells whether x.field is the lookup of a config: a store, a variable
+// that holds a session.Config, or session.ConfigDefault. unset is whether the
+// config may have no extractor, which only one built by hand can.
+func (p *mw3SessionReadsPass) owner(x ast.Expr, field string, stack []ast.Node) (unset, ok bool) {
+	if p.f.isMember(x, mw3ConfigDefault, stack) {
 		return false, true
-	case p.f.isConfigValue(x, stack):
-		return true, true
 	}
-	return false, false
+	m, isConfig := p.f.providedBy(x, field, mw3KindConfig, stack)
+	return !m.viaStore, isConfig
 }
 
-// read rewrites a read of store.KeyLookup or store.CookieName.
+// read rewrites a read of store.KeyLookup or store.CookieName, and the address
+// of one of a store.
 func (p *mw3SessionReadsPass) read(sel *ast.SelectorExpr, stack []ast.Node) {
 	field := sel.Sel.Name
 	if field != mw3KeyLookup && field != mw3CookieName {
@@ -103,17 +105,32 @@ func (p *mw3SessionReadsPass) read(sel *ast.SelectorExpr, stack []ast.Node) {
 	if _, done := p.handled[sel]; done {
 		return
 	}
-	unset, ok := p.owner(sel.X, stack)
-	g := p.f.g
-	if !ok || mw3IsWritten(sel, stack) {
+	unset, ok := p.owner(sel.X, field, stack)
+	if !ok {
+		return
+	}
+	use, outer := mw3UseOf(sel, stack)
+	if use == mw3UseWritten || (use == mw3UseAddress && unset) {
 		return
 	}
 
+	g := p.f.g
 	pkg := p.f.importAt(&p.imports, mw3ExtractorsPath, sel.Pos(), stack, mw3LookupReaderNames, "extractors", "fiberextractors")
 	start, end := g.offset(sel.Pos()), g.offset(sel.End())
-	p.edits.replace(start, start, mw3LookupReader(field, pkg, unset))
+	prefix, suffix := mw3LookupReader(field, pkg, unset), ")"
+	if use == mw3UseAddress {
+		// A store has no field to point to: the pointer is to a copy of the value.
+		p.edits.replace(g.offset(outer.Pos()), start, "func() *string {\nv := "+prefix)
+		p.edits.replace(end, g.offset(outer.End()), ")\nreturn &v\n}()")
+		internal.Notef(p.fi, g.line(sel.Pos()), mw3LookupAddressNote, g.text(outer), field)
+	} else {
+		p.edits.replace(start, start, prefix)
+		p.edits.replace(end, end, suffix)
+	}
 	p.edits.replaceNode(g, sel.Sel, mw3ExtractorField)
-	p.edits.replace(end, end, ")")
+	if use == mw3UseAddress {
+		return
+	}
 
 	note := mw3KeyLookupReadNote
 	switch {
@@ -144,7 +161,7 @@ func (p *mw3SessionReadsPass) copiedInLiteral(kv *ast.KeyValueExpr, stack []ast.
 		mw3Field(lit, mw3CookieName) != nil || mw3Field(lit, mw3ExtractorField) != nil {
 		return
 	}
-	if _, ok := p.owner(value.X, stack); !ok {
+	if _, ok := p.owner(value.X, mw3KeyLookup, stack); !ok {
 		return
 	}
 
@@ -161,14 +178,17 @@ func (p *mw3SessionReadsPass) copiedInAssignment(as *ast.AssignStmt, stack []ast
 		return
 	}
 	dst, ok := as.Lhs[0].(*ast.SelectorExpr)
-	if !ok || dst.Sel.Name != mw3KeyLookup || !p.f.isConfigValue(dst.X, stack) {
+	if !ok || dst.Sel.Name != mw3KeyLookup {
+		return
+	}
+	if m, isConfig := p.f.providedBy(dst.X, mw3KeyLookup, mw3KindConfig, stack); !isConfig || m.viaStore {
 		return
 	}
 	value, ok := as.Rhs[0].(*ast.SelectorExpr)
 	if !ok || value.Sel.Name != mw3KeyLookup {
 		return
 	}
-	if _, ok := p.owner(value.X, stack); !ok {
+	if _, ok := p.owner(value.X, mw3KeyLookup, stack); !ok {
 		return
 	}
 
@@ -220,9 +240,23 @@ func mw3LookupReader(field, pkg string, unset bool) string {
 	return strings.Join(append(lines, "}("), "\n")
 }
 
-// mw3IsWritten reports whether the selector, whose ancestors are stack, is
-// assigned to or has its address taken: a call cannot take its place.
-func mw3IsWritten(sel *ast.SelectorExpr, stack []ast.Node) bool {
+// mw3Use is what the program does with a field.
+type mw3Use uint8
+
+const (
+	// mw3UseRead is anything that takes the value of the field.
+	mw3UseRead mw3Use = iota
+	// mw3UseWritten is an assignment to the field, an increment, or being the
+	// variable of a range clause.
+	mw3UseWritten
+	// mw3UseAddress is taking its address.
+	mw3UseAddress
+)
+
+// mw3UseOf tells what is done with the selector, whose ancestors are stack, and
+// returns the expression that does it: for the address of the field that is &sel,
+// with any parentheses around the selector.
+func mw3UseOf(sel *ast.SelectorExpr, stack []ast.Node) (mw3Use, ast.Expr) {
 	var node ast.Expr = sel
 	i := len(stack) - 1
 	for i >= 0 {
@@ -234,18 +268,24 @@ func mw3IsWritten(sel *ast.SelectorExpr, stack []ast.Node) bool {
 		i--
 	}
 	if i < 0 {
-		return false
+		return mw3UseRead, sel
 	}
 
 	switch parent := stack[i].(type) {
 	case *ast.AssignStmt:
-		return slices.Contains(parent.Lhs, node)
+		if slices.Contains(parent.Lhs, node) {
+			return mw3UseWritten, node
+		}
 	case *ast.UnaryExpr:
-		return parent.Op == token.AND
+		if parent.Op == token.AND {
+			return mw3UseAddress, parent
+		}
 	case *ast.IncDecStmt:
-		return true
+		return mw3UseWritten, node
 	case *ast.RangeStmt:
-		return parent.Key == node || parent.Value == node
+		if parent.Key == node || parent.Value == node {
+			return mw3UseWritten, node
+		}
 	}
-	return false
+	return mw3UseRead, sel
 }

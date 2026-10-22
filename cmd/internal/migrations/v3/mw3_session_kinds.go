@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -13,7 +14,8 @@ import (
 // declared with, the literal or the call that initialized it, the type a
 // function returns. mw3Kind is the part of that which matters to the session
 // migrations: a store, a session, a config, a collection of them, or a type of
-// the package that may hold some.
+// the program that may hold some. The types and the functions of the other
+// packages of the module are read through the module index.
 
 // mw3Base is what a value is, as far as the session middleware goes.
 type mw3Base uint8
@@ -27,7 +29,7 @@ const (
 	mw3KindStore
 	mw3KindSession
 	mw3KindConfig
-	// mw3KindNamed is a type that the package declares, by name.
+	// mw3KindNamed is a type that the program declares, by name.
 	mw3KindNamed
 	// mw3KindList is an array, a slice or a map: its elem holds the kind of what it
 	// holds (of the values, for a map).
@@ -37,7 +39,12 @@ const (
 // mw3Kind tells what a value is.
 type mw3Kind struct {
 	elem *mw3Kind
+	// name is the name of the type of a mw3KindNamed. A mw3KindConfig that is the
+	// config a store embeds has mw3StoreType here: a store always has a lookup.
 	name string
+	// pkg is the import path of the package that declares a mw3KindNamed, empty for
+	// the package the kind is read in.
+	pkg  string
 	base mw3Base
 }
 
@@ -63,32 +70,103 @@ func mw3ListOf(elem mw3Kind) mw3Kind {
 	return mw3Kind{base: mw3KindList, elem: &elem}
 }
 
-// mw3KindOfType reads the kind from a type expression. names are the identifiers
-// the file binds to the session package.
-func mw3KindOfType(t ast.Expr, names []string) mw3Kind {
+// mw3Qualify makes a kind that was read in the package at pkg refer to the types
+// of that package by their path, so that it can be used from another package.
+func mw3Qualify(k mw3Kind, pkg string) mw3Kind {
+	switch {
+	case pkg == "":
+	case k.base == mw3KindNamed && k.pkg == "":
+		k.pkg = pkg
+	case k.base == mw3KindList && k.elem != nil:
+		elem := mw3Qualify(*k.elem, pkg)
+		k.elem = &elem
+	}
+	return k
+}
+
+// mw3Env is what a file says about the names it uses.
+type mw3Env struct {
+	ix *moduleIndex
+	// session are the identifiers the file binds to the session package.
+	session []string
+	// modules are the imports of the file that name packages of the module.
+	modules []mw3ModuleImport
+}
+
+// mw3ModuleImport is an import of a package of the module.
+type mw3ModuleImport struct {
+	// alias is the name written in the import, empty when there is none.
+	alias string
+	path  string
+}
+
+// isSession reports whether the identifier is one the file binds to the session
+// package. Whether a variable of the same name hides it is for the caller to say.
+func (e *mw3Env) isSession(name string) bool {
+	return e != nil && slices.Contains(e.session, name)
+}
+
+// module returns the import path of the package of the module that the file binds
+// to the identifier.
+func (e *mw3Env) module(name string) (string, bool) {
+	if e == nil {
+		return "", false
+	}
+	for _, imp := range e.modules {
+		bound := imp.alias
+		if bound == "" {
+			// The package may be called otherwise than the last element of its
+			// path, which only reading it tells.
+			if defaultImportName(imp.path) == name {
+				return imp.path, true
+			}
+			if pkg := e.ix.packageAt(imp.path); pkg != nil {
+				bound = pkg.name
+			}
+		}
+		if bound == name {
+			return imp.path, true
+		}
+	}
+	return "", false
+}
+
+// mw3KindOfType reads the kind from a type expression written in a file whose
+// names are env.
+func mw3KindOfType(t ast.Expr, env *mw3Env) mw3Kind {
 	switch x := t.(type) {
 	case *ast.ParenExpr:
-		return mw3KindOfType(x.X, names)
+		return mw3KindOfType(x.X, env)
 	case *ast.StarExpr:
-		return mw3KindOfType(x.X, names)
+		return mw3KindOfType(x.X, env)
+	case *ast.IndexExpr:
+		return mw3KindOfType(x.X, env) // a generic type, instantiated
+	case *ast.IndexListExpr:
+		return mw3KindOfType(x.X, env)
 	case *ast.Ellipsis:
-		return mw3ListOf(mw3KindOfType(x.Elt, names))
+		return mw3ListOf(mw3KindOfType(x.Elt, env))
 	case *ast.ArrayType:
-		return mw3ListOf(mw3KindOfType(x.Elt, names))
+		return mw3ListOf(mw3KindOfType(x.Elt, env))
 	case *ast.MapType:
-		return mw3ListOf(mw3KindOfType(x.Value, names))
+		return mw3ListOf(mw3KindOfType(x.Value, env))
 	case *ast.SelectorExpr:
 		id, ok := x.X.(*ast.Ident)
-		if !ok || !slices.Contains(names, id.Name) {
+		if !ok {
 			return mw3Kind{}
 		}
-		switch x.Sel.Name {
-		case mw3StoreType:
-			return mw3Kind{base: mw3KindStore}
-		case mw3SessionType:
-			return mw3Kind{base: mw3KindSession}
-		case mw3Config:
-			return mw3Kind{base: mw3KindConfig}
+		if env.isSession(id.Name) {
+			switch x.Sel.Name {
+			case mw3StoreType:
+				return mw3Kind{base: mw3KindStore}
+			case mw3SessionType:
+				return mw3Kind{base: mw3KindSession}
+			case mw3Config:
+				return mw3Kind{base: mw3KindConfig}
+			}
+			return mw3Kind{}
+		}
+		if path, inModule := env.module(id.Name); inModule {
+			return mw3Kind{base: mw3KindNamed, name: x.Sel.Name, pkg: path}
 		}
 	case *ast.Ident:
 		if types.Universe.Lookup(x.Name) == nil {
@@ -102,76 +180,104 @@ func mw3KindOfType(t ast.Expr, names []string) mw3Kind {
 type mw3PkgVar struct {
 	typ  ast.Expr
 	init ast.Expr
-	// names are the identifiers the file that declares it binds to the session
-	// package.
-	names []string
+	// env is what the file that declares it says about its names.
+	env *mw3Env
 }
 
-// mw3Struct is a struct type of the package: the kinds of its fields, and of the
-// types it embeds, whose fields it has as well.
+// mw3Struct is a struct or interface type of the package: the kinds of its
+// fields, and of the types it embeds, whose fields it has as well.
 type mw3Struct struct {
-	fields   map[string]mw3Kind
+	fields map[string]mw3Kind
+	// own are the names of all the fields of a struct and the methods of an
+	// interface, those of the embedded fields included.
+	own      map[string]struct{}
 	embedded []mw3Kind
+	// opaque is set when the type embeds one that the source does not show: a type
+	// of a package outside of the module.
+	opaque bool
 }
 
 // mw3SessionFacts is what the files of a package say about what holds sessions,
 // which a file of the package may use without declaring it.
 type mw3SessionFacts struct {
-	vars map[string]mw3PkgVar
+	owner *mw3Pkg
+	vars  map[string]mw3PkgVar
 	// varKinds are the kinds of the variables, read when they are first asked for.
 	varKinds map[string]mw3Kind
 	// funcs and methods (by the name of the type) are what the first result of a
 	// function is.
 	funcs   map[string]mw3Kind
 	methods map[string]map[string]mw3Kind
-	structs map[string]mw3Struct
+	// methodNames are the names of all the methods of a type, whatever they return.
+	methodNames map[string]map[string]struct{}
+	structs     map[string]mw3Struct
 	// named are the types that are not structs and stand for something of interest.
 	named map[string]mw3Kind
+	// path is the import path of the package, empty outside of a module.
+	path string
 }
 
-func newMw3SessionFacts() mw3SessionFacts {
+func newMw3SessionFacts(owner *mw3Pkg) mw3SessionFacts {
 	return mw3SessionFacts{
-		vars:     map[string]mw3PkgVar{},
-		varKinds: map[string]mw3Kind{},
-		funcs:    map[string]mw3Kind{},
-		methods:  map[string]map[string]mw3Kind{},
-		structs:  map[string]mw3Struct{},
-		named:    map[string]mw3Kind{},
+		owner:       owner,
+		vars:        map[string]mw3PkgVar{},
+		varKinds:    map[string]mw3Kind{},
+		funcs:       map[string]mw3Kind{},
+		methods:     map[string]map[string]mw3Kind{},
+		methodNames: map[string]map[string]struct{}{},
+		structs:     map[string]mw3Struct{},
+		named:       map[string]mw3Kind{},
 	}
 }
 
 // scan reads the package level declarations of a file of the package.
-func (f *mw3SessionFacts) scan(file *ast.File, src string) {
-	var names []string
-	if strings.Contains(src, "middleware/session") {
-		names = importNames(src, mw3SessionPath, "session")
+func (f *mw3SessionFacts) scan(file *ast.File, env *mw3Env) {
+	if f.path == "" && !strings.HasSuffix(f.owner.name, "_test") {
+		// The external tests of a package are in its directory, and nobody imports them.
+		f.path, _ = f.owner.index().importPathOf(f.owner.dir)
 	}
 
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			f.scanFunc(d, names)
+			f.scanFunc(d, env)
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				switch s := spec.(type) {
 				case *ast.ValueSpec:
 					if d.Tok == token.VAR {
-						f.scanVar(s, names)
+						f.scanVar(s, env)
 					}
 				case *ast.TypeSpec:
-					f.scanType(s, names)
+					f.scanType(s, env)
 				}
 			}
 		}
 	}
 }
 
+// addMethod records the name of a method of a type.
+func (f *mw3SessionFacts) addMethod(typ, name string) {
+	if f.methodNames[typ] == nil {
+		f.methodNames[typ] = map[string]struct{}{}
+	}
+	f.methodNames[typ][name] = struct{}{}
+}
+
 // scanFunc records what a function or a method returns.
-func (f *mw3SessionFacts) scanFunc(d *ast.FuncDecl, names []string) {
+func (f *mw3SessionFacts) scanFunc(d *ast.FuncDecl, env *mw3Env) {
+	recv := ""
+	if d.Recv != nil && len(d.Recv.List) == 1 {
+		if k := mw3KindOfType(d.Recv.List[0].Type, nil); k.base == mw3KindNamed {
+			recv = k.name
+			f.addMethod(recv, d.Name.Name)
+		}
+	}
+
 	if d.Type.Results == nil {
 		return
 	}
-	kind := mw3FirstResult(d.Type, names)
+	kind := mw3FirstResult(d.Type, env)
 	if kind.base == mw3KindNone {
 		return
 	}
@@ -180,28 +286,24 @@ func (f *mw3SessionFacts) scanFunc(d *ast.FuncDecl, names []string) {
 		f.funcs[d.Name.Name] = kind
 		return
 	}
-	if len(d.Recv.List) != 1 {
+	if recv == "" {
 		return
 	}
-	recv := mw3KindOfType(d.Recv.List[0].Type, nil)
-	if recv.base != mw3KindNamed {
-		return
+	if f.methods[recv] == nil {
+		f.methods[recv] = map[string]mw3Kind{}
 	}
-	if f.methods[recv.name] == nil {
-		f.methods[recv.name] = map[string]mw3Kind{}
-	}
-	f.methods[recv.name][d.Name.Name] = kind
+	f.methods[recv][d.Name.Name] = kind
 }
 
 // mw3FirstResult returns the kind of what a function returns: its first result
 // that is something of interest, or else its first result.
-func mw3FirstResult(ft *ast.FuncType, names []string) mw3Kind {
+func mw3FirstResult(ft *ast.FuncType, env *mw3Env) mw3Kind {
 	if ft.Results == nil {
 		return mw3Kind{}
 	}
 	var first mw3Kind
 	for i, res := range ft.Results.List {
-		kind := mw3KindOfType(res.Type, names)
+		kind := mw3KindOfType(res.Type, env)
 		if i == 0 {
 			first = kind
 		}
@@ -218,9 +320,9 @@ func mw3IsSessionKind(k mw3Kind) bool {
 }
 
 // scanVar records what a package level variable is declared with.
-func (f *mw3SessionFacts) scanVar(s *ast.ValueSpec, names []string) {
+func (f *mw3SessionFacts) scanVar(s *ast.ValueSpec, env *mw3Env) {
 	for i, id := range s.Names {
-		v := mw3PkgVar{typ: s.Type, names: names}
+		v := mw3PkgVar{typ: s.Type, env: env}
 		switch {
 		case len(s.Values) == len(s.Names):
 			v.init = s.Values[i]
@@ -231,38 +333,102 @@ func (f *mw3SessionFacts) scanVar(s *ast.ValueSpec, names []string) {
 	}
 }
 
-// scanType records a struct type, or another type that stands for something of
-// interest.
-func (f *mw3SessionFacts) scanType(spec *ast.TypeSpec, names []string) {
-	st, isStruct := spec.Type.(*ast.StructType)
-	if !isStruct {
+// scanType records a struct or interface type, or another type that stands for
+// something of interest.
+func (f *mw3SessionFacts) scanType(spec *ast.TypeSpec, env *mw3Env) {
+	switch t := spec.Type.(type) {
+	case *ast.StructType:
+		f.scanStruct(spec.Name.Name, t, env)
+	case *ast.InterfaceType:
+		f.scanInterface(spec.Name.Name, t, env)
+	default:
 		// An alias is the type it stands for. A type that is defined from another
 		// has the fields of it and none of its methods, which is nothing the
 		// migrations could tell, unless it is a collection: Stores []*session.Store.
-		kind := mw3KindOfType(spec.Type, names)
+		kind := mw3KindOfType(spec.Type, env)
 		if kind.base == mw3KindList || (kind.base != mw3KindNone && spec.Assign != token.NoPos) {
 			f.named[spec.Name.Name] = kind
 		}
-		return
 	}
+}
 
-	s := mw3Struct{fields: map[string]mw3Kind{}}
+// scanStruct records the fields of a struct type.
+func (f *mw3SessionFacts) scanStruct(name string, st *ast.StructType, env *mw3Env) {
+	s := mw3Struct{fields: map[string]mw3Kind{}, own: map[string]struct{}{}}
 	for _, field := range st.Fields.List {
-		kind := mw3KindOfType(field.Type, names)
-		if kind.base == mw3KindNone {
-			continue
-		}
+		kind := mw3KindOfType(field.Type, env)
 		if len(field.Names) > 0 {
 			for _, id := range field.Names {
-				s.fields[id.Name] = kind
+				s.own[id.Name] = struct{}{}
+				if kind.base != mw3KindNone {
+					s.fields[id.Name] = kind
+				}
 			}
 			continue
 		}
+
 		// An embedded field is called after its type, and has the fields of it.
+		embedded := mw3EmbeddedName(field.Type)
+		s.own[embedded] = struct{}{}
+		if kind.base == mw3KindNone {
+			s.opaque = s.opaque || !mw3IsLock(field.Type)
+			continue
+		}
 		s.embedded = append(s.embedded, kind)
-		s.fields[mw3EmbeddedName(field.Type)] = kind
+		s.fields[embedded] = kind
 	}
-	f.structs[spec.Name.Name] = s
+	f.structs[name] = s
+}
+
+// scanInterface records the methods of an interface type, and the interfaces it
+// embeds.
+func (f *mw3SessionFacts) scanInterface(name string, it *ast.InterfaceType, env *mw3Env) {
+	s := mw3Struct{fields: map[string]mw3Kind{}, own: map[string]struct{}{}}
+	for _, m := range it.Methods.List {
+		if len(m.Names) == 0 {
+			// An embedded interface, or a constraint such as ~string | int.
+			kind := mw3KindOfType(m.Type, env)
+			if kind.base == mw3KindNone {
+				s.opaque = true
+				continue
+			}
+			s.embedded = append(s.embedded, kind)
+			continue
+		}
+		for _, id := range m.Names {
+			s.own[id.Name] = struct{}{}
+			f.addMethod(name, id.Name)
+			ft, ok := m.Type.(*ast.FuncType)
+			if !ok {
+				continue
+			}
+			if kind := mw3FirstResult(ft, env); kind.base != mw3KindNone {
+				if f.methods[name] == nil {
+					f.methods[name] = map[string]mw3Kind{}
+				}
+				f.methods[name][id.Name] = kind
+			}
+		}
+	}
+	f.structs[name] = s
+}
+
+// mw3IsLock reports whether an embedded type of another package is a lock of the
+// sync package, which has none of the names the session types have.
+func mw3IsLock(t ast.Expr) bool {
+	t = ast.Unparen(t)
+	if star, ok := t.(*ast.StarExpr); ok {
+		t = ast.Unparen(star.X)
+	}
+	sel, ok := t.(*ast.SelectorExpr)
+	if !ok || !isIdentNamed(sel.X, "sync") {
+		return false
+	}
+	switch sel.Sel.Name {
+	case "Mutex", "RWMutex", "Once", "WaitGroup":
+		return true
+	}
+	return false
 }
 
 // mw3EmbeddedName is the name of an embedded field: the name of its type.
@@ -272,6 +438,10 @@ func mw3EmbeddedName(t ast.Expr) string {
 		return mw3EmbeddedName(x.X)
 	case *ast.ParenExpr:
 		return mw3EmbeddedName(x.X)
+	case *ast.IndexExpr:
+		return mw3EmbeddedName(x.X)
+	case *ast.IndexListExpr:
+		return mw3EmbeddedName(x.X)
 	case *ast.SelectorExpr:
 		return x.Sel.Name
 	case *ast.Ident:
@@ -280,40 +450,20 @@ func mw3EmbeddedName(t ast.Expr) string {
 	return ""
 }
 
-// resolve follows a type of the package to the kind it stands for.
-func (f *mw3SessionFacts) resolve(k mw3Kind) mw3Kind {
-	for range 4 {
-		if k.base != mw3KindNamed {
-			break
-		}
-		next, ok := f.named[k.name]
-		if !ok {
-			break
-		}
-		k = next
+// declares reports whether the type of the package has a field or a method of the
+// name.
+func (f *mw3SessionFacts) declares(typ, name string) bool {
+	if _, ok := f.structs[typ].own[name]; ok {
+		return true
 	}
-	return k
+	_, ok := f.methodNames[typ][name]
+	return ok
 }
 
-// field returns the kind of a field of a struct type of the package, which may
-// be one of an embedded type.
-func (f *mw3SessionFacts) field(structName, name string, depth int) mw3Kind {
-	s, ok := f.structs[structName]
-	if !ok || depth > 4 {
-		return mw3Kind{}
-	}
-	if kind, found := s.fields[name]; found {
-		return f.resolve(kind)
-	}
-	for _, embedded := range s.embedded {
-		if embedded = f.resolve(embedded); embedded.base != mw3KindNamed {
-			continue
-		}
-		if kind := f.field(embedded.name, name, depth+1); kind.base != mw3KindNone {
-			return kind
-		}
-	}
-	return mw3Kind{}
+// reader returns a reader of the kinds of expressions of a file of the package
+// whose names are env.
+func (f *mw3SessionFacts) reader(env *mw3Env) *mw3KindReader {
+	return &mw3KindReader{facts: f, env: env}
 }
 
 // varKind returns the kind of a variable of the package level.
@@ -327,46 +477,42 @@ func (f *mw3SessionFacts) varKind(name string) mw3Kind {
 	}
 
 	f.varKinds[name] = mw3Kind{} // what refers to itself is nothing
-	r := mw3KindReader{facts: f, names: v.names}
+	r := f.reader(v.env)
 	switch {
 	case v.typ != nil:
-		f.varKinds[name] = f.resolve(mw3KindOfType(v.typ, v.names))
+		f.varKinds[name] = r.resolve(mw3KindOfType(v.typ, v.env))
 	case v.init != nil:
-		f.varKinds[name] = r.ofExpr(v.init, nil)
+		f.varKinds[name] = r.valueOf(v.init, nil)
 	}
 	return f.varKinds[name]
 }
 
 // holdsSessions reports whether something the package declares at its level is a
-// store, a session or a config, or has one in a field.
+// store, a session or a config, or has one in a field, however deep.
 func (f *mw3SessionFacts) holdsSessions() bool {
-	interesting := func(k mw3Kind) bool {
-		for k.base == mw3KindList && k.elem != nil {
-			k = *k.elem
-		}
-		return mw3IsSessionKind(f.resolve(k))
-	}
+	r := f.reader(nil)
+	holds := func(k mw3Kind) bool { return r.reaches(k, 0) }
 
 	for name := range f.vars {
-		if interesting(f.varKind(name)) {
+		if holds(f.varKind(name)) {
 			return true
 		}
 	}
 	for _, kind := range f.funcs {
-		if interesting(kind) {
+		if holds(kind) {
 			return true
 		}
 	}
 	for _, methods := range f.methods {
 		for _, kind := range methods {
-			if interesting(kind) {
+			if holds(kind) {
 				return true
 			}
 		}
 	}
 	for _, s := range f.structs {
 		for _, kind := range s.fields {
-			if interesting(kind) {
+			if holds(kind) {
 				return true
 			}
 		}
@@ -374,188 +520,13 @@ func (f *mw3SessionFacts) holdsSessions() bool {
 	return false
 }
 
-// mw3KindReader reads the kind of the expressions of a file.
-type mw3KindReader struct {
-	facts *mw3SessionFacts
-	// names are the identifiers the file binds to the session package.
-	names []string
-	depth int
-}
-
-// ofExpr returns the kind of the expression whose ancestors are stack (see
-// goSource.walk); stack is nil for an expression of the package level.
-func (r *mw3KindReader) ofExpr(e ast.Expr, stack []ast.Node) mw3Kind {
-	if r.depth > mw3MaxKindDepth {
-		return mw3Kind{}
-	}
-	r.depth++
-	defer func() { r.depth-- }()
-
-	switch x := e.(type) {
-	case *ast.ParenExpr:
-		return r.ofExpr(x.X, stack)
-	case *ast.StarExpr:
-		return r.ofExpr(x.X, stack)
-	case *ast.UnaryExpr:
-		if x.Op == token.AND {
-			return r.ofExpr(x.X, stack)
-		}
-	case *ast.Ident:
-		return r.ofIdent(x, stack)
-	case *ast.SelectorExpr:
-		return r.ofSelector(x, stack)
-	case *ast.IndexExpr:
-		return r.element(r.ofExpr(x.X, stack))
-	case *ast.SliceExpr:
-		return r.ofExpr(x.X, stack)
-	case *ast.CallExpr:
-		return r.ofCall(x, stack)
-	case *ast.CompositeLit:
-		if x.Type != nil {
-			return r.facts.resolve(mw3KindOfType(x.Type, r.names))
-		}
-	case *ast.TypeAssertExpr:
-		if x.Type != nil {
-			return r.facts.resolve(mw3KindOfType(x.Type, r.names))
+// mw3ImportPaths returns the import paths of a file.
+func mw3ImportPaths(file *ast.File) []string {
+	var paths []string
+	for _, spec := range file.Imports {
+		if path, err := strconv.Unquote(spec.Path.Value); err == nil {
+			paths = append(paths, path)
 		}
 	}
-	return mw3Kind{}
-}
-
-// element returns what a collection holds.
-func (r *mw3KindReader) element(k mw3Kind) mw3Kind {
-	if k = r.facts.resolve(k); k.base != mw3KindList || k.elem == nil {
-		return mw3Kind{}
-	}
-	return r.facts.resolve(*k.elem)
-}
-
-// isPackage reports whether the identifier names the session package here and
-// not a variable that has the same name.
-func (r *mw3KindReader) isPackage(id *ast.Ident, stack []ast.Node) bool {
-	return slices.Contains(r.names, id.Name) && !mw3Shadowed(id.Name, id.Pos(), stack)
-}
-
-func (r *mw3KindReader) ofIdent(id *ast.Ident, stack []ast.Node) mw3Kind {
-	d, ok := resolveIdent(id.Name, id.Pos(), stack)
-	switch {
-	case ok && d.typ != nil:
-		return r.facts.resolve(mw3KindOfType(d.typ, r.names))
-	case ok && d.init != nil:
-		return r.ofExpr(d.init, stack)
-	case ok:
-		return mw3Kind{}
-	}
-	if kind, bound := r.bound(id, stack); bound {
-		return kind
-	}
-	return r.facts.varKind(id.Name)
-}
-
-// bound returns the kind of a variable that a range clause or a type switch
-// declares, and whether the identifier is one.
-func (r *mw3KindReader) bound(id *ast.Ident, stack []ast.Node) (mw3Kind, bool) {
-	for i, node := range slices.Backward(stack) {
-		switch n := node.(type) {
-		case *ast.RangeStmt:
-			if n.Tok != token.DEFINE || n.Body == nil || id.Pos() < n.Body.Pos() {
-				continue
-			}
-			if isIdentNamed(n.Value, id.Name) {
-				return r.element(r.ofExpr(n.X, stack[:i])), true
-			}
-			if isIdentNamed(n.Key, id.Name) {
-				return mw3Kind{}, true
-			}
-		case *ast.TypeSwitchStmt:
-			bind, ok := n.Assign.(*ast.AssignStmt)
-			if !ok || len(bind.Lhs) != 1 || !isIdentNamed(bind.Lhs[0], id.Name) {
-				continue
-			}
-			// The variable has the type of the case it is in, when that is one.
-			if i+2 < len(stack) {
-				if clause, isClause := stack[i+2].(*ast.CaseClause); isClause && len(clause.List) == 1 {
-					return r.facts.resolve(mw3KindOfType(clause.List[0], r.names)), true
-				}
-			}
-			return mw3Kind{}, true
-		}
-	}
-	return mw3Kind{}, false
-}
-
-func (r *mw3KindReader) ofSelector(sel *ast.SelectorExpr, stack []ast.Node) mw3Kind {
-	if id, ok := sel.X.(*ast.Ident); ok && r.isPackage(id, stack) {
-		if sel.Sel.Name == mw3ConfigDefault {
-			return mw3Kind{base: mw3KindConfig}
-		}
-		return mw3Kind{}
-	}
-
-	owner := r.ofExpr(sel.X, stack)
-	if owner.base == mw3KindStore && sel.Sel.Name == mw3Config {
-		return mw3Kind{base: mw3KindConfig}
-	}
-	if owner.base == mw3KindNamed {
-		return r.facts.field(owner.name, sel.Sel.Name, 0)
-	}
-	return mw3Kind{}
-}
-
-// ofCall returns what a call gives back.
-func (r *mw3KindReader) ofCall(call *ast.CallExpr, stack []ast.Node) mw3Kind {
-	switch fun := call.Fun.(type) {
-	case *ast.FuncLit:
-		return r.facts.resolve(mw3FirstResult(fun.Type, r.names))
-	case *ast.Ident:
-		return r.ofFuncCall(call, fun, stack)
-	case *ast.SelectorExpr:
-		if id, ok := fun.X.(*ast.Ident); ok && r.isPackage(id, stack) {
-			if fun.Sel.Name == mw3SessionNew || fun.Sel.Name == mw3SessionNewStore {
-				return mw3Kind{base: mw3KindStore}
-			}
-			return mw3Kind{}
-		}
-
-		owner := r.ofExpr(fun.X, stack)
-		if owner.base == mw3KindStore && (fun.Sel.Name == appMethodGet || fun.Sel.Name == "GetByID") {
-			return mw3Kind{base: mw3KindSession}
-		}
-		if owner.base == mw3KindNamed {
-			return r.facts.resolve(r.facts.methods[owner.name][fun.Sel.Name])
-		}
-	}
-	return mw3Kind{}
-}
-
-// ofFuncCall returns what a call of a function by its name gives back: a
-// function of the package, a function the code declares as a variable or takes as
-// a parameter, or a builtin that makes a value.
-func (r *mw3KindReader) ofFuncCall(call *ast.CallExpr, fun *ast.Ident, stack []ast.Node) mw3Kind {
-	d, declared := resolveIdent(fun.Name, fun.Pos(), stack)
-	if declared {
-		switch {
-		case d.typ != nil:
-			if ft, ok := d.typ.(*ast.FuncType); ok {
-				return r.facts.resolve(mw3FirstResult(ft, r.names))
-			}
-		case d.init != nil:
-			if lit, ok := d.init.(*ast.FuncLit); ok {
-				return r.facts.resolve(mw3FirstResult(lit.Type, r.names))
-			}
-		}
-		return mw3Kind{}
-	}
-
-	switch fun.Name {
-	case mw3BuiltinNew, mw3BuiltinMake:
-		if len(call.Args) > 0 {
-			return r.facts.resolve(mw3KindOfType(call.Args[0], r.names))
-		}
-	case mw3BuiltinAppend:
-		if len(call.Args) > 0 {
-			return r.ofExpr(call.Args[0], stack)
-		}
-	}
-	return r.facts.resolve(r.facts.funcs[fun.Name])
+	return paths
 }
