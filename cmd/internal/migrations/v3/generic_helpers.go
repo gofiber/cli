@@ -15,7 +15,7 @@ import (
 // ctxGenericHelpers maps the typed getters of the v2 Ctx to the generic
 // helpers of v3: c.QueryInt(k, d) is fiber.Query[int](c, k, d).
 var ctxGenericHelpers = map[string]ctxHelper{
-	"ParamsInt":  {fn: "Params", typ: ctxGoInt},
+	"ParamsInt":  {fn: ctxFnParams, typ: ctxGoInt},
 	"QueryInt":   {fn: ctxFnQuery, typ: ctxGoInt},
 	"QueryFloat": {fn: ctxFnQuery, typ: "float64"},
 	"QueryBool":  {fn: ctxFnQuery, typ: "bool"},
@@ -25,11 +25,12 @@ var ctxGenericHelpers = map[string]ctxHelper{
 // and the type it is instantiated with.
 type ctxHelper struct{ fn, typ string }
 
-// ctxFnQuery is the generic helper for the query string, ctxGoInt the type of
-// the integer helpers.
+// ctxFnQuery is the generic helper for the query string, ctxFnParams the one for
+// the route parameters, ctxGoInt the type of the integer helpers.
 const (
-	ctxFnQuery = "Query"
-	ctxGoInt   = "int"
+	ctxFnQuery  = "Query"
+	ctxFnParams = "Params"
+	ctxGoInt    = "int"
 )
 
 const ctxParamsInt = "ParamsInt"
@@ -117,13 +118,16 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 		}
 
 		generic := env.qual(helper.fn) + "[" + helper.typ + "]"
-		switch env.receiverKind(sel, stack) {
+		kind, via := env.receiverKindVia(sel, stack, ctxMembersParams...)
+		switch kind {
 		case ctxYes:
-			// A type that embeds the context hands the embedded one to the helper: the
-			// helper takes a fiber.Ctx, the type may declare methods that make it none,
-			// and the method of v2 used the members of the context and not those of the
-			// type.
-			via := env.embeddedCtxOf(sel.X, stack)
+			// The helper and the literal that replace the call take a fiber.Ctx, which a
+			// type that embeds the context may not be (a member of its own with the name
+			// of a method of the context, another embedded type with the same method), and
+			// the method of v2 used the members of the context and not those of the type:
+			// the embedded context goes there. A call of Params on the receiver, in the
+			// code that replaces ParamsInt, only needs it when the type declares Params.
+			handed := env.embeddedCtxOf(sel.X, stack)
 
 			// The getters that return one value take the same default values in v3, a
 			// slice spread included. ParamsInt does not: whether it returns an error
@@ -132,7 +136,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 				!importsShadowed(strconvName, call.Pos(), stack) {
 				needStrconv = true
 				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
-				ctxQueueParamsIntLiteral(&plan, env, call, sel, strconvName, via)
+				ctxQueueParamsIntLiteral(&plan, env, call, sel, strconvName, handed)
 				return true
 			}
 			if len(call.Args) == 0 || (call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt) {
@@ -147,6 +151,9 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			needStrconv = needStrconv || useAtoi
 			if useAtoi {
 				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
+			}
+			if !useAtoi {
+				via = handed
 			}
 			ctxQueueHelper(&plan, g, call, sel, generic, strconvName, via, useAtoi, twoValued && !useAtoi)
 		case ctxUnknown:
@@ -199,7 +206,7 @@ func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.S
 	}
 
 	if sel.Sel.Name != ctxParamsInt {
-		b := env.newValueBuilder(sel, stack)
+		b := env.newValueBuilder(sel, stack, ctxMembersAll)
 		plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.query(helper))) })
 		return false
 	}
@@ -210,7 +217,7 @@ func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.S
 			env.g.text(sel), strconvName, fmtName)
 		return false
 	}
-	b := env.newValueBuilder(sel, stack, strconvName, fmtName)
+	b := env.newValueBuilder(sel, stack, ctxMembersParams, strconvName, fmtName)
 	plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.paramsInt(strconvName, fmtName))) })
 	return true
 }

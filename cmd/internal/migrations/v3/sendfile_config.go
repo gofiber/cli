@@ -110,7 +110,7 @@ func ctxQueueSendFileValue(plan *ctxPlan, env *ctxEnv, sel *ast.SelectorExpr, st
 			return
 		}
 	}
-	b := env.newValueBuilder(sel, stack)
+	b := env.newValueBuilder(sel, stack, nil)
 	plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.sendFile())) })
 }
 

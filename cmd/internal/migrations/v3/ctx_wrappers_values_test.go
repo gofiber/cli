@@ -85,7 +85,7 @@ func (o *Own) ParamsInt(key string, defaultValue ...int) (int, error) { return 0
 func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
 func handler(p *Plain, h *Hiding, d *Deep) (total int, err error) {
-	a, errA := strconv.Atoi(p.Ctx.Params("a"))
+	a, errA := strconv.Atoi(p.Params("a"))
 	b, _ := strconv.Atoi(h.Ctx.Params("b"))
 	c, _ := fiber.Params[int](d.Hiding.Ctx, "c", 3), error(nil)
 	return a + b + c, errA
@@ -273,18 +273,16 @@ func (o *Own) ParamsInt(key string, defaultValue ...int) (int, error) { return 0
 func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
 func handler(p *Plain, h *Hiding, d *Deep, o *Own) {
-	a, b, c := func(c fiber.Ctx) func(key string, defaultValue ...int) (int, error) {
-		return func(key string, defaultValue ...int) (int, error) {
-			value, err := strconv.Atoi(c.Params(key))
-			if err != nil {
-				if len(defaultValue) > 0 {
-					return defaultValue[0], nil
-				}
-				return 0, fmt.Errorf("failed to convert: %w", err)
+	a, b, c := func(key string, defaultValue ...int) (int, error) {
+		value, err := strconv.Atoi(p.Params(key))
+		if err != nil {
+			if len(defaultValue) > 0 {
+				return defaultValue[0], nil
 			}
-			return value, nil
+			return 0, fmt.Errorf("failed to convert: %w", err)
 		}
-	}(p.Ctx), func(c fiber.Ctx) func(key string, defaultValue ...int) int {
+		return value, nil
+	}, func(c fiber.Ctx) func(key string, defaultValue ...int) int {
 		return func(key string, defaultValue ...int) int {
 			return fiber.Query[int](c, key, defaultValue...)
 		}
@@ -463,15 +461,13 @@ func (o *Own) ParamsInt(key string, defaultValue ...int) (int, error) { return 0
 func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
 func handler(p *Plain, h *Hiding, d *Deep, o *Own) {
-	a, b := func(c fiber.Ctx) func(fallback string, status ...int) error {
-		return func(fallback string, status ...int) error {
-			code := fiber.StatusFound
-			if len(status) > 0 {
-				code = status[0]
-			}
-			return c.Redirect().Status(code).Back(fallback)
+	a, b := func(fallback string, status ...int) error {
+		code := fiber.StatusFound
+		if len(status) > 0 {
+			code = status[0]
 		}
-	}(p.Ctx), func(c fiber.Ctx) func(fallback string, status ...int) error {
+		return p.Redirect().Status(code).Back(fallback)
+	}, func(c fiber.Ctx) func(fallback string, status ...int) error {
 		return func(fallback string, status ...int) error {
 			code := fiber.StatusFound
 			if len(status) > 0 {
@@ -492,15 +488,13 @@ func handler(p *Plain, h *Hiding, d *Deep, o *Own) {
 			}
 			return c.Redirect().Status(code).Route(routeName, cfg)
 		}
-	}(d.Hiding.Ctx), func(c fiber.Ctx) func(fallback string, status ...int) error {
-		return func(fallback string, status ...int) error {
-			code := fiber.StatusFound
-			if len(status) > 0 {
-				code = status[0]
-			}
-			return c.Redirect().Status(code).Back(fallback)
+	}(d.Hiding.Ctx), func(fallback string, status ...int) error {
+		code := fiber.StatusFound
+		if len(status) > 0 {
+			code = status[0]
 		}
-	}(o.Ctx)
+		return o.Redirect().Status(code).Back(fallback)
+	}
 	_, _, _, _ = a, b, c, e
 	_ = h.Ctx.Redirect().Status(fiber.StatusFound).Back("/x")
 	_ = d.Hiding.Ctx.Redirect().Status(301).Back("/x")
@@ -584,19 +578,13 @@ func (o *Own) ParamsInt(key string, defaultValue ...int) (int, error) { return 0
 func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
 func handler(p *Plain, h *Hiding, d *Deep) {
-	a, b, c := func(c fiber.Ctx) func(size int) (fiber.Range, error) {
-		return func(size int) (fiber.Range, error) {
-			return c.Range(int64(size))
-		}
-	}(p.Ctx), func(c fiber.Ctx) func(size int) (fiber.Range, error) {
-		return func(size int) (fiber.Range, error) {
-			return c.Range(int64(size))
-		}
-	}(h.Ctx), func(c fiber.Ctx) func(size int) (fiber.Range, error) {
-		return func(size int) (fiber.Range, error) {
-			return c.Range(int64(size))
-		}
-	}(d.Hiding.Ctx)
+	a, b, c := func(size int) (fiber.Range, error) {
+		return p.Range(int64(size))
+	}, func(size int) (fiber.Range, error) {
+		return h.Range(int64(size))
+	}, func(size int) (fiber.Range, error) {
+		return d.Range(int64(size))
+	}
 	_, _, _ = a, b, c
 	_, _ = h.Range(10)
 	proto, host := h.Scheme, d.Host

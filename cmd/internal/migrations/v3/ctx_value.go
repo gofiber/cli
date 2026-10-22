@@ -27,11 +27,23 @@ import (
 //	    return func(fallback string, status ...int) error { ... c.Redirect().Status(code).Back(fallback) }
 //	}(s.ctx)
 //
-// A type that embeds the context hands the embedded one over, because the literal
-// needs a fiber.Ctx and the type may declare methods that make it none, and
-// because the method of v2 used the members of the context and not those of the
-// type that embeds it. A method expression, (*fiber.Ctx).RedirectBack, gets the
-// context as its first parameter.
+// A type that embeds the context hands the embedded context over when the literal
+// takes it as a parameter, and when it declares a member that the body calls
+// itself, because the method of v2 used the members of the context and not those
+// of the type that embeds it. A method expression, (*fiber.Ctx).RedirectBack,
+// gets the context as its first parameter.
+//
+// The members the bodies call, by the kind of literal: a type that declares none
+// of them, and is no more than a variable the literal uses, is used as it is.
+var (
+	ctxMembersRedirect = []string{"Redirect"}
+	ctxMembersParams   = []string{ctxFnParams}
+	ctxMembersBind     = []string{"Bind"}
+	// ctxMembersAll stands for every member: the receiver is passed to a function
+	// that takes a fiber.Ctx, or AllParams of v2 used the context a type embeds
+	// and not what the type declares
+	ctxMembersAll = []string{"*"}
+)
 
 // ctxValueRecv is how the function literal of a method value reaches the context.
 type ctxValueRecv struct {
@@ -69,27 +81,35 @@ type ctxValueBuilder struct {
 }
 
 // newValueBuilder prepares the literal for the method value sel, whose ancestors
-// are stack; extra are the names of the packages (strconv, fmt) the body refers
-// to. It looks at the code around the method value now, because the walk moves
+// are stack. members are the members of the context that the body of the literal
+// calls: a type that embeds the context and declares one of them hands the
+// embedded context over (see ctxMembers). extra are the names of the packages
+// (strconv, fmt) the body refers to. It looks at the code around the method value now, because the walk moves
 // on; the literal is written later, when the edits of the code inside the
 // receiver are known (see text).
-func (env *ctxEnv) newValueBuilder(sel *ast.SelectorExpr, stack []ast.Node, extra ...string) *ctxValueBuilder {
+func (env *ctxEnv) newValueBuilder(sel *ast.SelectorExpr, stack []ast.Node, members []string, extra ...string) *ctxValueBuilder {
 	// The body refers to the packages and, when the literal uses a variable of the
 	// code around it, to that variable: the names of the literal stay clear of them.
 	// A receiver that is handed over is evaluated outside the literal.
 	namer := newCtxNamer(nil, append(ctxFiberNames(env), extra...)...)
 	b := &ctxValueBuilder{env: env, sel: sel, namer: namer}
 
-	path := env.embeddedCtxOf(sel.X, stack)
+	// A variable that nothing assigns again is used by the literal as it is, which
+	// is right while the type does not declare a member the body calls. A receiver
+	// that is handed to the literal goes where a fiber.Ctx is required, and a type
+	// that embeds the context may be none (a member of its own with the name of a
+	// method of the context, another embedded type with the same method), so it
+	// hands the embedded context over.
+	hidden := env.embeddedCtxVia(sel.X, stack, members)
 	id, isIdent := ast.Unparen(sel.X).(*ast.Ident)
 	switch {
 	case env.isCtxType(sel.X):
 		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(ctxTypeCtx), expr: true}
-	case isIdent && path == "" && ctxVariableStable(id.Name, id.Pos(), stack):
+	case isIdent && hidden == "" && ctxVariableStable(id.Name, id.Pos(), stack):
 		namer[id.Name] = true
 		b.recv = ctxValueRecv{name: id.Name}
 	default:
-		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(ctxTypeCtx), path: path, bound: true}
+		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(ctxTypeCtx), path: env.embeddedCtxOf(sel.X, stack), bound: true}
 	}
 	return b
 }

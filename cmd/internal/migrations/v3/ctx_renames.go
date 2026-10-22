@@ -119,7 +119,7 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 			}
 		case isValue:
 			// Range as a value is a function that takes an int and returns the ranges
-			b := env.newValueBuilder(sel, stack)
+			b := env.newValueBuilder(sel, stack, nil)
 			plan.add(func(e *editSet) { e.replaceNode(g, sel, b.text(e, b.rangeOf())) })
 		case wrap && ctxNeedsInt64(env, call.Args[0], stack):
 			arg := call.Args[0]

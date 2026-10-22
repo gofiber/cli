@@ -76,7 +76,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 		// A method expression, (*fiber.Ctx).BodyParser, takes the context as its
 		// first parameter: it becomes a function literal that does.
 		if env.isCtxType(sel.X) {
-			b := env.newValueBuilder(sel, stack)
+			b := env.newValueBuilder(sel, stack, ctxMembersBind)
 			plan.add(func(e *editSet) {
 				v := b.parser(sel.Sel.Name)
 				if sel.Sel.Name == ctxAllParams {
@@ -135,7 +135,7 @@ func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.Sel
 	}
 
 	if !isCall {
-		b := env.newValueBuilder(sel, stack)
+		b := env.newValueBuilder(sel, stack, ctxMembersAll)
 		plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.allParams())) })
 		return
 	}

@@ -739,6 +739,22 @@ func (env *ctxEnv) embeddedCtxOf(x ast.Expr, stack []ast.Node) string {
 	return strings.Join(env.embeddedCtxPath(name, 0), ".")
 }
 
+// embeddedCtxVia is embeddedCtxOf for code that calls members of the context
+// through x: the path is empty unless the type of x declares one of the members
+// itself, because only then x is not the context for that code. ctxMembersAll
+// asks for the path whatever the type declares.
+func (env *ctxEnv) embeddedCtxVia(x ast.Expr, stack []ast.Node, members []string) string {
+	if slices.Equal(members, ctxMembersAll) {
+		return env.embeddedCtxOf(x, stack)
+	}
+
+	name := ctxTypeName(env.typeOf(x, stack))
+	if name == "" || !slices.ContainsFunc(members, func(m string) bool { return env.declares(name, m) }) {
+		return ""
+	}
+	return env.embeddedCtxOf(x, stack)
+}
+
 // embeddedCtxPath returns the names of the embedded fields through which the
 // struct type declared in the file reaches the fiber context ({"Ctx"} for a type
 // that embeds it, {"Base", "Ctx"} for a type that embeds one that does), nil when

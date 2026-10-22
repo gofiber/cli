@@ -129,7 +129,7 @@ func ctxQueueRedirectValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast
 	}
 	switch kind {
 	case ctxYes:
-		b := env.newValueBuilder(sel, stack)
+		b := env.newValueBuilder(sel, stack, ctxMembersRedirect)
 		plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.redirect(method))) })
 	case ctxUnknown:
 		// Redirect alone is too common a name to tell anything.
