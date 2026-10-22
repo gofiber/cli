@@ -492,6 +492,8 @@ type appCallee struct {
 	file *appFile
 	typ  *ast.FuncType
 	body *ast.BlockStmt
+	// decl is the declaration of a function or method, nil for a literal.
+	decl *ast.FuncDecl
 }
 
 // calleeOf finds the function a call invokes: a function of the package or of
@@ -514,7 +516,7 @@ func (f *appFile) calleeOf(call *ast.CallExpr, depth int) (appCallee, bool) {
 		}
 		if pkg := f.ix.pkgOf(f); pkg != nil {
 			if fn := pkg.funcs[fun.Name]; fn != nil {
-				return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body}, true
+				return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body, decl: fn.decl}, true
 			}
 		}
 	case *ast.SelectorExpr:
@@ -522,7 +524,7 @@ func (f *appFile) calleeOf(call *ast.CallExpr, depth int) (appCallee, bool) {
 			if _, bound := f.binding(id); !bound {
 				if pkg := f.packageNamed(id.Name); pkg != nil {
 					if fn := pkg.funcs[fun.Sel.Name]; fn != nil {
-						return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body}, true
+						return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body, decl: fn.decl}, true
 					}
 					return appCallee{}, false
 				}
@@ -538,7 +540,7 @@ func (f *appFile) calleeOf(call *ast.CallExpr, depth int) (appCallee, bool) {
 		}
 		if pkg := td.file.ix.pkgOf(td.file); pkg != nil {
 			if fn := pkg.methods[td.spec.Name.Name+"."+fun.Sel.Name]; fn != nil {
-				return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body}, true
+				return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body, decl: fn.decl}, true
 			}
 		}
 	}
@@ -556,6 +558,7 @@ type appBinding struct {
 	// scope is the block or function the declaration is visible in, nil for a
 	// package-level variable.
 	scope ast.Node
+	name  string
 	// index is the position of the name among count names declared together
 	// from a single call.
 	index int
@@ -583,7 +586,7 @@ func (f *appFile) binding(id *ast.Ident) (appBinding, bool) {
 
 // binding describes the package-level variable.
 func (v *appVarDecl) binding() appBinding {
-	b := appBinding{file: v.file, typ: v.spec.Type, count: len(v.spec.Names), index: v.index}
+	b := appBinding{file: v.file, typ: v.spec.Type, name: v.spec.Names[v.index].Name, count: len(v.spec.Names), index: v.index}
 	switch {
 	case len(v.spec.Values) == len(v.spec.Names):
 		b.init, b.count, b.index = v.spec.Values[v.index], 1, 0
@@ -596,7 +599,7 @@ func (v *appVarDecl) binding() appBinding {
 
 // bindingOf describes the declaration d of the variable called name.
 func (f *appFile) bindingOf(d decl, name string) appBinding {
-	b := appBinding{file: f, typ: d.typ, init: d.init, count: 1}
+	b := appBinding{file: f, typ: d.typ, init: d.init, name: name, count: 1}
 	b.node = appDeclNode(d.init, d.typ)
 
 	switch {
@@ -915,6 +918,18 @@ func (f *appFile) fieldOrigins(sel *ast.SelectorExpr, depth int) appOrigins {
 }
 
 func (f *appFile) setsOfField(td *appTypeDecl, field string, depth int) appOrigins {
+	key := appFieldKey{td: td, field: field}
+	if known, ok := f.ix.fields[key]; ok {
+		return known
+	}
+	// a field that is its own origin through a cycle is not complete
+	f.ix.fields[key] = appOrigins{}
+	out := f.scanFieldSets(td, field, depth)
+	f.ix.fields[key] = out
+	return out
+}
+
+func (f *appFile) scanFieldSets(td *appTypeDecl, field string, depth int) appOrigins {
 	out := appOrigins{complete: true}
 	pkg := f.ix.pkgOf(f)
 	if pkg == nil {

@@ -52,6 +52,7 @@ func migrateAddMethodContent(ix *appIndex, content string, fi internal.FileInfo)
 	}
 
 	var edits editSet
+	taken := map[*ast.FuncDecl]map[string]bool{}
 	ast.Inspect(f.g.file, func(n ast.Node) bool {
 		call, isCall := n.(*ast.CallExpr)
 		if !isCall {
@@ -67,7 +68,7 @@ func migrateAddMethodContent(ix *appIndex, content string, fi internal.FileInfo)
 			edits.replace(f.g.offset(first.Pos()), f.g.offset(first.Pos()), "[]string{")
 			edits.replace(f.g.offset(first.End()), f.g.offset(first.End()), "}")
 		}
-		if call.Ellipsis.IsValid() && f.spreadsHandlers(call) {
+		if call.Ellipsis.IsValid() && f.spreadsHandlers(call) && !f.convertSpread(&edits, call, sel.Sel.Name, taken) {
 			internal.Notef(fi, f.g.line(call.Pos()),
 				"%s takes its handlers as ...any in v3, so a []fiber.Handler cannot be spread into it: convert it to []any first and pass the first handler on its own",
 				sel.Sel.Name)
@@ -77,15 +78,67 @@ func migrateAddMethodContent(ix *appIndex, content string, fi internal.FileInfo)
 	return edits.apply(content)
 }
 
+// convertSpread makes a call that spreads a slice of handlers work in v3, whose
+// handlers are ...any: the slice is copied into a []any before the statement of
+// the call, and the call gets that slice instead (with the first handler on its
+// own where v3 asks for one):
+//
+//	r.Get(path, handlers...) -> args := make([]any, len(handlers)) ...; r.Get(path, args[0], args[1:]...)
+//
+// It reports false when the slice is not a plain reference, which evaluating
+// twice could change, or the call is not in a list of statements.
+func (f *appFile) convertSpread(edits *editSet, call *ast.CallExpr, method string, taken map[*ast.FuncDecl]map[string]bool) bool {
+	g := f.g
+	spread := call.Args[len(call.Args)-1]
+	if !appIsPureReference(spread) {
+		return false
+	}
+
+	stmt := f.statementOf(call)
+	if stmt == nil {
+		return false
+	}
+
+	decl := f.enclosingDecl(call)
+	if taken[decl] == nil {
+		taken[decl] = map[string]bool{}
+	}
+	name := f.freshName(call, "handlerArgs", taken[decl])
+	taken[decl][name] = true
+	hs := g.text(spread)
+	edits.replace(g.offset(stmt.Pos()), g.offset(stmt.Pos()),
+		name+" := make([]any, len("+hs+"))\nfor i, h := range "+hs+" {\n"+name+"[i] = h\n}\n")
+
+	replacement := name + "[0], " + name + "[1:]"
+	if method == appMethodGroup {
+		replacement = name
+	}
+	edits.replaceNode(g, spread, replacement)
+	return true
+}
+
+// statementOf returns the innermost statement around n that sits in a list of
+// statements, where another statement can precede it.
+func (f *appFile) statementOf(n ast.Node) ast.Stmt {
+	for p := f.parent[n]; p != nil; p = f.parent[p] {
+		if stmt, ok := p.(ast.Stmt); ok && f.inStatementList(stmt) {
+			return stmt
+		}
+		if _, isFunc := p.(*ast.FuncDecl); isFunc {
+			return nil
+		}
+	}
+	return nil
+}
+
 // isMethodList reports whether e is already a list of methods, as the first
 // argument of Add is in v3.
 func (f *appFile) isMethodList(e ast.Expr) bool {
-	t, tf := f.valueType(e, 0)
+	t, _ := f.valueType(e, 0)
 	if t == nil {
 		return false
 	}
 	_, isList := appStripType(t).(*ast.ArrayType)
-	_ = tf
 	return isList
 }
 

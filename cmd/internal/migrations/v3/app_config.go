@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"go/ast"
+	"maps"
 	"slices"
 	"strings"
 
@@ -151,7 +152,11 @@ func (r *appConfigRewrite) creationsOf(lit *ast.CompositeLit) []appNew {
 	if src.node == nil {
 		return src.creations
 	}
-	return src.variableCreations()
+	creations, escapes := src.variableUses()
+	if escapes {
+		return nil // the config is also used to create other apps
+	}
+	return creations
 }
 
 // useAfter schedules the statement that registers the middleware on the app the
@@ -204,7 +209,7 @@ func (r *appConfigRewrite) useBeforeReturn(ret *ast.ReturnStmt, call *ast.CallEx
 		return "the app is created in a return statement that cannot be split"
 	}
 
-	name := f.freshName(ret, "app")
+	name := f.freshName(ret, "app", nil)
 	edits.replace(g.offset(ret.Pos()), g.offset(call.Pos()), name+" := ")
 	at := g.offset(call.End())
 	edits.replace(at, at, "\n"+use(name)+"\nreturn "+name)
@@ -213,8 +218,9 @@ func (r *appConfigRewrite) useBeforeReturn(ret *ast.ReturnStmt, call *ast.CallEx
 
 // freshName returns a name that nothing in the function around n uses, starting
 // from preferred.
-func (f *appFile) freshName(n ast.Node, preferred string) string {
+func (f *appFile) freshName(n ast.Node, preferred string, taken map[string]bool) string {
 	used := map[string]bool{}
+	maps.Copy(used, taken)
 	if decl := f.enclosingDecl(n); decl != nil {
 		ast.Inspect(decl, func(c ast.Node) bool {
 			if id, ok := c.(*ast.Ident); ok {

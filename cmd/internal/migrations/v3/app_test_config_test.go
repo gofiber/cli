@@ -126,6 +126,7 @@ func Test_MigrateAppTestConfig_Spread(t *testing.T) {
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -133,15 +134,30 @@ import (
 func hit(app *fiber.App, req *http.Request, timeoutMS ...int) (*http.Response, error) {
 	return app.Test(req, timeoutMS...)
 }
+
+func timeouts() []int { return nil }
+
+func later(app *fiber.App, req *http.Request) {
+	_ = time.Now()
+	_, _ = app.Test(req, timeouts()...)
+}
 `)
-	before := appRead(t, dir, "main.go")
 
 	appRun(t, dir, v3.MigrateAppTestConfig)
 
-	assert.Equal(t, before, appRead(t, dir, "main.go"))
+	content := appRead(t, dir, "main.go")
+	// v2 waited a second and returned an error when the time elapsed
+	assert.Contains(t, content, "func hit(app *fiber.App, req *http.Request, timeoutMS ...int) (*http.Response, error) {\n"+
+		"\ttestConfig := fiber.TestConfig{Timeout: time.Second, FailOnTimeout: true}\n"+
+		"\tif len(timeoutMS) > 0 {\n"+
+		"\t\ttestConfig.Timeout = time.Duration(timeoutMS[0]) * time.Millisecond\n"+
+		"\t}\n"+
+		"\treturn app.Test(req, testConfig)\n}")
+	// a call is not evaluated twice: left for the user
+	assert.Contains(t, content, "app.Test(req, timeouts()...)")
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Equal(t, 10, notes[0].Line)
+	assert.Equal(t, 18, notes[0].Line)
 	assert.Contains(t, notes[0].Message, "fiber.TestConfig")
 }
 

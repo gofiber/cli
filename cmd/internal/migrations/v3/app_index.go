@@ -23,10 +23,17 @@ import (
 type appIndex struct {
 	files    map[string]*appFile
 	pkgs     map[appPkgKey]*appPackage
+	fields   map[appFieldKey]appOrigins
 	root     string
 	mods     []appModule
 	all      []*appFile
 	modsDone bool
+}
+
+// appFieldKey identifies a field of a declared struct type.
+type appFieldKey struct {
+	td    *appTypeDecl
+	field string
 }
 
 // appPkgKey identifies a package: a directory can hold several (p and p_test).
@@ -43,9 +50,10 @@ type appModule struct {
 
 func newAppIndex(root string) *appIndex {
 	return &appIndex{
-		root:  root,
-		files: map[string]*appFile{},
-		pkgs:  map[appPkgKey]*appPackage{},
+		root:   root,
+		files:  map[string]*appFile{},
+		pkgs:   map[appPkgKey]*appPackage{},
+		fields: map[appFieldKey]appOrigins{},
 	}
 }
 

@@ -597,3 +597,110 @@ func main() {
 	require.Len(t, notes, 1)
 	assert.Contains(t, notes[0].Message, "side effects")
 }
+
+func Test_MigrateConfigListenerFields_ConfigReturnedByAFunction(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"go.mod": "module example.com/demo\n",
+		"config/config.go": `package config
+
+import (
+	"os"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+type Settings struct{ Quiet bool }
+
+// Fiber is the config of the program's app.
+func Fiber() fiber.Config {
+	return fiber.Config{
+		AppName:               "demo",
+		Prefork:               os.Getenv("PREFORK") == "1",
+		DisableStartupMessage: true,
+	}
+}
+
+func (s Settings) Fiber() fiber.Config {
+	return fiber.Config{EnablePrintRoutes: !s.Quiet}
+}
+
+func ForServer(prefork bool) fiber.Config {
+	return fiber.Config{Network: "tcp", Prefork: prefork}
+}
+`,
+		"main.go": `package main
+
+import (
+	"log"
+
+	"example.com/demo/config"
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	app := fiber.New(config.Fiber())
+	go app.Listen(":3000")
+
+	cfg := config.Fiber()
+	second := fiber.New(cfg)
+	go second.Listen(":3001")
+
+	s := config.Settings{}
+	third := fiber.New(s.Fiber())
+	go third.Listen(":3002")
+
+	fourth := fiber.New(config.ForServer(true))
+	log.Fatal(fourth.Listen(":3003"))
+}
+`,
+	})
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	cfg := appRead(t, dir, "config/config.go")
+	assert.Contains(t, cfg, "return fiber.Config{\n\t\tAppName: \"demo\",\n\t}")
+	// the value that reads the environment has to be written where the app starts
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, `go app.Listen(":3000", fiber.ListenConfig{EnablePrefork: os.Getenv("PREFORK") == "1", DisableStartupMessage: true})`)
+	assert.Contains(t, main, `go second.Listen(":3001", fiber.ListenConfig{EnablePrefork: os.Getenv("PREFORK") == "1", DisableStartupMessage: true})`)
+	assert.Contains(t, main, `"os"`)
+
+	// the settings that depend on the arguments of the function cannot move, the others do
+	assert.Contains(t, cfg, `fiber.Config{Prefork: prefork}`)
+	assert.Contains(t, main, `fourth.Listen(":3003", fiber.ListenConfig{ListenerNetwork: "tcp"})`)
+	// a method whose receiver is not in scope where the app starts, either
+	assert.Contains(t, cfg, "EnablePrintRoutes: !s.Quiet")
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 2)
+	for _, n := range notes {
+		assert.Equal(t, "config/config.go", n.File)
+	}
+}
+
+func Test_MigrateConfigListenerFields_ConfigThatEscapes(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func other(cfg fiber.Config) *fiber.App { return fiber.New(cfg) }
+
+func main() {
+	cfg := fiber.Config{Prefork: true}
+	app := fiber.New(cfg)
+	app.Listen(":3000")
+	other(cfg).Listen(":3001")
+}
+`)
+	before := appRead(t, dir, "main.go")
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	assert.Equal(t, before, appRead(t, dir, "main.go"))
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "passed on")
+}

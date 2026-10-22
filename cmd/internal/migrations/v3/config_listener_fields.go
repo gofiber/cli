@@ -153,6 +153,9 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	if len(src.creations) == 0 {
 		return "this fiber.Config is not handed straight to fiber.New"
 	}
+	if src.escapes {
+		return "this fiber.Config is also passed on to code that could create another app with it"
+	}
 
 	linked, never, reason := pl.linkedStarts(src)
 	if reason != "" {

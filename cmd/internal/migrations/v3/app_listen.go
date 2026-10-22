@@ -87,7 +87,7 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 			{"CertFile", g.text(args[1])},
 			{"CertKeyFile", g.text(args[2])},
 		}
-		out.noteEmptyPaths(args[1:], "CertFile and CertKeyFile")
+		out.noteEmptyPaths(args[1:], "ListenTLS", "plain HTTP when CertFile and CertKeyFile are both empty")
 	case "ListenMutualTLS":
 		if len(args) != 4 {
 			out.problem = "ListenMutualTLS takes an address, a certificate file, a key file and a client CA file"
@@ -98,7 +98,7 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 			{"CertKeyFile", g.text(args[2])},
 			{"CertClientFile", g.text(args[3])},
 		}
-		out.noteEmptyPaths(args[1:], "CertFile, CertKeyFile and CertClientFile")
+		out.noteEmptyPaths(args[1:], "ListenMutualTLS", "plain HTTP when CertFile and CertKeyFile are both empty and asks for no client certificate when CertClientFile is empty")
 	case "ListenTLSWithCertificate":
 		if len(args) != 2 {
 			out.problem = "ListenTLSWithCertificate takes an address and a certificate"
@@ -129,16 +129,17 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 	return out
 }
 
-// noteEmptyPaths records the review hint for TLS files that are not literals: v2
-// refused to start without them, v3 serves plain HTTP when they are empty.
-func (r *appStartRewrite) noteEmptyPaths(paths []ast.Expr, fields string) {
+// noteEmptyPaths records the review hint for TLS files that are not literals:
+// the v2 method refused to start when they were empty, and fiber.ListenConfig
+// quietly does something else.
+func (r *appStartRewrite) noteEmptyPaths(paths []ast.Expr, method, instead string) {
 	for _, p := range paths {
 		lit, ok := p.(*ast.BasicLit)
 		if ok && lit.Kind == token.STRING && lit.Value != `""` && lit.Value != "``" {
 			continue
 		}
-		r.notes = append(r.notes, "v2 refused to start TLS with an empty certificate path, but "+fields+
-			" in fiber.ListenConfig left empty serve plain HTTP (or skip client verification): make sure they are set")
+		r.notes = append(r.notes, method+" returned an error for an empty certificate path, fiber.ListenConfig serves "+
+			instead+": check that the paths are set before the call")
 		return
 	}
 }

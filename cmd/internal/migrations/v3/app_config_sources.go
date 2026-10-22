@@ -19,10 +19,16 @@ type appListenSource struct {
 	// or loose literal.
 	node ast.Node
 	// scope is nil for a package-level variable.
-	scope     ast.Node
+	scope ast.Node
+	// retFn is the function the literal is returned from, nil otherwise.
+	retFn     *ast.FuncDecl
 	name      string
 	fields    []*appSourceField
 	creations []appNew
+	// escapes is set when the config is also used in a way that cannot be
+	// followed, so that settings moved to the apps found would be lost for
+	// the others.
+	escapes bool
 }
 
 // appSourceField is one setting of a source that moves to fiber.ListenConfig.
@@ -97,8 +103,24 @@ func (f *appFile) sourceOfLiteral(lit *ast.CompositeLit) *appListenSource {
 				src.node, src.scope, src.name = lit, f.specScope(p), id.Name
 			}
 		}
+	case *ast.ReturnStmt:
+		if fn, ok := f.enclosingFuncOf(p).(*ast.FuncDecl); ok && appResultCount(fn.Type) == 1 && len(p.Results) == 1 {
+			src.retFn = fn
+		}
 	}
 	return src
+}
+
+// enclosingFuncOf returns the innermost function declaration or literal around
+// n.
+func (f *appFile) enclosingFuncOf(n ast.Node) ast.Node {
+	for p := f.parent[n]; p != nil; p = f.parent[p] {
+		switch p.(type) {
+		case *ast.FuncDecl, *ast.FuncLit:
+			return p
+		}
+	}
+	return nil
 }
 
 // appSingleDefine returns the variable that `v := rhs` declares.
@@ -136,9 +158,14 @@ func (src *appListenSource) collect() {
 			}
 		}
 	}
-	if src.node != nil {
-		src.creations = append(src.creations, src.variableCreations()...)
+	switch {
+	case src.node != nil:
+		creations, escapes := src.variableUses()
+		src.creations = append(src.creations, creations...)
+		src.escapes = src.escapes || escapes
 		src.collectVariableUses(field)
+	case src.retFn != nil:
+		src.callUses()
 	}
 
 	slices.SortFunc(src.fields, func(a, b *appSourceField) int { return appListenerFieldIndex(a.v2) - appListenerFieldIndex(b.v2) })
@@ -187,21 +214,101 @@ func (src *appListenSource) isTheVariable(rf *appFile, id *ast.Ident) bool {
 	return ok && b.node == src.node && b.file == src.file
 }
 
-// variableCreations finds the fiber.New calls that take the variable which
-// holds the source.
-func (src *appListenSource) variableCreations() []appNew {
-	var out []appNew
+// variableUses finds the fiber.New calls that take the variable which holds the
+// source, and whether the variable is used in any other way than to read or
+// assign one of its fields.
+func (src *appListenSource) variableUses() (creations []appNew, escapes bool) {
 	for _, r := range src.regions() {
 		ast.Inspect(r.root, func(n ast.Node) bool {
-			if call, ok := n.(*ast.CallExpr); ok && r.file.isNewCall(call) {
-				if id, isIdent := appArgIdent(call); isIdent && src.isTheVariable(r.file, id) {
-					out = append(out, appNew{file: r.file, call: call})
+			id, ok := n.(*ast.Ident)
+			if !ok || !src.isTheVariable(r.file, id) {
+				return true
+			}
+			switch p := r.file.parent[id].(type) {
+			case *ast.CallExpr:
+				if r.file.isNewCall(p) && len(p.Args) == 1 && p.Args[0] == id {
+					creations = append(creations, appNew{file: r.file, call: p})
+					return true
+				}
+			case *ast.SelectorExpr:
+				if p.X == id {
+					return true
 				}
 			}
+			escapes = true
 			return true
 		})
 	}
-	return out
+	return creations, escapes
+}
+
+// callUses finds the fiber.New calls that take the config a function returns:
+// the calls of the function that are handed to fiber.New, directly or through a
+// variable. Any other use of its result means the config escapes.
+func (src *appListenSource) callUses() {
+	if appReturnCount(src.retFn) != 1 {
+		src.escapes = true
+		return
+	}
+
+	name := src.retFn.Name.Name
+	for _, pf := range src.file.ix.moduleFiles() {
+		ast.Inspect(pf.g.file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || !appCallsName(call, name) {
+				return true
+			}
+			if callee, found := pf.calleeOf(call, 0); !found || callee.decl != src.retFn {
+				return true
+			}
+
+			switch p := pf.parent[call].(type) {
+			case *ast.CallExpr:
+				if pf.isNewCall(p) && len(p.Args) == 1 && p.Args[0] == call {
+					src.creations = append(src.creations, appNew{file: pf, call: p})
+					return true
+				}
+			case *ast.AssignStmt:
+				if id, isDefine := appSingleDefine(p, call); isDefine {
+					held := &appListenSource{file: pf, node: call, scope: pf.parent[p], name: id.Name}
+					creations, escapes := held.variableUses()
+					src.creations = append(src.creations, creations...)
+					src.escapes = src.escapes || escapes
+					return true
+				}
+			}
+			src.escapes = true
+			return true
+		})
+	}
+}
+
+// appCallsName reports whether call is a call of a function or method called
+// name.
+func appCallsName(call *ast.CallExpr, name string) bool {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name == name
+	case *ast.SelectorExpr:
+		return fun.Sel.Name == name
+	}
+	return false
+}
+
+// appReturnCount counts the return statements of a function, leaving out the
+// function literals inside it.
+func appReturnCount(fn *ast.FuncDecl) int {
+	n := 0
+	ast.Inspect(fn.Body, func(c ast.Node) bool {
+		switch c.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			n++
+		}
+		return true
+	})
+	return n
 }
 
 // collectVariableUses finds what the code does with the variable that holds the
@@ -228,15 +335,6 @@ func (src *appListenSource) collectVariableUses(field func(string) *appSourceFie
 			return true
 		})
 	}
-}
-
-// appArgIdent returns the only argument of call when it is an identifier.
-func appArgIdent(call *ast.CallExpr) (*ast.Ident, bool) {
-	if len(call.Args) != 1 {
-		return nil, false
-	}
-	id, ok := call.Args[0].(*ast.Ident)
-	return id, ok
 }
 
 // decide works out whether a setting can move to the call that starts the app,

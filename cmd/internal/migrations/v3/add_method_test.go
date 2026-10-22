@@ -126,6 +126,8 @@ import "github.com/gofiber/fiber/v2"
 
 func auth(c *fiber.Ctx) error { return c.Next() }
 
+func chain() []fiber.Handler { return []fiber.Handler{auth} }
+
 func route(r fiber.Router, method, path string, handlers ...fiber.Handler) {
 	r.Add(method, path, handlers...)
 }
@@ -136,27 +138,56 @@ func get(r fiber.Router, path string, handlers ...fiber.Handler) fiber.Router {
 
 func main() {
 	app := fiber.New()
-	chain := []fiber.Handler{auth}
-	app.Get("/a", chain...)
-	g := app.Group("/x", chain...)
+	mws := []fiber.Handler{auth}
+	app.Get("/a", mws...)
+	g := app.Group("/x", mws...)
 	_ = g
 	anys := []any{auth}
 	app.Group("/y", anys...)
 	app.Post("/z", auth, anys...)
+	app.Put("/w", chain()...)
 }
 `)
 
 	appRun(t, dir, v3.MigrateAddMethod)
 
 	content := appRead(t, dir, "main.go")
-	// the method is still wrapped, the spread cannot be rewritten by hand-free rules
-	assert.Contains(t, content, "r.Add([]string{method}, path, handlers...)")
+	assert.Contains(t, content, "func route(r fiber.Router, method, path string, handlers ...fiber.Handler) {\n"+
+		"\thandlerArgs := make([]any, len(handlers))\n"+
+		"\tfor i, h := range handlers {\n"+
+		"\t\thandlerArgs[i] = h\n"+
+		"\t}\n"+
+		"\tr.Add([]string{method}, path, handlerArgs[0], handlerArgs[1:]...)\n}")
+	assert.Contains(t, content, "\thandlerArgs := make([]any, len(handlers))\n\tfor i, h := range handlers {\n\t\thandlerArgs[i] = h\n\t}\n\treturn r.Get(path, handlerArgs[0], handlerArgs[1:]...)")
+	assert.Contains(t, content, "app.Get(\"/a\", handlerArgs[0], handlerArgs[1:]...)")
+	assert.Contains(t, content, "g := app.Group(\"/x\", handlerArgs2...)")
+	// a slice of any is what v3 takes
+	assert.Contains(t, content, `app.Group("/y", anys...)`)
+	assert.Contains(t, content, `app.Post("/z", auth, anys...)`)
+	// a call is not evaluated twice: left for the user
+	assert.Contains(t, content, `app.Put("/w", chain()...)`)
+
 	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 4)
-	lines := make([]int, 0, len(notes))
-	for _, n := range notes {
-		lines = append(lines, n.Line)
-		assert.Contains(t, n.Message, "...any")
-	}
-	assert.ElementsMatch(t, []int{8, 12, 18, 19}, lines)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "...any")
+}
+
+func Test_MigrateAddMethod_HandlerSlicesIdempotent(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func get(r fiber.Router, path string, handlers ...fiber.Handler) fiber.Router {
+	return r.Get(path, handlers...)
+}
+`)
+
+	appRun(t, dir, v3.MigrateAddMethod)
+	first := appRead(t, dir, "main.go")
+	out := appRun(t, dir, v3.MigrateAddMethod)
+
+	assert.Equal(t, first, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
 }

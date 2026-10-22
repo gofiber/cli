@@ -43,6 +43,7 @@ func migrateAppTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 
 	var edits editSet
 	var imps appImports
+	taken := map[*ast.FuncDecl]map[string]bool{}
 	ast.Inspect(f.g.file, func(n ast.Node) bool {
 		call, isCall := n.(*ast.CallExpr)
 		if !isCall || len(call.Args) < 2 {
@@ -53,6 +54,9 @@ func migrateAppTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 			return true
 		}
 
+		if call.Ellipsis.IsValid() && len(call.Args) == 2 && f.spreadTestConfig(&edits, &imps, call, taken) {
+			return true
+		}
 		if call.Ellipsis.IsValid() || len(call.Args) > 2 {
 			internal.Notef(fi, f.g.line(call.Pos()),
 				"app.Test takes a single fiber.TestConfig in v3: build it from the millisecond timeouts by hand (Timeout is a time.Duration, FailOnTimeout: true keeps the error v2 returned on timeout)")
@@ -90,4 +94,40 @@ func isNegativeNumber(e ast.Expr) bool {
 	}
 	lit, ok := u.X.(*ast.BasicLit)
 	return ok && (lit.Kind == token.INT || lit.Kind == token.FLOAT)
+}
+
+// spreadTestConfig migrates app.Test(req, timeouts...), where the optional
+// timeout is a variadic parameter passed on: before the statement of the call
+// it builds the config v2 stood for (a second, an error when it elapses, the
+// first timeout when there is one), and the call gets that config.
+func (f *appFile) spreadTestConfig(edits *editSet, imps *appImports, call *ast.CallExpr, taken map[*ast.FuncDecl]map[string]bool) bool {
+	g := f.g
+	spread := call.Args[1]
+	if !appIsPureReference(spread) {
+		return false
+	}
+	stmt := f.statementOf(call)
+	if stmt == nil {
+		return false
+	}
+
+	decl := f.enclosingDecl(call)
+	if taken[decl] == nil {
+		taken[decl] = map[string]bool{}
+	}
+	name := f.freshName(call, "testConfig", taken[decl])
+	taken[decl][name] = true
+
+	cfg := imps.fiberQualifier(f) + "TestConfig"
+	timeQ := imps.qualifier(f, "time", "time")
+	ms := g.text(spread)
+	edits.replace(g.offset(stmt.Pos()), g.offset(stmt.Pos()),
+		name+" := "+cfg+"{Timeout: "+timeQ+"Second, FailOnTimeout: true}\n"+
+			"if len("+ms+") > 0 {\n"+
+			name+".Timeout = "+timeQ+"Duration("+ms+"[0]) * "+timeQ+"Millisecond\n"+
+			"}\n")
+
+	// the spread goes away: the call takes the config
+	edits.replace(g.offset(spread.Pos()), g.offset(call.Ellipsis)+len("..."), name)
+	return true
 }

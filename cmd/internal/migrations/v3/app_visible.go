@@ -149,11 +149,11 @@ func (f *appFile) valueProblem(e ast.Expr, target *appFile, at ast.Node, imps *a
 
 	for _, b := range needs.locals {
 		if b.file != target || b.scope.Pos() > at.Pos() || b.scope.End() < at.End() {
-			return "it uses a variable that is not in scope there"
+			return "it uses " + b.name + ", which is not in scope there"
 		}
 		if b.init != nil {
 			if stmt := b.file.parent[b.init]; stmt != nil && stmt.End() > at.Pos() {
-				return "it uses a variable that is declared after it"
+				return "it uses " + b.name + ", which is declared after that call"
 			}
 		}
 	}
