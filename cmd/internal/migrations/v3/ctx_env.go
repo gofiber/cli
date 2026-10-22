@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
+	"strings"
 )
 
 // ctxKind says what is known about the type of an expression.
@@ -556,35 +557,59 @@ func (env *ctxEnv) receiverKindVia(sel *ast.SelectorExpr, stack []ast.Node, intr
 		return kind, ""
 	}
 
-	t := env.typeOf(sel.X, stack)
-	name := ctxTypeName(t)
-	if name == "" || env.typeIs(t, ctxTypeCtx) != ctxYes || env.declares(name, sel.Sel.Name) {
+	if name := ctxTypeName(env.typeOf(sel.X, stack)); name == "" || env.declares(name, sel.Sel.Name) {
 		return ctxNo, ""
 	}
-	if via = env.embeddedCtxField(name); via == "" {
+	if via = env.embeddedCtxOf(sel.X, stack); via == "" {
 		return ctxNo, ""
 	}
 	return ctxYes, via
 }
 
-// embeddedCtxField returns the name of the field through which the struct type
-// declared in the file embeds the fiber context, "" when it does not embed it
-// directly.
-func (env *ctxEnv) embeddedCtxField(typeName string) string {
-	spec := env.typeDecl[typeName]
-	if spec == nil {
+// embeddedCtxOf returns the path of embedded fields (Ctx, or Base.Ctx) through
+// which x, a value of a struct type declared in the file, reaches the fiber
+// context it embeds. It is empty when x is no such value.
+func (env *ctxEnv) embeddedCtxOf(x ast.Expr, stack []ast.Node) string {
+	t := env.typeOf(x, stack)
+	name := ctxTypeName(t)
+	if name == "" || env.typeIs(t, ctxTypeCtx) != ctxYes {
 		return ""
+	}
+	return strings.Join(env.embeddedCtxPath(name, 0), ".")
+}
+
+// embeddedCtxPath returns the names of the embedded fields through which the
+// struct type declared in the file reaches the fiber context ({"Ctx"} for a type
+// that embeds it, {"Base", "Ctx"} for a type that embeds one that does), nil when
+// it does not embed it.
+func (env *ctxEnv) embeddedCtxPath(typeName string, depth int) []string {
+	spec := env.typeDecl[typeName]
+	if spec == nil || depth > ctxMaxDepth {
+		return nil
 	}
 	st, ok := spec.Type.(*ast.StructType)
 	if !ok || st.Fields == nil {
-		return ""
+		return nil
 	}
+
 	for _, f := range st.Fields.List {
-		if len(f.Names) == 0 && ctxIsFiberType(f.Type, env.pkgNames, ctxTypeCtx) {
-			return ctxEmbeddedName(f.Type)
+		if len(f.Names) > 0 {
+			continue
+		}
+		if ctxIsFiberType(f.Type, env.pkgNames, ctxTypeCtx) {
+			return []string{ctxEmbeddedName(f.Type)}
 		}
 	}
-	return ""
+	for _, f := range st.Fields.List {
+		inner := ctxTypeName(f.Type)
+		if len(f.Names) > 0 || inner == "" || inner == typeName {
+			continue
+		}
+		if path := env.embeddedCtxPath(inner, depth+1); path != nil {
+			return append([]string{ctxEmbeddedName(f.Type)}, path...)
+		}
+	}
+	return nil
 }
 
 // declares reports whether the type declared in the file has a method or a field

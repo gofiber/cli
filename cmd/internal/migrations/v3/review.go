@@ -255,7 +255,11 @@ func (rf *reviewFile) wrapperHint(sel *ast.SelectorExpr, stack []ast.Node) strin
 		return ""
 	}
 	recv := rf.g.text(sel.X)
-	return "; " + recv + " is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on the embedded context: " + recv + ".Ctx"
+	embedded := "the embedded context"
+	if path := rf.env.embeddedCtxOf(sel.X, stack); path != "" {
+		embedded = recv + "." + path
+	}
+	return "; " + recv + " is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on " + embedded
 }
 
 // isStringLiteral reports whether e is a string literal.

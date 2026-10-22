@@ -229,9 +229,9 @@ func (unrelated) RedirectBack(string) error { return nil }
 
 	assert.ElementsMatch(t, []string{
 		"main.go:7: RedirectBack was removed in Fiber v3: use c.Redirect().Back(fallback); " +
-			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on the embedded context: c.Ctx",
+			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on c.Ctx",
 		"main.go:22: RedirectBack was removed in Fiber v3: use c.Redirect().Back(fallback); " +
-			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on the embedded context: c.Ctx",
+			"c is not a fiber.Ctx but embeds one, so if it declares a method of the replacement's name, call the replacement on c.Ctx",
 	}, notes)
 }
 

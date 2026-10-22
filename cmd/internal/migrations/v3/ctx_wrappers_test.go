@@ -79,7 +79,7 @@ func (c *Context) Back() error { return c.Redirect().Back("/") }
 			notes: []string{"303"},
 		},
 		{
-			name: "a wrapper of a wrapper is left to the review",
+			name: "a wrapper of a wrapper goes down to the context",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -91,6 +91,8 @@ func (c *Context) Redirect(to string) error { return c.Ctx.Redirect(to, 301) }
 type Page struct{ *Context }
 
 func (p *Page) Back() error { return p.RedirectBack("/") }
+
+func (p *Page) Own() error { return p.Redirect("/own") }
 `,
 			want: `package main
 
@@ -102,7 +104,34 @@ func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().Status(301
 
 type Page struct{ *Context }
 
-func (p *Page) Back() error { return p.RedirectBack("/") }
+func (p *Page) Back() error { return p.Context.Ctx.Redirect().Back("/") }
+
+func (p *Page) Own() error { return p.Redirect("/own") }
+`,
+			msg:   "Migrating redirect methods",
+			notes: []string{"303 See Other"},
+		},
+		{
+			name: "a wrapper that holds the context in a named field is no wrapper",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Context struct{ ctx *fiber.Ctx }
+
+func (c *Context) Redirect(to string) error { return c.ctx.Redirect(to, 301) }
+
+func (c *Context) Back() error { return c.ctx.RedirectBack("/", 301) }
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Context struct{ ctx *fiber.Ctx }
+
+func (c *Context) Redirect(to string) error { return c.ctx.Redirect().Status(301).To(to) }
+
+func (c *Context) Back() error { return c.ctx.Redirect().Status(301).Back("/") }
 `,
 			msg: "Migrating redirect methods",
 		},
