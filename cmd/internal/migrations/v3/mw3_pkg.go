@@ -138,14 +138,21 @@ func (p *mw3Pkg) declared() map[string]struct{} {
 	return p.names
 }
 
-// sessions returns what the package says about session stores, read from the
-// files that mention the session middleware.
+// sessions returns what the package says about what holds sessions. Nothing is
+// read from a package none of whose files mentions the session middleware; when
+// one does, all of the files are, because a struct in one may have a field of a
+// type that another declares, and that one is the file that imports the session
+// middleware.
 func (p *mw3Pkg) sessions() *mw3SessionFacts {
 	if !p.sessionRead {
 		p.sessionRead = true
-		p.goFiles("middleware/session", func(file *ast.File, src string) {
-			p.session.scan(file, src)
-		})
+		mentioned := false
+		p.goFiles("middleware/session", func(*ast.File, string) { mentioned = true })
+		if mentioned {
+			p.goFiles("", func(file *ast.File, src string) {
+				p.session.scan(file, src)
+			})
+		}
 	}
 	return &p.session
 }
