@@ -118,11 +118,6 @@ func Test_PostgresShimBuildsAgainstPgx(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds pgx, which takes a while")
 	}
-	goTool, err := exec.LookPath("go")
-	if err != nil {
-		t.Skip("no go tool")
-	}
-
 	for _, version := range pgShimVersions {
 		t.Run(version, func(t *testing.T) {
 			t.Parallel()
@@ -135,23 +130,36 @@ func Test_PostgresShimBuildsAgainstPgx(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(pkg, pgShimFile), []byte(pgShimModuleFile().source), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(pkg, "postgres_test.go"), []byte(pgShimTest), 0o600))
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			var out bytes.Buffer
-			cmd := exec.CommandContext(ctx, goTool, "test", "-count=1", "-vet=all", "./...") // #nosec G204 -- the go tool, with arguments of this test
-			cmd.Dir = dir
-			cmd.Stdout, cmd.Stderr = &out, &out
-			cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off")
-
-			if runErr := cmd.Run(); runErr != nil {
-				for _, text := range pgShimUnresolved {
-					if strings.Contains(out.String(), text) {
-						t.Skipf("pgx %s cannot be fetched here: %s", version, firstLine(out.String()))
-					}
-				}
-				t.Fatalf("the file does not build or its test fails with pgx %s: %v\n%s", version, runErr, out.String())
-			}
+			shimBuild(t, dir, "pgx "+version)
 		})
+	}
+}
+
+// shimBuild runs the tests of the module in dir with the go tool, vet included. A
+// module that cannot be fetched here (no network, no module cache) skips the test.
+func shimBuild(t *testing.T, dir, what string) {
+	t.Helper()
+
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go tool")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, goTool, "test", "-count=1", "-vet=all", "./...") // #nosec G204 -- the go tool, with arguments of this test
+	cmd.Dir = dir
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off")
+
+	if runErr := cmd.Run(); runErr != nil {
+		for _, text := range pgShimUnresolved {
+			if strings.Contains(out.String(), text) {
+				t.Skipf("%s cannot be fetched here: %s", what, firstLine(out.String()))
+			}
+		}
+		t.Fatalf("the file does not build or its test fails with %s: %v\n%s", what, runErr, out.String())
 	}
 }
 
