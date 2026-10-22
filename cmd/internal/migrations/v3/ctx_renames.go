@@ -114,7 +114,7 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 // a call is v3 code already.
 func ctxIsResFmt(env *ctxEnv, arg ast.Expr, stack []ast.Node) bool {
 	t := env.typeOf(arg, stack)
-	return t != nil && isFiberType(t, env.names, "ResFmt")
+	return t != nil && ctxIsFiberType(t, env.names, "ResFmt")
 }
 
 // ctxNeedsInt64 reports whether arg must be converted to be passed where an

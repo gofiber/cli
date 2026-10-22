@@ -78,9 +78,9 @@ func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) strin
 func ctxIsFiberMap(e ast.Expr, env *ctxEnv) bool {
 	switch x := e.(type) {
 	case *ast.CompositeLit:
-		return x.Type != nil && isFiberType(x.Type, env.names, "Map")
+		return x.Type != nil && ctxIsFiberType(x.Type, env.names, "Map")
 	case *ast.CallExpr:
-		return isFiberType(x.Fun, env.names, "Map")
+		return ctxIsFiberType(x.Fun, env.names, "Map")
 	}
 	return false
 }

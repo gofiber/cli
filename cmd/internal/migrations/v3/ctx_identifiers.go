@@ -142,7 +142,7 @@ func ctxRenameCustomtypeKeys(g *goSource, edits *editSet, lit *ast.CompositeLit,
 
 	var literals []*ast.CompositeLit
 	switch {
-	case isFiberType(lit.Type, names, ctxIDParserType):
+	case ctxIsFiberType(lit.Type, names, ctxIDParserType):
 		literals = append(literals, lit)
 	case ctxIsParserTypeSlice(lit.Type, names):
 		for _, elt := range lit.Elts {
@@ -164,5 +164,5 @@ func ctxRenameCustomtypeKeys(g *goSource, edits *editSet, lit *ast.CompositeLit,
 // ctxIsParserTypeSlice reports whether t is a slice or array of fiber.ParserType.
 func ctxIsParserTypeSlice(t ast.Expr, names []string) bool {
 	arr, ok := t.(*ast.ArrayType)
-	return ok && isFiberType(arr.Elt, names, ctxIDParserType)
+	return ok && ctxIsFiberType(arr.Elt, names, ctxIDParserType)
 }

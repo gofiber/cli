@@ -71,8 +71,8 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 			case ctxUnknown:
 				if len(call.Args) == 2 && isBoolLiteral(call.Args[1]) {
 					internal.Notef(fi, g.line(call.Pos()),
-						"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s.SendFile{Compress: %s, ByteRange: true}",
-						g.text(call.Args[1]), names[0], g.text(call.Args[1]))
+						"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s{Compress: %s, ByteRange: true}",
+						g.text(call.Args[1]), ctxQualifier(names)+"SendFile", g.text(call.Args[1]))
 				}
 			case ctxNo:
 			}
@@ -92,7 +92,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 // rewriteSendFileCall schedules the edits that move the arguments of a
 // Ctx.SendFile call to the config struct.
 func rewriteSendFileCall(g *goSource, edits *editSet, fi internal.FileInfo, call *ast.CallExpr, names []string, stack []ast.Node) {
-	cfgType := names[0] + ".SendFile"
+	cfgType := ctxQualifier(names) + "SendFile"
 
 	switch {
 	case len(call.Args) == 0:
@@ -129,14 +129,14 @@ func isSendFileConfig(e ast.Expr, names []string, stack []ast.Node, depth int) b
 	case *ast.UnaryExpr:
 		return x.Op == token.AND && isSendFileConfig(x.X, names, stack, depth+1)
 	case *ast.CompositeLit:
-		return x.Type != nil && isFiberType(x.Type, names, "SendFile")
+		return x.Type != nil && ctxIsFiberType(x.Type, names, "SendFile")
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		if !ok {
 			return false
 		}
 		if d.typ != nil {
-			return isFiberType(d.typ, names, "SendFile")
+			return ctxIsFiberType(d.typ, names, "SendFile")
 		}
 		return d.init != nil && isSendFileConfig(d.init, names, stack, depth+1)
 	}

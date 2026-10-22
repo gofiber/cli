@@ -53,6 +53,10 @@ type ctxEnv struct {
 	methods map[string]*ast.FuncDecl
 	// fields are the declared types of every struct field of the file, by name.
 	fields map[string][]ast.Expr
+	// declTypes and declInits are the types and the initializing expressions of
+	// the declarations of the file by the name they declare, in any scope.
+	declTypes map[string][]ast.Expr
+	declInits map[string][]ast.Expr
 	// names are the identifiers the file binds to the core fiber package.
 	names []string
 	// pkgNames are the names the file and the other files of its package bind
@@ -80,6 +84,9 @@ func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 		funcDecl: map[string]*ast.FuncDecl{},
 		methods:  map[string]*ast.FuncDecl{},
 		fields:   map[string][]ast.Expr{},
+
+		declTypes: map[string][]ast.Expr{},
+		declInits: map[string][]ast.Expr{},
 	}
 
 	env.index(g.file)
@@ -109,6 +116,7 @@ func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 		}
 		return true
 	})
+	env.indexDecls()
 
 	return env
 }
@@ -183,6 +191,31 @@ func ctxEmbeddedName(t ast.Expr) string {
 		return ctxEmbeddedName(x.X)
 	}
 	return ""
+}
+
+// ctxIsFiberType reports whether e names the type typeName of the fiber package,
+// behind any pointers: fiber.Ctx, *f.Ctx or, in a file that dot-imports fiber,
+// Ctx. names are the identifiers the file binds to the package.
+func ctxIsFiberType(e ast.Expr, names []string, typeName string) bool {
+	if isFiberType(e, names, typeName) {
+		return true
+	}
+	if !slices.Contains(names, ".") {
+		return false
+	}
+
+	for {
+		switch x := e.(type) {
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.Ident:
+			return x.Name == typeName
+		default:
+			return false
+		}
+	}
 }
 
 // ctxQualifier returns the prefix that spells a fiber identifier in a file that
@@ -527,37 +560,38 @@ func (env *ctxEnv) declares(typeName, name string) bool {
 // declaration of an identifier called name in the file, in any scope, for
 // parameters, struct fields, var declarations and assignments.
 func (env *ctxEnv) declsNamed(name string) (typs, inits []ast.Expr) {
+	return env.declTypes[name], env.declInits[name]
+}
+
+// indexDecls records the types and initializing expressions of the declarations
+// of the file by the name they declare.
+func (env *ctxEnv) indexDecls() {
 	ast.Inspect(env.g.file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Field:
 			for _, id := range x.Names {
-				if id.Name == name {
-					typs = append(typs, x.Type)
-				}
+				env.declTypes[id.Name] = append(env.declTypes[id.Name], x.Type)
 			}
-			if len(x.Names) == 0 && ctxEmbeddedName(x.Type) == name {
-				typs = append(typs, x.Type)
+			if len(x.Names) == 0 {
+				name := ctxEmbeddedName(x.Type)
+				env.declTypes[name] = append(env.declTypes[name], x.Type)
 			}
 		case *ast.ValueSpec:
 			for i, id := range x.Names {
-				if id.Name != name {
-					continue
-				}
 				if x.Type != nil {
-					typs = append(typs, x.Type)
+					env.declTypes[id.Name] = append(env.declTypes[id.Name], x.Type)
 				}
-				inits = ctxAppendRHS(inits, x.Values, len(x.Names), i)
+				env.declInits[id.Name] = ctxAppendRHS(env.declInits[id.Name], x.Values, len(x.Names), i)
 			}
 		case *ast.AssignStmt:
 			for i, lhs := range x.Lhs {
-				if ctxAssignedName(lhs) == name {
-					inits = ctxAppendRHS(inits, x.Rhs, len(x.Lhs), i)
+				if name := ctxAssignedName(lhs); name != "" {
+					env.declInits[name] = ctxAppendRHS(env.declInits[name], x.Rhs, len(x.Lhs), i)
 				}
 			}
 		}
 		return true
 	})
-	return typs, inits
 }
 
 // ctxAssignedName returns the name an assignment target assigns: x for x and
