@@ -109,7 +109,8 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: "otel: the metric names changed (http.server.duration is now http.server.request.duration, measured in seconds, and the size metrics gained .body); update the dashboards and alerts that use the old names.",
 	},
 	{
-		pkg:     reviewContribPath("sentry|fibersentry"),
-		message: "sentry: the v3 module requires sentry-go v0.50 or newer, which removed some APIs (for example Scope.SetExtra); expect to adjust the code that calls them.",
+		pkg: reviewContribPath("sentry|fibersentry"),
+		message: "sentry: the v3 module requires sentry-go v0.50 or newer. What it removed is rewritten or reported where the code uses it (Scope.SetExtra, Event.Extra, sentry.Logger, the logs and metrics options); " +
+			"what it changed without a compile error is that transactions are grouped by their parameterized path (0.47) and that captured panics no longer have the frames of sentry.Recover (0.49), so issues and transactions may regroup after the upgrade.",
 	},
 }
