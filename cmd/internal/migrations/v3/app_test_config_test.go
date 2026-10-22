@@ -1,149 +1,249 @@
 package v3_test
 
 import (
-	"bytes"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gofiber/cli/cmd/internal"
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
 func Test_MigrateAppTestConfig(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mtestcfg")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	dir := appSingle(t, `package main
 
-	file := writeTempFile(t, dir, `package main
 import (
-    "github.com/gofiber/fiber/v2"
-    "net/http/httptest"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
-func main() {
-    app := fiber.New()
-    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
-    _ = app.Test(req, 2000)
-}`)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+func TestHit(t *testing.T) {
+	app := fiber.New()
+	req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+	_, _ = app.Test(req, 2000)
+	timeoutMS := 250
+	_, _ = app.Test(req, timeoutMS)
+	_, _ = app.Test(req, int(2*time.Second/time.Millisecond))
+}
+`)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(2000) * time.Millisecond})")
-	assert.Contains(t, content, "\"time\"")
-	assert.Contains(t, buf.String(), "Migrating app.Test usages")
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
+
+	content := appRead(t, dir, "main.go")
+	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(2000) * time.Millisecond, FailOnTimeout: true})")
+	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(timeoutMS) * time.Millisecond, FailOnTimeout: true})")
+	assert.Contains(t, content, "fiber.TestConfig{Timeout: time.Duration(int(2*time.Second/time.Millisecond)) * time.Millisecond, FailOnTimeout: true}")
+	assert.Contains(t, out, "Migrating app.Test usages")
+	assert.Empty(t, internal.DrainNotes(dir))
 }
 
 func Test_MigrateAppTestConfig_DisableTimeout(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mtestcfg")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	dir := appSingle(t, `package main
 
-	file := writeTempFile(t, dir, `package main
 import (
-    "github.com/gofiber/fiber/v2"
-    "net/http/httptest"
+	"net/http/httptest"
+
+	"github.com/gofiber/fiber/v2"
 )
+
 func main() {
-    app := fiber.New()
-    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
-    _ = app.Test(req, -1)
-}`)
+	app := fiber.New()
+	req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+	_, _ = app.Test(req, -1)
+}
+`)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+	appRun(t, dir, v3.MigrateAppTestConfig)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `app.Test(req, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})`)
-	assert.Contains(t, buf.String(), "Migrating app.Test usages")
+	assert.Contains(t, appRead(t, dir, "main.go"), `app.Test(req, fiber.TestConfig{Timeout: 0, FailOnTimeout: false})`)
 }
 
 func Test_MigrateAppTestConfig_NoSecondArg(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mtestcfgsingle")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	src := `package main
 
-	file := writeTempFile(t, dir, `package main
 import (
-    "github.com/gofiber/fiber/v2"
-    "net/http/httptest"
+	"net/http/httptest"
+
+	"github.com/gofiber/fiber/v2"
 )
+
 func main() {
-    app := fiber.New()
-    _, _ = app.Test(httptest.NewRequest("GET", "/", nil))
-}`)
+	app := fiber.New()
+	_, _ = app.Test(httptest.NewRequest("GET", "/", nil))
+}
+`
+	dir := appSingle(t, src)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `app.Test(httptest.NewRequest("GET", "/", nil))`)
-	assert.NotContains(t, content, "fiber.TestConfig")
-	assert.NotContains(t, buf.String(), "Migrating app.Test usages")
+	assert.Equal(t, src, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
+}
+
+func Test_MigrateAppTestConfig_OtherTypes(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type matcher struct{}
+
+func (matcher) Test(a, b string) bool { return a == b }
+
+func main() {
+	var m matcher
+	_ = m.Test("a", "a")
+
+	app := fiber.New()
+	grp := app.Group("/x")
+	_ = grp
+	println("app.Test(req, 100)") // app.Test(req, 100)
+}
+`)
+	before := appRead(t, dir, "main.go")
+
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
+
+	assert.Equal(t, before, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
+}
+
+func Test_MigrateAppTestConfig_Spread(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func hit(app *fiber.App, req *http.Request, timeoutMS ...int) (*http.Response, error) {
+	return app.Test(req, timeoutMS...)
+}
+
+func timeouts() []int { return nil }
+
+func later(app *fiber.App, req *http.Request) {
+	_ = time.Now()
+	_, _ = app.Test(req, timeouts()...)
+}
+`)
+
+	appRun(t, dir, v3.MigrateAppTestConfig)
+
+	content := appRead(t, dir, "main.go")
+	// v2 waited a second and returned an error when the time elapsed
+	assert.Contains(t, content, "func hit(app *fiber.App, req *http.Request, timeoutMS ...int) (*http.Response, error) {\n"+
+		"\ttestConfig := fiber.TestConfig{Timeout: time.Second, FailOnTimeout: true}\n"+
+		"\tif len(timeoutMS) > 0 {\n"+
+		"\t\ttestConfig.Timeout = time.Duration(timeoutMS[0]) * time.Millisecond\n"+
+		"\t}\n"+
+		"\treturn app.Test(req, testConfig)\n}")
+	// a call is not evaluated twice: left for the user
+	assert.Contains(t, content, "app.Test(req, timeouts()...)")
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1)
+	assert.Equal(t, 18, notes[0].Line)
+	assert.Contains(t, notes[0].Message, "fiber.TestConfig")
+}
+
+func Test_MigrateAppTestConfig_AppFromAnotherFile(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"go.mod": "module example.com/demo\n",
+		"app.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newApp() *fiber.App { return fiber.New() }
+`,
+		"app_test.go": `package main
+
+import (
+	"net/http/httptest"
+	"testing"
+)
+
+func TestSlow(t *testing.T) {
+	app := newApp()
+	_, _ = app.Test(httptest.NewRequest("GET", "/", nil), 50)
+}
+`,
+	})
+
+	appRun(t, dir, v3.MigrateAppTestConfig)
+
+	content := appRead(t, dir, "app_test.go")
+	assert.Contains(t, content, `app.Test(httptest.NewRequest("GET", "/", nil), fiber.TestConfig{Timeout: time.Duration(50) * time.Millisecond, FailOnTimeout: true})`)
+	assert.Contains(t, content, `"github.com/gofiber/fiber/v2"`)
+	assert.Contains(t, content, `"time"`)
 }
 
 func Test_MigrateAppTestConfig_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mtestcfgid")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	dir := appSingle(t, `package main
 
-	file := writeTempFile(t, dir, `package main
 import (
-    "github.com/gofiber/fiber/v2"
-    "net/http/httptest"
-)
-func main() {
-    app := fiber.New()
-    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
-    timeoutMS := 2000
-    _ = app.Test(req, timeoutMS)
-}`)
+	"net/http/httptest"
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
-	first := readFile(t, file)
-	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
-	second := readFile(t, file)
-	assert.Equal(t, first, second)
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	app := fiber.New()
+	req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+	timeoutMS := 2000
+	_, _ = app.Test(req, timeoutMS)
+	_, _ = app.Test(req, -1)
+}
+`)
+
+	appRun(t, dir, v3.MigrateAppTestConfig)
+	first := appRead(t, dir, "main.go")
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
+
+	assert.Equal(t, first, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
 }
 
-func Test_MigrateAppTestConfig_VariableTimeout(t *testing.T) {
+func Test_MigrateAppTestConfig_ConfigVariable(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mtestcfgvar")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	src := `package main
 
-	file := writeTempFile(t, dir, `package main
 import (
-    "github.com/gofiber/fiber/v2"
-    "net/http/httptest"
+	"net/http/httptest"
+	"time"
+
+	"github.com/gofiber/fiber/v3"
 )
+
 func main() {
-    app := fiber.New()
-    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
-    timeoutMS := 250
-    _ = app.Test(req, timeoutMS)
-}`)
+	app := fiber.New()
+	cfg := fiber.TestConfig{Timeout: time.Second, FailOnTimeout: true}
+	_, _ = app.Test(httptest.NewRequest("GET", "/", nil), cfg)
+}
+`
+	dir := appSingle(t, src)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(timeoutMS) * time.Millisecond})")
+	assert.Equal(t, src, appRead(t, dir, "main.go"))
+	assert.Empty(t, out)
 }
