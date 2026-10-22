@@ -3,6 +3,7 @@ package v3
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 )
 
 // The accessors of the environment for declarations. A name the file's package
@@ -94,7 +95,7 @@ func (env *ctxEnv) isCtxAliasAt(t ast.Expr, stack []ast.Node, depth int) bool {
 
 	switch x := t.(type) {
 	case *ast.Ident:
-		if depth == 0 && modDeclaredLocally(x.Name, x.Pos(), stack) {
+		if depth == 0 && (modDeclaredLocally(x.Name, x.Pos(), stack) || ctxTypeDeclaredLocally(x.Name, x.Pos(), stack)) {
 			return false
 		}
 	case *ast.SelectorExpr:
@@ -115,6 +116,53 @@ func (env *ctxEnv) isCtxAliasAt(t ast.Expr, stack []ast.Node, depth int) bool {
 		return true
 	}
 	return env.isCtxAliasAt(target, nil, depth+1)
+}
+
+// ctxTypeDeclaredLocally reports whether a declaration inside a function gives the
+// name to a type, a local type or a type parameter, that hides the package level
+// name at pos. stack holds the ancestors of the use (see goSource.walk).
+func ctxTypeDeclaredLocally(name string, pos token.Pos, stack []ast.Node) bool {
+	for _, node := range slices.Backward(stack) {
+		var stmts []ast.Stmt
+		switch n := node.(type) {
+		case *ast.BlockStmt:
+			stmts = n.List
+		case *ast.CaseClause:
+			stmts = n.Body
+		case *ast.CommClause:
+			stmts = n.Body
+		case *ast.TypeSpec:
+			if slices.Contains(ctxTypeParams(n.TypeParams), name) {
+				return true
+			}
+		case *ast.FuncDecl:
+			if slices.Contains(ctxTypeParams(n.Type.TypeParams), name) {
+				return true
+			}
+			for _, arg := range ctxTypeArgs(ctxFirstFieldType(n.Recv)) {
+				if isIdentNamed(arg, name) {
+					return true
+				}
+			}
+		}
+
+		for _, stmt := range stmts {
+			decl, ok := stmt.(*ast.DeclStmt)
+			if !ok || decl.Pos() >= pos {
+				continue
+			}
+			gd, ok := decl.Decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				if ts, isType := spec.(*ast.TypeSpec); isType && ts.Name.Name == name {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // isInterfaceValue reports whether x is a value of an interface type: any value that

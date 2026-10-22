@@ -127,6 +127,51 @@ func shadowed() {
 `},
 		},
 		{
+			name:    "a local type or a type parameter that hides the alias",
+			migrate: v3.MigrateHandlerSignatures,
+			files: map[string]string{xpkgHandlers: `package handlers
+
+import "example.com/app/internal/web"
+
+type Ctx = web.Ctx
+
+func local() {
+	type Ctx struct{}
+	var c *Ctx
+	_ = c
+}
+
+func generic[Ctx any](c *Ctx) {}
+
+type box[Ctx any] struct{ c *Ctx }
+
+func (b *box[Ctx]) get() *Ctx { return b.c }
+
+func real(c *Ctx) error { return nil }
+`},
+			want: map[string]string{xpkgHandlers: `package handlers
+
+import "example.com/app/internal/web"
+
+type Ctx = web.Ctx
+
+func local() {
+	type Ctx struct{}
+	var c *Ctx
+	_ = c
+}
+
+func generic[Ctx any](c *Ctx) {}
+
+type box[Ctx any] struct{ c *Ctx }
+
+func (b *box[Ctx]) get() *Ctx { return b.c }
+
+func real(c Ctx) error { return nil }
+`},
+			msg: "Migrating handler signatures",
+		},
+		{
 			name:    "a nil pointer conversion keeps the pointer",
 			migrate: v3.MigrateHandlerSignatures,
 			files: map[string]string{xpkgHandlers: `package handlers
