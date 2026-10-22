@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -392,9 +393,19 @@ func contribComparesError(stack []ast.Node) bool {
 
 // jwtLegacyOnly are the settings of the standalone gofiber/jwt module that
 // contrib/v3/jwt has no field for (key sets are JWKSetURLs there, and the
-// refresh of the keys is not configurable).
+// refresh of the keys is not configurable), the key sets last: when one of the
+// others goes with them, that is what the note is about.
 var jwtLegacyOnly = []string{
-	"SigningKeys", "KeySetURL", "KeySetURLs", "KeyRefreshSuccessHandler", "KeyRefreshErrorHandler",
+	"SigningKeys", "KeyRefreshSuccessHandler", "KeyRefreshErrorHandler",
+	"KeyRefreshInterval", "KeyRefreshRateLimit", "KeyRefreshTimeout", "KeyRefreshUnknownKID", "KeySetURL", "KeySetURLs",
+}
+
+// jwtKeySetCompanions are the settings that change what a key set does in the
+// standalone module and that contrib/v3/jwt has no counterpart for: it refreshes
+// the key sets in one way (every hour and on a kid it has not seen), and its
+// SigningKeys hold keys of another type that it uses next to the key sets.
+var jwtKeySetCompanions = []string{
+	"SigningKeys", "KeyRefreshSuccessHandler", "KeyRefreshErrorHandler",
 	"KeyRefreshInterval", "KeyRefreshRateLimit", "KeyRefreshTimeout", "KeyRefreshUnknownKID",
 }
 
@@ -433,7 +444,11 @@ func (f *contribFile) jwtLegacy() {
 func (f *contribFile) jwtLegacyConfig(c *contribConfig) {
 	defer c.finish()
 
+	moved := f.jwtLegacyKeySets(c)
 	for _, field := range jwtLegacyOnly {
+		if field == moved {
+			continue
+		}
 		if s := c.get(field); s != nil {
 			f.notef(s.pos(), "jwt Config: %s of the standalone gofiber/jwt module has no counterpart in contrib/v3/jwt "+
 				"(SigningKey takes a jwtware.SigningKey{Key: ..., JWTAlg: ...}, key sets are JWKSetURLs); move it by hand", field)
@@ -452,6 +467,70 @@ func (f *contribFile) jwtLegacyConfig(c *contribConfig) {
 		}
 	}
 	c.remove("SigningMethod")
+}
+
+// jwtLegacyKeySets writes the key sets of the standalone module as JWKSetURLs of
+// contrib/v3/jwt and returns the field it moved, "" when it left them. The module
+// appended KeySetURL to KeySetURLs, so
+//
+//	KeySetURLs: urls  ->  JWKSetURLs: urls
+//	KeySetURL:  url   ->  JWKSetURLs: []string{url}
+//
+// where nothing next to the key sets changes what they do: the refresh settings
+// and SigningKeys have no counterpart, and a URL that may be empty (the module
+// ignored an empty KeySetURL and fell back to the key given next to it, where
+// contrib/v3/jwt refuses an empty URL) or that cannot be a URL of v3 (absolute,
+// http or https) is left for the user.
+func (f *contribFile) jwtLegacyKeySets(c *contribConfig) string {
+	one, many := c.get("KeySetURL"), c.get("KeySetURLs")
+	if (one == nil) == (many == nil) {
+		return ""
+	}
+	field, slot := "KeySetURL", one
+	if one == nil {
+		field, slot = "KeySetURLs", many
+	}
+	if !c.settled(field) || slices.ContainsFunc(jwtKeySetCompanions, func(other string) bool { return c.get(other) != nil }) {
+		return ""
+	}
+
+	if field == "KeySetURLs" {
+		if lit, ok := slot.value.(*ast.CompositeLit); ok && !jwtAbsoluteURLs(lit) {
+			return ""
+		}
+		c.rename(field, "JWKSetURLs")
+	} else {
+		if u, isLiteral := contribStringLit(slot.value); isLiteral {
+			if !jwtAbsoluteURL(u) {
+				return ""
+			}
+		} else if c.get("SigningKey") != nil || c.get("KeyFunc") != nil {
+			return ""
+		}
+		c.replace(field, "JWKSetURLs", "[]string{"+f.g.text(slot.value)+"}")
+	}
+
+	f.notef(slot.pos(), "jwt Config: %s is JWKSetURLs in contrib/v3/jwt. The v3 module downloads the key sets when the middleware is created, so the application "+
+		"stops at startup when one of them cannot be reached (the standalone module downloaded them with the first request), refreshes them every hour and "+
+		"when a token names a kid it has not seen, and accepts absolute http and https URLs only", field)
+	return field
+}
+
+// jwtAbsoluteURL reports whether u is a URL that contrib/v3/jwt accepts for a key set.
+func jwtAbsoluteURL(u string) bool {
+	parsed, err := url.Parse(u)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != ""
+}
+
+// jwtAbsoluteURLs reports whether every URL written as a string literal in the
+// list is one that contrib/v3/jwt accepts.
+func jwtAbsoluteURLs(lit *ast.CompositeLit) bool {
+	for _, elt := range lit.Elts {
+		if u, isLiteral := contribStringLit(elt); isLiteral && !jwtAbsoluteURL(u) {
+			return false
+		}
+	}
+	return true
 }
 
 // jwtLegacyAlg writes the algorithm that SigningMethod names: the constants of the

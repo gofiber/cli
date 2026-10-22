@@ -87,28 +87,200 @@ func main() {
 	}
 }
 
-func Test_MigrateContribPackages_StandaloneJWTKeySets(t *testing.T) {
-	contribVersions(t, map[string]string{"jwt": "v1.2.6"})
-	dir := t.TempDir()
-	file := writeTempFile(t, dir, `package main
+// The refresh of the key sets is configurable in the standalone module, and
+// contrib/v3/jwt refreshes them in one way: the settings that go with them have no
+// counterpart, and the config is left for the user.
+func Test_MigrateContribPackages_StandaloneJWTKeySetsWithoutCounterpart(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		field  string
+	}{
+		{"refresh interval", "KeySetURLs: []string{\"https://example.com/jwks.json\"},\n\tKeyRefreshInterval: &interval,", "KeyRefreshInterval"},
+		{"refresh on an unknown kid", "KeySetURL: \"https://example.com/jwks.json\",\n\tKeyRefreshUnknownKID: &yes,", "KeyRefreshUnknownKID"},
+		{"given keys next to the key set", "KeySetURLs: []string{\"https://example.com/jwks.json\"},\n\tSigningKeys: map[string]interface{}{\"a\": []byte(\"secret\")},", "SigningKeys"},
+		{"both fields", "KeySetURL: \"https://example.com/a.json\",\n\tKeySetURLs: []string{\"https://example.com/b.json\"},", "KeySetURL"},
+	}
 
-import jwtware "github.com/gofiber/jwt/v3"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contribVersions(t, map[string]string{"jwt": "v1.2.6"})
+			dir := t.TempDir()
+			file := writeTempFile(t, dir, `package main
+
+import (
+	"time"
+
+	jwtware "github.com/gofiber/jwt/v3"
+)
+
+var (
+	interval = time.Hour
+	yes      = true
+)
 
 var _ = jwtware.New(jwtware.Config{
-	KeySetURLs: []string{"https://example.com/jwks.json"},
+	`+tt.config+`
 	SigningKey: []byte("secret"),
 })
 `)
 
-	contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
+			contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
 
-	content := readFile(t, file)
-	assert.Contains(t, content, `jwtware "github.com/gofiber/contrib/v3/jwt"`)
-	assert.Contains(t, content, `SigningKey: []byte("secret")`, "left for the user, who is told")
-	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 1)
-	assert.Equal(t, 6, notes[0].Line)
-	assert.Contains(t, notes[0].Message, "KeySetURLs of the standalone gofiber/jwt module has no counterpart")
+			content := readFile(t, file)
+			assert.Contains(t, content, `jwtware "github.com/gofiber/contrib/v3/jwt"`)
+			assert.NotContains(t, content, "JWKSetURLs")
+			assert.Contains(t, contribCompact(content), `SigningKey: []byte("secret")`, "left for the user, who is told")
+			notes := internal.DrainNotes(dir)
+			require.Len(t, notes, 1)
+			assert.Contains(t, notes[0].Message, tt.field+" of the standalone gofiber/jwt module has no counterpart")
+		})
+	}
+}
+
+// KeySetURLs is the list of key sets under the name it has in contrib/v3/jwt, and
+// KeySetURL is the same list with one URL: the module appended it to KeySetURLs.
+func Test_MigrateContribPackages_StandaloneJWTKeySets(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		want   string
+		field  string
+	}{
+		{
+			name:   "a list of URLs",
+			config: `KeySetURLs: []string{"https://example.com/a.json", "https://example.com/b.json"},`,
+			want:   `JWKSetURLs: []string{"https://example.com/a.json", "https://example.com/b.json"},`,
+			field:  "KeySetURLs",
+		},
+		{
+			name:   "a list that is a variable",
+			config: `KeySetURLs: urls,`,
+			want:   `JWKSetURLs: urls,`,
+			field:  "KeySetURLs",
+		},
+		{
+			name:   "one URL",
+			config: `KeySetURL: "https://example.com/jwks.json",`,
+			want:   `JWKSetURLs: []string{"https://example.com/jwks.json"},`,
+			field:  "KeySetURL",
+		},
+		{
+			name:   "one URL that is a concatenation",
+			config: `KeySetURL: base + "/jwks.json",`,
+			want:   `JWKSetURLs: []string{base + "/jwks.json"},`,
+			field:  "KeySetURL",
+		},
+		{
+			name:   "an http URL",
+			config: `KeySetURL: "http://127.0.0.1:8080/jwks.json",`,
+			want:   `JWKSetURLs: []string{"http://127.0.0.1:8080/jwks.json"},`,
+			field:  "KeySetURL",
+		},
+		{
+			name:   "a list next to a key that stays the fallback",
+			config: "KeySetURLs: urls,\n\tSigningKey: []byte(\"secret\"),\n\tSigningMethod: \"HS512\",",
+			want:   "JWKSetURLs: urls,\n\tSigningKey: jwtware.SigningKey{Key: []byte(\"secret\"), JWTAlg: \"HS512\"},",
+			field:  "KeySetURLs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contribVersions(t, map[string]string{"jwt": "v1.2.6"})
+			dir := t.TempDir()
+			file := writeTempFile(t, dir, `package main
+
+import jwtware "github.com/gofiber/jwt/v3"
+
+var (
+	base = "https://example.com"
+	urls = []string{"https://example.com/jwks.json"}
+)
+
+var _ = jwtware.New(jwtware.Config{
+	`+tt.config+`
+})
+`)
+
+			contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
+
+			content := readFile(t, file)
+			contribRequireParses(t, content)
+			assert.Contains(t, content, `jwtware "github.com/gofiber/contrib/v3/jwt"`)
+			assert.Contains(t, contribCompact(content), contribCompact(tt.want))
+			assert.NotContains(t, content, "KeySetURL")
+			notes := internal.DrainNotes(dir)
+			require.Len(t, notes, 1)
+			assert.Equal(t, 11, notes[0].Line)
+			assert.Contains(t, notes[0].Message, tt.field+" is JWKSetURLs in contrib/v3/jwt")
+			assert.Contains(t, notes[0].Message, "downloads the key sets when the middleware is created")
+
+			// the file is a v3 file now: a second run has nothing to do
+			out := contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
+			assert.Equal(t, content, readFile(t, file))
+			assert.Empty(t, out)
+			assert.Empty(t, internal.DrainNotes(dir))
+		})
+	}
+}
+
+// A URL that the module took and v3 does not stays with the user: an empty
+// KeySetURL meant "no key set" and the key given next to it was used, where
+// JWKSetURLs refuses an empty URL at startup, and v3 only takes absolute http and
+// https URLs.
+func Test_MigrateContribPackages_StandaloneJWTKeySetsThatStay(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		field  string
+	}{
+		{"a URL that may be empty next to a key", "KeySetURL: os.Getenv(\"JWKS_URL\"),\n\tSigningKey: []byte(\"secret\"),", "KeySetURL"},
+		{"a URL that may be empty next to a function", "KeySetURL: os.Getenv(\"JWKS_URL\"),\n\tKeyFunc: nil,", "KeySetURL"},
+		{"a relative URL", `KeySetURL: "/jwks.json",`, "KeySetURL"},
+		{"another scheme", `KeySetURL: "file:///etc/jwks.json",`, "KeySetURL"},
+		{"an empty URL", `KeySetURL: "",`, "KeySetURL"},
+		{"a relative URL in the list", `KeySetURLs: []string{"https://example.com/a.json", "b.json"},`, "KeySetURLs"},
+		{"set in a branch", "KeySetURLs: urls,\n\t// set below",
+			"KeySetURLs"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contribVersions(t, map[string]string{"jwt": "v1.2.6"})
+			dir := t.TempDir()
+			config := tt.config
+			setBelow := ""
+			if tt.name == "set in a branch" {
+				config = "SigningKey: []byte(\"secret\"),"
+				setBelow = "\nfunc init() {\n\tcfg := jwtware.Config{SigningKey: []byte(\"secret\")}\n\tif len(urls) > 0 {\n\t\tcfg.KeySetURLs = urls\n\t}\n\t_ = jwtware.New(cfg)\n}\n"
+			}
+			file := writeTempFile(t, dir, `package main
+
+import (
+	"os"
+
+	jwtware "github.com/gofiber/jwt/v3"
+)
+
+var urls = []string{"https://example.com/jwks.json"}
+
+var _ = os.Getenv
+
+var _ = jwtware.New(jwtware.Config{
+	`+config+`
+})
+`+setBelow)
+
+			contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
+
+			content := readFile(t, file)
+			assert.NotContains(t, content, "JWKSetURLs")
+			notes := internal.DrainNotes(dir)
+			require.Len(t, notes, 1)
+			assert.Contains(t, notes[0].Message, tt.field+" of the standalone gofiber/jwt module has no counterpart")
+		})
+	}
 }
 
 // The message of the standalone module started with a capital letter.
