@@ -177,22 +177,27 @@ var clientFieldSetters = map[string]string{
 }
 
 // rewriteClients rewrites the creation of fiber.Client values and the type of
-// the variables that hold them.
+// the variables that hold them. Where the package keeps its clients or its agents
+// on the copy of the v2 agent, they stay what they are.
 func (f *clientFile) rewriteClients() {
 	f.g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
-			f.rewriteClientCall(x)
+			if !f.copyClients {
+				f.rewriteClientCall(x)
+			}
 		case *ast.CompositeLit:
-			if x.Type != nil && isFiberType(x.Type, f.fiber, "Client") {
+			if !f.copyClients && x.Type != nil && isFiberType(x.Type, f.fiber, "Client") {
 				f.rewriteClientLit(x, stack)
 			}
 		case *ast.StarExpr:
-			if sel, ok := f.fiberSel(x.X); ok && sel.Sel.Name == nameClient {
+			if sel, ok := f.fiberSel(x.X); ok && sel.Sel.Name == nameClient && !f.copyClients {
 				f.renameFiberSelector(sel, "client")
 			}
 		case *ast.FuncType:
-			f.renameAgentTypes(x)
+			if !f.copyAgents {
+				f.renameAgentTypes(x, stack)
+			}
 		}
 		return true
 	})

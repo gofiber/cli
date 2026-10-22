@@ -49,7 +49,7 @@ func get(url string) error {
 	assert.Contains(t, run.output, "Migrating client usage")
 	assert.Empty(t, run.notes)
 
-	// Nothing is printed for a request that is only reported.
+	// A request that moves to the copy of the v2 agent changes its file too.
 	run = clientMigrateSource(t, `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -62,6 +62,23 @@ func get(url string) error {
 	return nil
 }
 `)
+	assert.Contains(t, run.output, "Migrating client usage")
+	assert.Len(t, run.notes, 1)
+
+	// Nothing is printed for a request that is only reported, because its package
+	// cannot have the copy.
+	run = clientRunMigration(t, map[string]string{"main_test.go": `package main_test
+
+import "github.com/gofiber/fiber/v2"
+
+func get(url string) error {
+	_, _, errs := fiber.Get(url).Host("x").Bytes()
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+`})
 	assert.Empty(t, run.output)
 	assert.Len(t, run.notes, 1)
 }
@@ -190,10 +207,11 @@ func main() {
 	require.NoError(t, err)
 }
 
-func Test_MigrateClientUsage_LeftAloneRequestKeepsItsRelease(t *testing.T) {
+func Test_MigrateClientUsage_CopiedRequestKeepsItsCalls(t *testing.T) {
 	t.Parallel()
 
-	// A request that is not migrated is not touched, deferred release included.
+	// A request that runs on the copy of the v2 agent keeps every call, deferred
+	// release included: only the names of the copy replace the ones of Fiber v2.
 	run := clientMigrateSource(t, `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -215,12 +233,50 @@ func get(url string) error {
 }
 `)
 	got := run.files["main.go"]
+	assert.Contains(t, got, "a := fiberMigrateAcquireAgent()")
+	assert.Contains(t, got, "defer fiberMigrateReleaseAgent(a)")
+	assert.Contains(t, got, "a.Host(\"virtual\")")
+	assert.Contains(t, got, "_, _, errs := a.Bytes()")
+	assert.NotContains(t, got, "client.")
+	assert.NotContains(t, got, "gofiber")
+	assert.Len(t, run.notes, 1)
+	assert.Contains(t, run.notes[0], "this request still runs on the copy of the Fiber v2 agent in fiber_migrate_agent.go")
+}
+
+func Test_MigrateClientUsage_LeftAloneRequestKeepsItsRelease(t *testing.T) {
+	t.Parallel()
+
+	// Where the package cannot have the copy, the request is not touched,
+	// deferred release included.
+	run := clientRunMigration(t, map[string]string{"main_test.go": `package main_test
+
+import "github.com/gofiber/fiber/v2"
+
+func get(url string) error {
+	a := fiber.AcquireAgent()
+	defer fiber.ReleaseAgent(a)
+	req := a.Request()
+	req.SetRequestURI(url)
+	a.Host("virtual")
+	if err := a.Parse(); err != nil {
+		return err
+	}
+	_, _, errs := a.Bytes()
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+`})
+	got := run.files["main_test.go"]
 	assert.Contains(t, got, "defer fiber.ReleaseAgent(a)")
 	assert.Contains(t, got, "a.Host(\"virtual\")")
 	assert.Contains(t, got, "_, _, errs := a.Bytes()")
 	assert.NotContains(t, got, "client.")
+	assert.NotContains(t, got, "fiberMigrate")
 	assert.Len(t, run.notes, 1)
 	assert.Contains(t, run.notes[0], "left as Fiber v2 code")
+	assert.Contains(t, run.notes[0], "external test package")
 }
 
 func clientGofmtSource(t *testing.T, src string) string {

@@ -178,7 +178,7 @@ func (f *clientFile) formFileLiteral(e ast.Expr) (*ast.CompositeLit, bool) {
 		return nil, false
 	}
 	lit, ok := un.X.(*ast.CompositeLit)
-	if !ok || lit.Type == nil || !isFiberType(lit.Type, f.fiber, "FormFile") {
+	if !ok || lit.Type == nil || !isFiberType(lit.Type, f.fiber, clientMemberFormFile) {
 		return nil, false
 	}
 	return lit, true
@@ -209,7 +209,6 @@ func (f *clientFile) formFileValue(lit *ast.CompositeLit) (string, clientUnsuppo
 			return "", clientUnsupported("the " + key.Name + " field of a fiber.FormFile")
 		}
 	}
-	f.markFiberSelectors(lit)
 	return pkg + ".AcquireFile(" + strings.Join(setters, ", ") + ")", ""
 }
 

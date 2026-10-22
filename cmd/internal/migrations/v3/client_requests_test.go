@@ -366,7 +366,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/client"
 )
 
@@ -441,7 +440,7 @@ func branches(flag bool, u1, u2 string) ([]byte, error) {
 }
 
 func captured(url string) {
-	a := fiber.Get(url)
+	a := fiberMigrateGet(url)
 	run := func() {
 		_, _, _ = a.Bytes()
 	}
@@ -450,7 +449,7 @@ func captured(url string) {
 `,
 			},
 			notes: []string{
-				"main.go:78: left as Fiber v2 code: it is used inside a function literal",
+				"main.go:78: it is used inside a function literal" + clientShimNote,
 			},
 		},
 		{
@@ -522,8 +521,6 @@ func parameterNamedFiber(fiber string) string {
 import (
 	"fmt"
 
-	"github.com/gofiber/fiber/v3"
-
 	fiberclient "github.com/gofiber/fiber/v3/client"
 )
 
@@ -574,7 +571,7 @@ func deferred(url string) (body []byte) {
 }
 
 func functionValue() {
-	get := fiber.Get
+	get := fiberMigrateGet
 	_ = get
 }
 
@@ -584,7 +581,7 @@ func parameterNamedFiber(fiber string) string {
 `,
 			},
 			notes: []string{
-				"main.go:52: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:52: `fiber.Get` has no counterpart in the v3 client package; it now uses the copy of the Fiber v2 agent in fiber_migrate_agent.go",
 			},
 		},
 		{
@@ -1003,7 +1000,7 @@ func replacesQuery(base string) ([]byte, error) {
 }
 
 func notALiteral(base, qs string) ([]byte, error) {
-	a := fiber.Get(base)
+	a := fiberMigrateGet(base)
 	a.QueryString(qs)
 	_, body, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1042,7 +1039,7 @@ func requestArgs(url string) ([]byte, error) {
 			},
 			notes: []string{
 				"main.go:28: QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both",
-				"main.go:38: left as Fiber v2 code: QueryString() with a value that is not a string literal (put the query in the URL instead)",
+				"main.go:38: QueryString() with a value that is not a string literal" + clientShimNote,
 				"main.go:51: the query was added before SetRequestURI(), which discarded it in Fiber v2; the v3 client sends it",
 			},
 		},
@@ -1232,25 +1229,20 @@ func newFetcher(url string) fetcher {
 			want: map[string]string{
 				"main.go": `package main
 
-import (
-	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/client"
-)
-
 type fetcher struct {
-	agent *fiber.Agent
+	agent *fiberMigrateAgent
 }
 
-func passed(url string, use func(*client.Request)) {
-	use(fiber.Get(url))
+func passed(url string, use func(*fiberMigrateAgent)) {
+	use(fiberMigrateGet(url))
 }
 
 func returnedTerminal(url string) (int, []byte, []error) {
-	return fiber.Get(url).Bytes()
+	return fiberMigrateGet(url).Bytes()
 }
 
 func hostClient(url string) {
-	a := fiber.AcquireAgent()
+	a := fiberMigrateAcquireAgent()
 	a.Request().SetRequestURI(url)
 	if err := a.Parse(); err != nil {
 		return
@@ -1260,16 +1252,12 @@ func hostClient(url string) {
 }
 
 func newFetcher(url string) fetcher {
-	return fetcher{agent: fiber.Get(url)}
+	return fetcher{agent: fiberMigrateGet(url)}
 }
 `,
 			},
 			notes: []string{
-				"main.go:20: left as Fiber v2 code: `a.HostClient.MaxConns = 10` is not understood by the migration",
-				"main.go:8: `fiber.Agent` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
-				"main.go:12: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
-				"main.go:16: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
-				"main.go:30: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:20: `a.HostClient.MaxConns = 10` is not understood by the migration" + clientShimNote,
 			},
 		},
 		{
@@ -1846,12 +1834,11 @@ func nameOfFiberGet(url string) error {
 				"main.go": `package main
 
 import (
-	"github.com/gofiber/fiber/v3"
 	"github.com/valyala/fasthttp"
 )
 
 func host(url string) ([]byte, error) {
-	_, body, errs := fiber.Get(url).Host("virtual.example.com").Bytes()
+	_, body, errs := fiberMigrateGet(url).Host("virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1859,7 +1846,7 @@ func host(url string) ([]byte, error) {
 }
 
 func hostHeader(url string) ([]byte, error) {
-	_, body, errs := fiber.Get(url).Set("Host", "virtual.example.com").Bytes()
+	_, body, errs := fiberMigrateGet(url).Set("Host", "virtual.example.com").Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1869,7 +1856,7 @@ func hostHeader(url string) ([]byte, error) {
 func response(url string) error {
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
-	a := fiber.Get(url)
+	a := fiberMigrateGet(url)
 	a.SetResponse(resp)
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1879,7 +1866,7 @@ func response(url string) error {
 }
 
 func dest(url string, dst []byte) ([]byte, error) {
-	_, body, errs := fiber.Get(url).Dest(dst).Bytes()
+	_, body, errs := fiberMigrateGet(url).Dest(dst).Bytes()
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
@@ -1887,7 +1874,7 @@ func dest(url string, dst []byte) ([]byte, error) {
 }
 
 func jsonContentType(url string, v any) error {
-	_, _, errs := fiber.Post(url).JSON(v, "application/vnd.api+json").Bytes()
+	_, _, errs := fiberMigratePost(url).JSON(v, "application/vnd.api+json").Bytes()
 	if len(errs) > 0 {
 		return errs[0]
 	}
@@ -1895,7 +1882,7 @@ func jsonContentType(url string, v any) error {
 }
 
 func nameOfFiberGet(url string) error {
-	a := fiber.Get(url)
+	a := fiberMigrateGet(url)
 	a.Name = "svc"
 	_, _, errs := a.Bytes()
 	if len(errs) > 0 {
@@ -1906,12 +1893,12 @@ func nameOfFiberGet(url string) error {
 `,
 			},
 			notes: []string{
-				"main.go:8: left as Fiber v2 code: Host(): the v3 client cannot send a Host header that differs from the URL (use a custom dialer, client.New().SetDial(...), with the virtual host in the URL)",
-				"main.go:16: left as Fiber v2 code: a Host header (the v3 client cannot send a Host header that differs from the URL)",
-				"main.go:26: left as Fiber v2 code: SetResponse() has no v3 equivalent (use the client.Response that Send returns, or client.NewWithHostClient for fasthttp tuning)",
-				"main.go:36: left as Fiber v2 code: Dest() has no v3 equivalent (use the client.Response that Send returns, or client.NewWithHostClient for fasthttp tuning)",
-				"main.go:44: left as Fiber v2 code: JSON() with a custom content type (the v3 client always sends application/json for a JSON body)",
-				"main.go:52: left as Fiber v2 code: setting Name of an agent that fiber.Get made, which has no effect in v2",
+				"main.go:8: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+				"main.go:16: a Host header: the v3 client cannot send one that differs from the URL" + clientShimNote,
+				"main.go:26: SetResponse() has no counterpart in the v3 client" + clientShimNote,
+				"main.go:36: Dest() has no counterpart in the v3 client" + clientShimNote,
+				"main.go:44: JSON() with a custom content type: the v3 client always sends application/json" + clientShimNote,
+				"main.go:52: setting Name of an agent that fiber.Get made, which has no effect in v2" + clientShimNote,
 			},
 		},
 	})

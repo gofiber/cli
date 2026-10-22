@@ -15,9 +15,9 @@ const (
 	clientErrClosure clientUnsupported = "it is used inside a function literal"
 )
 
-// migrate rewrites the request of u, or leaves it alone and says why. A request
-// the migration fails on is left alone too: one request must not stop the
-// others, nor the migrations that run after this one.
+// migrate rewrites the request of u, or leaves it on the copy of the v2 agent and
+// says why. A request the migration fails on is left alone too: one request must
+// not stop the others, nor the migrations that run after this one.
 func (f *clientFile) migrate(u *clientUnit) {
 	edits := len(f.edits.list)
 	defer func() {
@@ -26,23 +26,132 @@ func (f *clientFile) migrate(u *clientUnit) {
 			f.bail(u, clientUnsupported(fmt.Sprintf("the migration failed on this request (%v), please report this", r)))
 		}
 	}()
+	if u.viaClient() && u.root.sel != nil {
+		f.viaClient[u.root.sel] = true
+	}
 	if reason := f.analyze(u); reason != "" {
 		f.bail(u, reason)
+		return
+	}
+	if reason := f.sharedWithCopy(u); reason != "" {
+		f.bailShared(u, reason)
+		return
+	}
+	if f.holdsBailed(u) && f.shimOK() {
+		// The code that is replaced holds a request that stays on the copy: its
+		// names cannot be changed inside the new code.
+		if f.dry {
+			f.bail(u, "it contains a request that stays on the copy")
+		} else {
+			f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimFile+", so this request does too")
+		}
 		return
 	}
 	f.emit(u)
 }
 
-// bail leaves the request as it is and reports it.
+// bail leaves the request as it is. It keeps running on the copy of the v2 agent,
+// which the code of the request is renamed to with the other leftovers, or it is
+// reported where the package cannot have the copy. A scan only records what the
+// request means for the rest of the package.
 func (f *clientFile) bail(u *clientUnit, reason clientUnsupported) {
+	if f.dry {
+		if u.connected() {
+			f.taint(clientDomainAgent)
+		}
+		if u.viaClient() {
+			f.taint(clientDomainClient)
+		}
+		f.markBailed(u)
+		return
+	}
+
 	line := f.line(u.rootNode())
-	f.notef(line, "left as Fiber v2 code: %s. Convert this request by hand to the client package (client.Get/client.Post with a client.Config, or client.C().R())", reason)
+	if f.shimOK() {
+		f.shimNoted = true
+		f.markCopied(u)
+		f.notef(line, "%s; this request still runs on the copy of the Fiber v2 agent in %s", reason, clientShimFile)
+		return
+	}
+	f.notef(line, "left as Fiber v2 code: %s%s. Convert this request by hand to the client package (client.Get/client.Post with a client.Config, or client.C().R())",
+		reason, f.copyMissing(true, nil))
+	f.markBailed(u)
+}
+
+// bailShared keeps a request that could be migrated on the copy of the v2 agent
+// because it shares its agent or its client with requests that cannot.
+func (f *clientFile) bailShared(u *clientUnit, note string) {
+	f.shimNoted = true
+	f.markCopied(u)
+	f.notef(f.line(u.rootNode()), "%s", note)
+}
+
+// markCopied records the fiber members of a request that stays on the copy.
+func (f *clientFile) markCopied(u *clientUnit) {
+	for _, n := range u.nodes() {
+		ast.Inspect(n, func(c ast.Node) bool {
+			if sel, ok := c.(*ast.SelectorExpr); ok && f.isFiberName(sel.X) {
+				f.copied[sel] = true
+			}
+			return true
+		})
+	}
+}
+
+// holdsBailed reports whether the code the migration would write anew for the
+// request holds a request that was kept as it is.
+func (f *clientFile) holdsBailed(u *clientUnit) bool {
+	found := false
+	for _, n := range u.nodes() {
+		ast.Inspect(n, func(c ast.Node) bool {
+			if sel, ok := c.(*ast.SelectorExpr); ok && (f.copied[sel] || f.reported[sel]) {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
+}
+
+// nodes returns the code of the request that the migration writes anew.
+func (u *clientUnit) nodes() []ast.Node {
+	var nodes []ast.Node
+	if u.root.sel != nil {
+		nodes = append(nodes, u.root.sel)
+	}
+	for _, it := range u.items {
+		nodes = append(nodes, it.replaced())
+	}
+	if u.create != nil {
+		nodes = append(nodes, u.create)
+	}
+	if u.retExpr != nil {
+		nodes = append(nodes, u.retExpr)
+	}
+	return nodes
+}
+
+// replaced returns the code of the statement that the migration writes anew: the
+// init statement of an if that sends the request, and otherwise the statement.
+func (it *clientItem) replaced() ast.Node {
+	if it.term != nil && it.term.ifStmt != nil && it.term.assign != nil {
+		return it.term.assign
+	}
+	return it.stmt
+}
+
+// markBailed records that the fiber members of the request are left to the
+// leftover pass.
+func (f *clientFile) markBailed(u *clientUnit) {
 	f.markReported(u.rootNode())
 	for _, it := range u.items {
 		f.markReported(it.stmt)
 	}
 	if u.create != nil {
 		f.markReported(u.create)
+	}
+	if u.retExpr != nil {
+		f.markReported(u.retExpr)
 	}
 }
 
@@ -74,6 +183,7 @@ func (u *clientUnit) rootNode() ast.Node {
 // analyze finds every use of the request and checks that each one is
 // understood.
 func (f *clientFile) analyze(u *clientUnit) clientUnsupported {
+	u.flows = f.agentFlows(u)
 	for _, c := range u.creationCalls {
 		op, reason := f.agentOp(c.name, c.call, nil)
 		if reason != "" {
@@ -283,16 +393,27 @@ func (f *clientFile) chainItem(it *clientItem, ch clientChain, term *clientTerm)
 	return 1, ""
 }
 
+// parsedBefore reports whether the statements classified so far call Parse before s.
+func (u *clientUnit) parsedBefore(s ast.Stmt) bool {
+	return slices.ContainsFunc(u.items, func(it *clientItem) bool {
+		return it.kind == clientItemParse && it.stmt.Pos() < s.Pos()
+	})
+}
+
 // classifyAssign handles an assignment that uses the request.
 func (f *clientFile) classifyAssign(u *clientUnit, it *clientItem, s *ast.AssignStmt, name string, isAlias bool) (int, clientUnsupported) {
 	if len(s.Rhs) != 1 || isAlias {
 		return 0, clientErrUse
 	}
 
-	// The Name field of an agent that was just acquired is its User-Agent.
+	// The Name field of an agent that was just acquired is its User-Agent, as long
+	// as Parse has not read it yet.
 	if sel, ok := s.Lhs[0].(*ast.SelectorExpr); ok && len(s.Lhs) == 1 && s.Tok == token.ASSIGN && isIdentNamed(sel.X, name) && sel.Sel.Name == clientMemberName {
 		if !u.allowsURI() {
 			return 0, "setting Name of an agent that fiber.Get made, which has no effect in v2"
+		}
+		if u.parsedBefore(s) {
+			return 0, "setting Name after Parse(), which has no effect in v2"
 		}
 		it.kind = clientItemSetter
 		it.ops = []clientOp{{method: clientMemberName, req: "SetUserAgent(" + f.text(s.Rhs[0]) + ")", line: f.line(s)}}

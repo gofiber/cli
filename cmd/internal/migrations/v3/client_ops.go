@@ -27,6 +27,7 @@ const (
 	clientMemberAcquireArgs = "AcquireArgs"
 	clientMemberFieldname   = "Fieldname"
 	clientMemberContent     = "Content"
+	clientMemberFormFile    = "FormFile"
 )
 
 // Agent methods that take any number of cookies.
@@ -211,8 +212,7 @@ var clientAgentArity = map[string]int{
 }
 
 // clientHostReason is the explanation for the Host setters, which v3 cannot express.
-const clientHostReason = "Host(): the v3 client cannot send a Host header that differs from the URL " +
-	"(use a custom dialer, client.New().SetDial(...), with the virtual host in the URL)"
+const clientHostReason = "Host(): the v3 client cannot send a Host header that differs from the URL"
 
 // agentOp maps the call of the v2 Agent method m to the v3 spelling.
 func (f *clientFile) agentOp(m string, call *ast.CallExpr, it *clientItem) (op clientOp, reason clientUnsupported) {
@@ -289,7 +289,7 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr, it *clientItem) (op c
 		op.body = clientBodyRaw
 	case "JSON":
 		if len(args) != 1 {
-			return op, "JSON() with a custom content type (the v3 client always sends application/json for a JSON body)"
+			return op, "JSON() with a custom content type: the v3 client always sends application/json"
 		}
 		op.req = "SetJSON(" + a(0) + ")"
 		op.body = clientBodyJSON
@@ -330,7 +330,7 @@ func (f *clientFile) agentOp(m string, call *ast.CallExpr, it *clientItem) (op c
 	case "Host", "HostBytes":
 		return op, clientHostReason
 	case "SetResponse", "Dest", "RetryIf":
-		return op, clientUnsupported(m + "() has no v3 equivalent (use the client.Response that Send returns, or client.NewWithHostClient for fasthttp tuning)")
+		return op, clientUnsupported(m + "() has no counterpart in the v3 client")
 	default:
 		return op, clientUnsupported(m + "()")
 	}
@@ -362,7 +362,7 @@ func clientHeaderOp(op clientOp, call string, keyExpr ast.Expr, key, val string,
 	}
 	switch op.header {
 	case "host":
-		return op, "a Host header (the v3 client cannot send a Host header that differs from the URL)"
+		return op, "a Host header: the v3 client cannot send one that differs from the URL"
 	case "user-agent":
 		// The v3 client sets these two headers itself, from the user agent and
 		// the referer of the request, and discards what a header call set.
@@ -447,7 +447,7 @@ func clientQueryOp(op clientOp, arg ast.Expr) (clientOp, clientUnsupported) {
 	}
 	lit, ok := clientStringLit(arg)
 	if !ok {
-		return op, "QueryString() with a value that is not a string literal (put the query in the URL instead)"
+		return op, "QueryString() with a value that is not a string literal"
 	}
 	pairs, ok := clientParseQuery(lit)
 	if !ok {

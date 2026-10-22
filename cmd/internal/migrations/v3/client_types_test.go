@@ -58,10 +58,6 @@ func viaParam(a *fiber.Agent) (int, error) {
 	}
 	return code, nil
 }
-
-type holder struct {
-	agent *fiber.Agent
-}
 `,
 			},
 			want: map[string]string{
@@ -112,14 +108,127 @@ func viaParam(a *client.Request) (int, error) {
 	code := resp.StatusCode()
 	return code, nil
 }
+`,
+			},
+		},
+		{
+			name: "agents_with_a_field_stay_on_the_copy",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+)
+
+func newReq(url string) *fiber.Agent {
+	return fiber.Get(url).Set("Accept", "application/json")
+}
+
+func send(a *fiber.Agent) ([]byte, error) {
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
+func build(method, url string) *fiber.Agent {
+	a := fiber.AcquireAgent()
+	req := a.Request()
+	req.Header.SetMethod(method)
+	req.SetRequestURI(url)
+	return a
+}
+
+func useHelpers(url string) ([]byte, error) {
+	a := build(fiber.MethodPost, url)
+	a.Set("X-Id", "1")
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
+func viaParam(a *fiber.Agent) (int, error) {
+	a.Set("X-Trace", "1")
+	code, _, errs := a.Bytes()
+	if len(errs) > 0 {
+		return 0, errs[0]
+	}
+	return code, nil
+}
 
 type holder struct {
 	agent *fiber.Agent
 }
 `,
 			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+)
+
+func newReq(url string) *fiberMigrateAgent {
+	return fiberMigrateGet(url).Set("Accept", "application/json")
+}
+
+func send(a *fiberMigrateAgent) ([]byte, error) {
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
+func build(method, url string) *fiberMigrateAgent {
+	a := fiberMigrateAcquireAgent()
+	req := a.Request()
+	req.Header.SetMethod(method)
+	req.SetRequestURI(url)
+	return a
+}
+
+func useHelpers(url string) ([]byte, error) {
+	a := build(fiber.MethodPost, url)
+	a.Set("X-Id", "1")
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
+func viaParam(a *fiberMigrateAgent) (int, error) {
+	a.Set("X-Trace", "1")
+	code, _, errs := a.Bytes()
+	if len(errs) > 0 {
+		return 0, errs[0]
+	}
+	return code, nil
+}
+
+type holder struct {
+	agent *fiberMigrateAgent
+}
+`,
+			},
+			// The field keeps the type of the agents of the package, so none of the
+			// functions that make, take or return one can move to the client package.
 			notes: []string{
-				"main.go:50: `fiber.Agent` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:8: " + clientShareNote,
+				"main.go:11: " + clientShareNote,
+				"main.go:20: " + clientShareNote,
+				"main.go:28: " + clientShareNote,
+				"main.go:40: " + clientShareNote,
 			},
 		},
 		{

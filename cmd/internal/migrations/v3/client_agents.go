@@ -20,8 +20,18 @@ func (f *clientFile) isAgentPtr(t ast.Expr) (*ast.SelectorExpr, bool) {
 
 // renameAgentTypes points the *fiber.Agent parameters and results of functions
 // at *client.Request, the v3 type that holds a request that was not sent yet.
-func (f *clientFile) renameAgentTypes(ft *ast.FuncType) {
-	for _, fl := range []*ast.FieldList{ft.Params, ft.Results} {
+// stack holds the ancestors of the function type.
+//
+// The agents a function returns reach the code that calls it, which the
+// migration only follows for the functions of the package with a single result
+// (agentFromHelper): the results of every other function keep their type, and with
+// it the package keeps its agents on the copy of the v2 agent.
+func (f *clientFile) renameAgentTypes(ft *ast.FuncType, stack []ast.Node) {
+	lists := []*ast.FieldList{ft.Params}
+	if f.agentResultsFollowed(ft, stack) {
+		lists = append(lists, ft.Results)
+	}
+	for _, fl := range lists {
 		if fl == nil {
 			continue
 		}
@@ -35,6 +45,16 @@ func (f *clientFile) renameAgentTypes(ft *ast.FuncType) {
 			f.handled[sel] = true
 		}
 	}
+}
+
+// agentResultsFollowed reports whether the agent a function returns is followed
+// to the code that calls it.
+func (f *clientFile) agentResultsFollowed(ft *ast.FuncType, stack []ast.Node) bool {
+	if len(stack) == 0 || !clientReturnsAgent(ft, f.fiber) {
+		return false
+	}
+	decl, ok := stack[len(stack)-1].(*ast.FuncDecl)
+	return ok && decl.Recv == nil
 }
 
 // agentParams migrates the uses of the parameters and named results of a
@@ -76,6 +96,7 @@ func (f *clientFile) agentFromHelper(l clientList, idx int) *clientUnit {
 	if !ok || !f.pkgs.agentFunc(f.dir(), f.g.file.Name.Name, fn.Name) {
 		return nil
 	}
+	f.helperCalls[call] = true
 	return &clientUnit{f: f, list: l, idx: idx, kind: clientExternal, varName: id.Name, anchor: s}
 }
 

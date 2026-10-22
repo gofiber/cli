@@ -223,12 +223,11 @@ func escapes(url string, use func(*fiber.Agent)) {
 
 import (
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/client"
 )
 
 func hostHeader(url string) ([]byte, error) {
-	a := fiber.AcquireAgent()
-	defer fiber.ReleaseAgent(a)
+	a := fiberMigrateAcquireAgent()
+	defer fiberMigrateReleaseAgent(a)
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)
@@ -244,7 +243,7 @@ func hostHeader(url string) ([]byte, error) {
 }
 
 func parseOnly(url string) error {
-	a := fiber.AcquireAgent()
+	a := fiberMigrateAcquireAgent()
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)
@@ -254,9 +253,9 @@ func parseOnly(url string) error {
 	return nil
 }
 
-func escapes(url string, use func(*client.Request)) {
-	a := fiber.AcquireAgent()
-	defer fiber.ReleaseAgent(a)
+func escapes(url string, use func(*fiberMigrateAgent)) {
+	a := fiberMigrateAcquireAgent()
+	defer fiberMigrateReleaseAgent(a)
 	req := a.Request()
 	req.SetRequestURI(url)
 	go use(a)
@@ -264,9 +263,9 @@ func escapes(url string, use func(*client.Request)) {
 `,
 			},
 			notes: []string{
-				"main.go:8: left as Fiber v2 code: Host(): the v3 client cannot send a Host header that differs from the URL (use a custom dialer, client.New().SetDial(...), with the virtual host in the URL)",
-				"main.go:25: left as Fiber v2 code: Parse() is checked, but no request is sent after it in the same block",
-				"main.go:36: left as Fiber v2 code: `go use(a)` is not understood by the migration",
+				"main.go:8: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+				"main.go:25: Parse() is checked, but no request is sent after it in the same block" + clientShimNote,
+				"main.go:36: `go use(a)` is not understood by the migration" + clientShimNote,
 			},
 		},
 		{
@@ -746,8 +745,8 @@ func inlineRequest(url string) ([]byte, error) {
 }
 
 func parseReadLater(url string) ([]byte, error) {
-	a := fiber.AcquireAgent()
-	defer fiber.ReleaseAgent(a)
+	a := fiberMigrateAcquireAgent()
+	defer fiberMigrateReleaseAgent(a)
 	req := a.Request()
 	req.Header.SetMethod(fiber.MethodGet)
 	req.SetRequestURI(url)
@@ -764,7 +763,7 @@ func parseReadLater(url string) ([]byte, error) {
 `,
 			},
 			notes: []string{
-				"main.go:40: left as Fiber v2 code: the error of Parse() is read after the request is sent, where it was nil in v2",
+				"main.go:40: the error of Parse() is read after the request is sent, where it was nil in v2" + clientShimNote,
 			},
 		},
 		{

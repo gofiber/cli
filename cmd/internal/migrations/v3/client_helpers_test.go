@@ -19,7 +19,9 @@ import (
 type clientRun struct {
 	files  map[string]string
 	output string
-	notes  []string
+	// dir is the directory the files were migrated in.
+	dir   string
+	notes []string
 }
 
 // clientRunMigration writes files (name to content) into a fresh directory,
@@ -32,14 +34,16 @@ func clientRunMigration(t *testing.T, files map[string]string) clientRun {
 	dir := t.TempDir()
 	for name, content := range files {
 		content = strings.ReplaceAll(content, "github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v3")
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	}
 
 	var buf bytes.Buffer
 	cmd := newCmd(&buf)
 	require.NoError(t, v3.MigrateClientUsage(cmd, dir, nil, nil))
 
-	run := clientRun{files: map[string]string{}, output: buf.String()}
+	run := clientRun{files: map[string]string{}, output: buf.String(), dir: dir}
 	for name := range files {
 		b, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304
 		require.NoError(t, err)
@@ -114,3 +118,15 @@ func clientRunCases(t *testing.T, cases []clientCase) {
 		})
 	}
 }
+
+// clientShimNote ends the note of a request that stays on the copy of the Fiber v2
+// agent.
+const clientShimNote = "; this request still runs on the copy of the Fiber v2 agent in fiber_migrate_agent.go"
+
+// clientShareNote is the note of a request that could be migrated but shares its
+// agent with code that cannot.
+const clientShareNote = "its agent is shared with code that stays on the copy of the Fiber v2 agent in fiber_migrate_agent.go, so this request does too"
+
+// clientShareClientNote is the note of a request that could be migrated but shares
+// its client with requests that cannot.
+const clientShareClientNote = "its client is shared with requests that stay on the copy of the Fiber v2 agent in fiber_migrate_agent.go, so this request does too"
