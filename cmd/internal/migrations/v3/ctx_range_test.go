@@ -557,7 +557,7 @@ func handler(c *fiber.Ctx) error {
 `,
 		},
 		{
-			name: "a field, a channel, an interface and a return that are not declared as a range",
+			name: "a field, a channel, an interface and a return that are declared with a type are followed through it",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -582,10 +582,35 @@ func handler(c *fiber.Ctx, h *holder, ch chan fiber.RangeSet) (any, error) {
 	return r.Ranges[0], nil
 }
 `,
-			notes: []string{"main.go:17: " + note + " (4 more in this project)"},
 		},
 		{
-			name: "the results of c.Range that are not assigned",
+			name: "ranges that go to a place of a type that is not known are reported",
+			in: `package main
+
+import (
+	"example.com/web"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+type holder struct {
+	out web.Sink
+}
+
+func handler(c *fiber.Ctx, h *holder, s web.Sink) error {
+	r, err := c.Range(10)
+	if err != nil {
+		return err
+	}
+	h.out = r
+	s.Send(r.Ranges[0])
+	return nil
+}
+`,
+			notes: []string{"main.go:18: " + note + " (1 more in this project)"},
+		},
+		{
+			name: "the results of c.Range that are not assigned go where they are declared to go",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -604,24 +629,19 @@ func third(c *fiber.Ctx) {
 
 func consume(r fiber.Range, err error) {}
 `,
-			notes: []string{"main.go:10: " + note + " (1 more in this project)"},
 		},
 		{
-			name: "c.Range used as a value",
+			name: "the results of c.Range that go to a function of another package are reported",
 			in: `package main
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"example.com/web"
 
-type other struct{}
+	"github.com/gofiber/fiber/v2"
+)
 
-func (other) Range(int) (int, error) { return 0, nil }
-
-func handler(c *fiber.Ctx, o other) int {
-	f := c.Range
-	g := o.Range
-	_, _ = g(1)
-	r, _ := f(10)
-	return r.Ranges[0].Start
+func handler(c *fiber.Ctx) {
+	web.Consume(c.Range(10))
 }
 `,
 			notes: []string{"main.go:10: " + note},
@@ -646,7 +666,7 @@ func handler(c *fiber.Ctx) error {
 	return nil
 }
 `,
-			notes: []string{"main.go:14: " + note},
+			notes: []string{"main.go:14: the address of the Start or the End of a fiber.RangeSet is a *int64 in Fiber v3, where it was a *int"},
 		},
 	})
 }

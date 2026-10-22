@@ -67,7 +67,7 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		if sel, isSel := n.(*ast.SelectorExpr); isSel {
-			ctxNoteRedirectValue(noter, env, sel, stack)
+			ctxQueueRedirectValue(&plan, noter, env, sel, stack)
 			return true
 		}
 		call, ok := n.(*ast.CallExpr)
@@ -75,7 +75,7 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
+		if !ok || env.isCtxType(sel.X) {
 			return true
 		}
 
@@ -109,19 +109,36 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	return plan.apply(content)
 }
 
-// ctxNoteRedirectValue reports a redirect method of the context that is used as a
-// value, without being called, which no call of the builder can stand in for.
-func ctxNoteRedirectValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
-	if _, isCall := ctxParentCall(sel, stack); isCall {
+// ctxQueueRedirectValue queues the replacement of a redirect method that is used
+// as a value, without being called, with a function literal that has the
+// signature of the v2 method and calls the builder of v3 (see ctxValueBuilder).
+func ctxQueueRedirectValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+	method := sel.Sel.Name
+	if _, ok := ctxRedirectTarget[method]; !ok {
 		return
 	}
-	if _, ok := ctxRedirectTarget[sel.Sel.Name]; !ok {
-		return
+
+	// A method expression, (*fiber.Ctx).Redirect, is a value even when it is
+	// called: the context is its first argument.
+	kind := ctxYes
+	if !env.isCtxType(sel.X) {
+		if _, isCall := ctxParentCall(sel, stack); isCall {
+			return
+		}
+		kind = env.receiverKind(sel, stack)
 	}
-	if kind, _ := env.receiverKindVia(sel, stack, ctxRedirect); kind == ctxYes {
-		noter.notef(sel.Pos(),
-			"%s is used as a value, which does not exist in Fiber v3: call the Redirect() builder (Status(code).To, Back or Route) from a function literal instead",
-			env.g.text(sel))
+	switch kind {
+	case ctxYes:
+		b := env.newValueBuilder(sel, stack, ctxMembersRedirect)
+		plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.redirect(method))) })
+	case ctxUnknown:
+		// Redirect alone is too common a name to tell anything.
+		if method != ctxRedirect {
+			noter.notef(sel.Pos(),
+				"%s looks like a Fiber v2 context method used as a value, but %s is not known to be a fiber context here, so it was left as is: in v3 call Redirect().%s(...) from a function literal",
+				env.g.text(sel), env.g.text(sel.X), ctxRedirectTarget[method].method)
+		}
+	case ctxNo:
 	}
 }
 
@@ -294,7 +311,7 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 		}
 		body += "return " + recv + ".Redirect().Status(" + status + ")." + target.method + "(" + strings.Join(args, ", ") + ")"
 
-		text := lit.text("error", body)
+		text := lit.text(ctxLitError, body)
 		if comments := ctxStrayComments(g, call, append(slices.Clone(before), statuses[0])); len(comments) > 0 {
 			text += " " + strings.Join(comments, " ")
 		}

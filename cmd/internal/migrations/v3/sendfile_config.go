@@ -53,13 +53,18 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var edits editSet
+	var values ctxPlan
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if sel, isSel := n.(*ast.SelectorExpr); isSel {
+			ctxQueueSendFileValue(&values, env, sel, stack)
+			return true
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
+		if !ok || env.isCtxType(sel.X) {
 			return true
 		}
 
@@ -86,7 +91,27 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 		return true
 	})
 
+	values.run(&edits)
 	return edits.apply(content)
+}
+
+// ctxQueueSendFileValue queues the replacement of c.SendFile used as a value,
+// without being called, with a function literal that has the signature of the v2
+// method: the compress flag moves into the config (see ctxValueBuilder).
+func ctxQueueSendFileValue(plan *ctxPlan, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+	if sel.Sel.Name != mw3SendFile {
+		return
+	}
+
+	// A method expression, (*fiber.Ctx).SendFile, is a value even when it is
+	// called: the context is its first argument.
+	if !env.isCtxType(sel.X) {
+		if _, isCall := ctxParentCall(sel, stack); isCall || env.receiverKind(sel, stack) != ctxYes {
+			return
+		}
+	}
+	b := env.newValueBuilder(sel, stack, nil)
+	plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.sendFile())) })
 }
 
 // rewriteSendFileCall schedules the edits that move the arguments of a

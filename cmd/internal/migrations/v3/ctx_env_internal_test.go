@@ -171,6 +171,11 @@ func ctxKindsOf(t *testing.T, src string) map[string]ctxKind {
 	t.Helper()
 
 	env, g := ctxEnvOf(t, src)
+	return ctxKindsWith(g, env)
+}
+
+// ctxKindsWith is ctxKindsOf for an environment that is built already.
+func ctxKindsWith(g *goSource, env *ctxEnv) map[string]ctxKind {
 	got := map[string]ctxKind{}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -225,6 +230,15 @@ func (shadowMethod) probe(string) {}
 
 type nested struct{ h *holder }
 
+type getter func() *f.Ctx
+
+type source struct {
+	get   func() *f.Ctx
+	named getter
+}
+
+var pick = func() *f.Ctx { return nil }
+
 func (h *holder) self() *holder   { return h }
 func (h *holder) get() *f.Ctx     { return h.c }
 func (w *wrapper) inner() *f.Ctx  { return w.Ctx }
@@ -234,7 +248,7 @@ func ctxs() []*f.Ctx              { return nil }
 
 var global *f.Ctx
 
-func handlers(c *f.Ctx, sh *shadow, sm *shadowMethod, w *wrapper, p plain, h *holder, n nested, alias Ctx, ext *web.Ctx, cs []*f.Ctx, byName map[string]*f.Ctx) {
+func handlers(c *f.Ctx, sh *shadow, sm *shadowMethod, w *wrapper, p plain, h *holder, n nested, alias Ctx, ext *web.Ctx, cs []*f.Ctx, byName map[string]*f.Ctx, src *source, param func() *f.Ctx) {
 	c.probe("param")
 	w.probe("embedding struct")
 	p.probe("other struct")
@@ -260,6 +274,24 @@ func handlers(c *f.Ctx, sh *shadow, sm *shadowMethod, w *wrapper, p plain, h *ho
 	unknown.probe("undeclared")
 	web.Current(c).probe("call of another package")
 
+	local := func() *f.Ctx { return c }
+	local().probe("local function value")
+	var declaredFn func() *f.Ctx
+	declaredFn().probe("declared function value")
+	var named getter
+	named().probe("named function type")
+	pick().probe("package level function value")
+	param().probe("function parameter")
+	func() *f.Ctx { return c }().probe("literal called at once")
+	src.get().probe("function field")
+	src.named().probe("function field of a named type")
+	other := func() *plain { return nil }
+	other().probe("function value of another type")
+	{
+		current := func() plain { return plain{} }
+		current().probe("function value that hides a function")
+	}
+
 	app := f.New()
 	acquired := app.AcquireCtx(&fasthttp.RequestCtx{})
 	acquired.probe("acquired")
@@ -283,39 +315,49 @@ func handlers(c *f.Ctx, sh *shadow, sm *shadowMethod, w *wrapper, p plain, h *ho
 `
 	got := ctxKindsOf(t, src)
 	want := map[string]ctxKind{
-		`"param"`:                       ctxYes,
-		`"embedding struct"`:            ctxYes,
-		`"other struct"`:                ctxNo,
-		`"own field"`:                   ctxNo,
-		`"own method"`:                  ctxNo,
-		`"field"`:                       ctxYes,
-		`"field called like the type"`:  ctxYes,
-		`"int field"`:                   ctxNo,
-		`"method result then field"`:    ctxYes,
-		`"method result"`:               ctxYes,
-		`"embedded method result"`:      ctxYes,
-		`"nested field"`:                ctxYes,
-		`"alias"`:                       ctxYes,
-		`"another package"`:             ctxNo,
-		`"package variable"`:            ctxYes,
-		`"function result"`:             ctxYes,
-		`"function result field"`:       ctxYes,
-		`"slice element"`:               ctxYes,
-		`"map element"`:                 ctxYes,
-		`"chain"`:                       ctxYes,
-		`"longer chain"`:                ctxYes,
-		`"parenthesized"`:               ctxYes,
-		`"undeclared"`:                  ctxUnknown,
-		`"call of another package"`:     ctxUnknown,
-		`"acquired"`:                    ctxYes,
-		`"copy"`:                        ctxYes,
-		`"var"`:                         ctxYes,
-		`"var inferred"`:                ctxYes,
-		`"composite literal"`:           ctxYes,
-		`"assertion"`:                   ctxYes,
-		`"shadowing closure parameter"`: ctxNo,
-		`"shadowing variable"`:          ctxNo,
-		`"param again"`:                 ctxYes,
+		`"param"`:                                ctxYes,
+		`"embedding struct"`:                     ctxYes,
+		`"other struct"`:                         ctxNo,
+		`"own field"`:                            ctxNo,
+		`"own method"`:                           ctxNo,
+		`"field"`:                                ctxYes,
+		`"field called like the type"`:           ctxYes,
+		`"int field"`:                            ctxNo,
+		`"method result then field"`:             ctxYes,
+		`"method result"`:                        ctxYes,
+		`"embedded method result"`:               ctxYes,
+		`"nested field"`:                         ctxYes,
+		`"alias"`:                                ctxYes,
+		`"another package"`:                      ctxNo,
+		`"package variable"`:                     ctxYes,
+		`"function result"`:                      ctxYes,
+		`"function result field"`:                ctxYes,
+		`"slice element"`:                        ctxYes,
+		`"map element"`:                          ctxYes,
+		`"chain"`:                                ctxYes,
+		`"longer chain"`:                         ctxYes,
+		`"parenthesized"`:                        ctxYes,
+		`"undeclared"`:                           ctxUnknown,
+		`"call of another package"`:              ctxUnknown,
+		`"local function value"`:                 ctxYes,
+		`"declared function value"`:              ctxYes,
+		`"named function type"`:                  ctxYes,
+		`"package level function value"`:         ctxYes,
+		`"function parameter"`:                   ctxYes,
+		`"literal called at once"`:               ctxYes,
+		`"function field"`:                       ctxYes,
+		`"function field of a named type"`:       ctxYes,
+		`"function value of another type"`:       ctxNo,
+		`"function value that hides a function"`: ctxNo,
+		`"acquired"`:                             ctxYes,
+		`"copy"`:                                 ctxYes,
+		`"var"`:                                  ctxYes,
+		`"var inferred"`:                         ctxYes,
+		`"composite literal"`:                    ctxYes,
+		`"assertion"`:                            ctxYes,
+		`"shadowing closure parameter"`:          ctxNo,
+		`"shadowing variable"`:                   ctxNo,
+		`"param again"`:                          ctxYes,
 	}
 	assert.Equal(t, want, got)
 }
@@ -359,12 +401,15 @@ type a struct{ ctx *fiber.Ctx }
 type b struct{ ctx string }
 
 func handlers(list []a) {
-	for _, s := range list {
+	for _, s := range lookup() {
 		s.ctx.probe("ambiguous")
+	}
+	for _, s := range list {
+		s.ctx.probe("the range variable has the element type")
 	}
 }
 `,
-			want: map[string]ctxKind{`"ambiguous"`: ctxUnknown},
+			want: map[string]ctxKind{`"ambiguous"`: ctxUnknown, `"the range variable has the element type"`: ctxYes},
 		},
 		{
 			name: "fields of embedded structs",
@@ -406,8 +451,8 @@ func handlers(ps pair) {
 				`"new"`:                      ctxYes,
 				`"conversion"`:               ctxYes,
 				`"array literal element"`:    ctxYes,
-				`"element of a named array"`: ctxUnknown,
-				`"make"`:                     ctxUnknown,
+				`"element of a named array"`: ctxYes,
+				`"make"`:                     ctxYes,
 				`"slice"`:                    ctxNo,
 			},
 		},

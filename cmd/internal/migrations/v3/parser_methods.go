@@ -73,6 +73,20 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 			return true
 		}
 
+		// A method expression, (*fiber.Ctx).BodyParser, takes the context as its
+		// first parameter: it becomes a function literal that does.
+		if env.isCtxType(sel.X) {
+			b := env.newValueBuilder(sel, stack, ctxMembersBind)
+			plan.add(func(e *editSet) {
+				v := b.parser(sel.Sel.Name)
+				if sel.Sel.Name == ctxAllParams {
+					v = b.allParams()
+				}
+				e.replaceNode(g, sel, b.text(e, v))
+			})
+			return true
+		}
+
 		kind, via := env.receiverKindVia(sel, stack, "Bind")
 		switch kind {
 		case ctxYes:
@@ -110,15 +124,19 @@ func ctxParserHint(sel *ast.SelectorExpr) string {
 //
 // A call becomes a literal that is called at once with the context. The method
 // value c.AllParams, which is not called, becomes the literal itself, a
-// func() map[string]string: a context that is a plain variable is used by the
-// literal as it is, any other receiver is evaluated where the method value was,
-// as Go does, and handed to the literal that returns the function. A type that
-// embeds the context hands the embedded context over, as AllParams of v2 used
-// that one and not what the type declares.
+// func() map[string]string, bound to its receiver as a method value is (see
+// ctxValueBuilder). A type that embeds the context hands the embedded context
+// over, as AllParams of v2 used that one and not what the type declares.
 func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node, via string) {
 	call, isCall := ctxParentCall(sel, stack)
 	if isCall && len(call.Args) != 0 {
 		noter.notef(sel.Pos(), "AllParams does not exist in Fiber v3: build the map with a loop over c.Route().Params that calls c.Params(name)")
+		return
+	}
+
+	if !isCall {
+		b := env.newValueBuilder(sel, stack, ctxMembersAll)
+		plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.allParams())) })
 		return
 	}
 
@@ -133,19 +151,7 @@ func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.Sel
 		if via != "" {
 			recv += "." + via
 		}
-		ctxType := env.qual(ctxTypeCtx)
-
-		switch id, isIdent := sel.X.(*ast.Ident); {
-		case isCall:
-			e.replaceNode(env.g, call, "func(c "+ctxType+") map[string]string {\n"+ctxAllParamsBody("c", "params", "name")+"\n}("+recv+")")
-		case isIdent && via == "":
-			namer := newCtxNamer([]ast.Expr{id})
-			params, name := namer.fresh("params"), namer.fresh("name")
-			e.replaceNode(env.g, sel, "func() map[string]string {\n"+ctxAllParamsBody(id.Name, params, name)+"\n}")
-		default:
-			e.replaceNode(env.g, sel, "func(c "+ctxType+") func() map[string]string {\nreturn func() map[string]string {\n"+
-				ctxAllParamsBody("c", "params", "name")+"\n}\n}("+recv+")")
-		}
+		e.replaceNode(env.g, call, "func(c "+env.qual(ctxTypeCtx)+") map[string]string {\n"+ctxAllParamsBody("c", "params", "name")+"\n}("+recv+")")
 	})
 }
 

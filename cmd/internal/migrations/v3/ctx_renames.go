@@ -27,7 +27,9 @@ const (
 //	c.Range(size)      c.Range(int64(size)) the size is int64 in v3, and so are the Start and End of the ranges:
 //	                                        where they are read, int(rs.Start) gives the int of v2
 //
-// Only methods of a fiber context are rewritten.
+// The same goes for the methods used as values (f := c.Protocol becomes
+// f := c.Scheme; f := c.Range a function literal with the signature of v2) and
+// as method expressions. Only methods of a fiber context are rewritten.
 func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -46,7 +48,7 @@ func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 }
 
 func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string {
-	if !ctxContainsAny(content, ".Format(", ".Protocol(", ".Hostname(", ctxTypeRange) {
+	if !ctxContainsAny(content, ".Format", ".Protocol", ".Hostname", ctxTypeRange) {
 		return content
 	}
 	names := fiberNames(content)
@@ -63,44 +65,64 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
+		call, isCall := ctxParentCall(sel, stack)
+		// A method expression, (*fiber.Ctx).Range, is a value even when it is called:
+		// the context is its first argument.
+		expr := env.isCtxType(sel.X)
+		isValue := !isCall || expr
 
 		rename, wrap := "", false
-		switch {
-		case sel.Sel.Name == ctxFormat && len(call.Args) == 1 && !call.Ellipsis.IsValid() && !ctxIsResFmt(env, call.Args[0], stack):
+		switch sel.Sel.Name {
+		case ctxFormat:
+			if !isValue && (len(call.Args) != 1 || call.Ellipsis.IsValid() || ctxIsResFmt(env, call.Args[0], stack)) {
+				return true
+			}
 			rename = "AutoFormat"
-		case sel.Sel.Name == ctxProtocol && len(call.Args) == 0:
+		case ctxProtocol:
+			if !isValue && len(call.Args) != 0 {
+				return true
+			}
 			rename = "Scheme"
-		case sel.Sel.Name == ctxHostname && len(call.Args) == 0:
+		case ctxHostname:
+			if !isValue && len(call.Args) != 0 {
+				return true
+			}
 			rename = "Host"
-		case sel.Sel.Name == ctxRange && len(call.Args) == 1 && !call.Ellipsis.IsValid():
-			wrap = true
+		case ctxRange:
+			if !isValue && (len(call.Args) != 1 || call.Ellipsis.IsValid()) {
+				return true
+			}
+			wrap = !isValue
 		default:
 			return true
 		}
-		kind, via := env.receiverKindVia(sel, stack, rename)
+
+		kind, via := ctxYes, ""
+		if !expr {
+			kind, via = env.receiverKindVia(sel, stack, rename)
+		}
 		if kind != ctxYes {
 			return true
 		}
 
-		if rename != "" {
+		switch {
+		case rename != "":
 			plan.qualify(g, sel, via)
 			plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, rename) })
 			if rename == "AutoFormat" {
 				noter.oncef("format", sel.Pos(),
 					"AutoFormat negotiates the same formats as Format did, but answers a request without an Accept header in plain text where Format answered with an HTML paragraph")
 			}
-			return true
-		}
-
-		if arg := call.Args[0]; wrap && ctxNeedsInt64(env, arg, stack) {
+		case isValue:
+			// Range as a value is a function that takes an int and returns the ranges
+			b := env.newValueBuilder(sel, stack, nil)
+			plan.add(func(e *editSet) { e.replaceNode(g, sel, b.text(e, b.rangeOf())) })
+		case wrap && ctxNeedsInt64(env, call.Args[0], stack):
+			arg := call.Args[0]
 			plan.add(func(e *editSet) {
 				e.replaceNode(g, arg, "int64("+ctxRenderNode(e, g, arg)+")")
 			})
