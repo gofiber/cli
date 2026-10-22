@@ -29,14 +29,14 @@ func ctxRenderNode(e *editSet, g *goSource, n ast.Node) string {
 }
 
 // ctxStrayComments returns the comments between the parentheses of call that
-// are not part of one of its arguments, as block comments, which are safe in any
-// position of an expression. A rewrite that moves the arguments around would
-// drop them.
-func ctxStrayComments(g *goSource, call *ast.CallExpr) []string {
+// are not part of one of the arguments that are kept, as block comments, which
+// are safe in any position of an expression. A rewrite that moves the arguments
+// around, or drops some, would lose them.
+func ctxStrayComments(g *goSource, call *ast.CallExpr, kept []ast.Expr) []string {
 	var stray []string
 	for _, group := range g.file.Comments {
 		for _, c := range group.List {
-			if c.Pos() < call.Lparen || c.End() > call.Rparen || ctxWithinAny(c, call.Args) {
+			if c.Pos() < call.Lparen || c.End() > call.Rparen || ctxWithinAny(c, kept) {
 				continue
 			}
 			text := c.Text
