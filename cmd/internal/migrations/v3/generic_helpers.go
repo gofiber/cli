@@ -74,16 +74,10 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	if !ctxContainsAny(content, ctxParamsInt, "QueryInt", "QueryFloat", "QueryBool") {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	strconvName := ctxImportName(content, "strconv", "strconv")
 	if strconvName == "" {
@@ -109,7 +103,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || env.isCtxType(sel.X) {
+		if !ok || env.isCtxType(sel.X, stack) {
 			return true
 		}
 		helper, ok := ctxGenericHelpers[sel.Sel.Name]
@@ -165,7 +159,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 		return true
 	})
 
-	out := plan.apply(content)
+	out := env.finish(content, plan.apply(content))
 	if needStrconv {
 		out = ctxAddImport(out, "strconv", "strconv")
 	}
@@ -188,7 +182,7 @@ func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.S
 	// A method expression, (*fiber.Ctx).QueryInt, is a value even when it is
 	// called: the context is its first argument.
 	kind := ctxYes
-	if !env.isCtxType(sel.X) {
+	if !env.isCtxType(sel.X, stack) {
 		if _, isCall := ctxParentCall(sel, stack); isCall {
 			return false
 		}

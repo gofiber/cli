@@ -77,6 +77,12 @@ func ctxImportName(src, path, def string) string {
 // import is put next to the import that shares the most of its path, so that it
 // lands in the right group of the import block.
 func ctxAddImport(src, path, def string) string {
+	return ctxAddImportAs(src, path, def, "")
+}
+
+// ctxAddImportAs is ctxAddImport for an import that gets the name alias, when that
+// is not empty.
+func ctxAddImportAs(src, path, def, alias string) string {
 	if ctxImportName(src, path, def) != "" {
 		return src
 	}
@@ -87,6 +93,9 @@ func ctxAddImport(src, path, def string) string {
 		return src
 	}
 	spec := strconv.Quote(path)
+	if alias != "" {
+		spec = alias + " " + spec
+	}
 
 	for _, decl := range file.Decls {
 		gd, ok := decl.(*ast.GenDecl)

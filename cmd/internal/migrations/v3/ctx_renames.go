@@ -51,16 +51,10 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 	if !ctxContainsAny(content, ".Format", ".Protocol", ".Hostname", ctxTypeRange) {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -72,7 +66,7 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 		call, isCall := ctxParentCall(sel, stack)
 		// A method expression, (*fiber.Ctx).Range, is a value even when it is called:
 		// the context is its first argument.
-		expr := env.isCtxType(sel.X)
+		expr := env.isCtxType(sel.X, stack)
 		isValue := !isCall || expr
 
 		rename, wrap := "", false
@@ -133,7 +127,7 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 	// The Start and End of the ranges are int64 in v3, where v2 had int.
 	ctxQueueRangeReads(&plan, noter, env)
 
-	return plan.apply(content)
+	return env.finish(content, plan.apply(content))
 }
 
 // ctxIsResFmt reports whether arg is a ResFmt, which only Format of v3 takes: such

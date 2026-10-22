@@ -58,12 +58,27 @@ type ctxEnv struct {
 	// the declarations of the file by the name they declare, in any scope.
 	declTypes map[string][]ast.Expr
 	declInits map[string][]ast.Expr
+	// mod reaches the other packages of the module, nil outside of one (see attach).
+	mod *ctxModule
+	// imports are the imports of the file, known with a module.
+	imports *ctxImports
+	// declFile is the file that declares each type, function, method and variable
+	// of the package that the environment knows.
+	declFile map[ast.Node]*ast.File
+	// alias is the name the fiber package gets in a file that imports none: fiber,
+	// unless the file or its package gives that name to something else.
+	alias string
 	// names are the identifiers the file binds to the core fiber package.
 	names []string
 	// pkgNames are the names the file and the other files of its package bind
 	// to the fiber package: the declarations of those files are part of the
 	// environment, and they spell the fiber types their own way.
 	pkgNames []string
+	// files are the other files of the package.
+	files []*ast.File
+	// usedFiber is set once a rewrite spelled the qualifier of the fiber package
+	// for a file that imports none (see finish).
+	usedFiber bool
 }
 
 // ctxPkgVar is a package-level variable: its declaration and the position of the
@@ -93,6 +108,7 @@ func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 		methods:  map[string]*ast.FuncDecl{},
 		fields:   map[string][]ast.Expr{},
 		pkgVars:  map[string]ctxPkgVar{},
+		declFile: map[ast.Node]*ast.File{},
 
 		declTypes: map[string][]ast.Expr{},
 		declInits: map[string][]ast.Expr{},
@@ -100,6 +116,7 @@ func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 
 	env.index(g.file)
 	for _, sibling := range siblings {
+		env.files = append(env.files, sibling.file)
 		env.index(sibling.file)
 		for _, name := range sibling.names {
 			if name != "." && !slices.Contains(env.pkgNames, name) {
@@ -142,6 +159,7 @@ func (env *ctxEnv) index(file *ast.File) {
 				case *ast.TypeSpec:
 					if env.typeDecl[sp.Name.Name] == nil {
 						env.typeDecl[sp.Name.Name] = sp
+						env.declFile[sp] = file
 					}
 				case *ast.ValueSpec:
 					if d.Tok != token.VAR {
@@ -150,6 +168,7 @@ func (env *ctxEnv) index(file *ast.File) {
 					for i, id := range sp.Names {
 						if _, known := env.pkgVars[id.Name]; !known {
 							env.pkgVars[id.Name] = ctxPkgVar{spec: sp, index: i}
+							env.declFile[sp] = file
 						}
 					}
 				}
@@ -159,10 +178,27 @@ func (env *ctxEnv) index(file *ast.File) {
 				recv := ctxTypeName(ctxFirstFieldType(d.Recv))
 				if key := recv + "." + d.Name.Name; recv != "" && env.methods[key] == nil {
 					env.methods[key] = d
+					env.declFile[d] = file
 				}
 			} else if env.funcDecl[d.Name.Name] == nil {
 				env.funcDecl[d.Name.Name] = d
+				env.declFile[d] = file
 			}
+		}
+	}
+}
+
+// ctxDerefType returns the type a pointer type points to, the type itself for any
+// other.
+func ctxDerefType(t ast.Expr) ast.Expr {
+	for {
+		switch x := t.(type) {
+		case *ast.StarExpr:
+			t = x.X
+		case *ast.ParenExpr:
+			t = x.X
+		default:
+			return t
 		}
 	}
 }
@@ -250,14 +286,33 @@ func ctxQualifier(names []string) string {
 	return "fiber."
 }
 
-// qual returns the file's spelling of the fiber identifier name.
+// qual returns the file's spelling of the fiber identifier name for the code of
+// a rewrite: a file that imports no fiber package gets the import added (see
+// finish).
 func (env *ctxEnv) qual(name string) string {
-	return ctxQualifier(env.names) + name
+	env.usedFiber = true
+	return env.spell(name)
+}
+
+// spell returns the file's spelling of the fiber identifier name for a message,
+// which asks for no import.
+func (env *ctxEnv) spell(name string) string {
+	return env.prefix() + name
+}
+
+// prefix is the qualifier of the fiber package in the file: the name the file
+// binds it to or, when it imports none, the name the import will get.
+func (env *ctxEnv) prefix() string {
+	if len(env.names) == 0 && env.alias != "" {
+		return env.alias + "."
+	}
+	return ctxQualifier(env.names)
 }
 
 // fiberType returns the AST of the fiber type name, as the file spells it.
 func (env *ctxEnv) fiberType(name string) ast.Expr {
-	prefix := ctxQualifier(env.names)
+	env.usedFiber = true
+	prefix := env.prefix()
 	if prefix == "" {
 		return ast.NewIdent(name)
 	}
@@ -295,12 +350,22 @@ func (env *ctxEnv) typeIsAt(t ast.Expr, wanted []string, depth int) ctxKind {
 		if !ok {
 			return ctxUnknown
 		}
-		if slices.Contains(env.pkgNames, id.Name) && slices.Contains(wanted, x.Sel.Name) {
-			return ctxYes
+		if slices.Contains(env.pkgNames, id.Name) {
+			if slices.Contains(wanted, x.Sel.Name) {
+				return ctxYes
+			}
+			return ctxNo
+		}
+		if key := env.qualifiedKey(x); key != "" {
+			// a type of another package of the module: its declaration tells
+			if spec := env.typeSpec(key); spec != nil {
+				return env.specIs(spec, wanted, depth+1)
+			}
+			return ctxUnknown
 		}
 		return ctxNo
 	case *ast.Ident:
-		if spec := env.typeDecl[x.Name]; spec != nil {
+		if spec := env.typeSpec(env.typeKey(x)); spec != nil {
 			return env.specIs(spec, wanted, depth+1)
 		}
 		switch {
@@ -389,7 +454,10 @@ func (env *ctxEnv) typeOfAt(e ast.Expr, stack []ast.Node, depth int) ast.Expr {
 			if t := env.siteTypeOf(x, stack, depth); t != nil {
 				return t
 			}
-			return env.pkgVarType(x.Name, depth)
+			if t := env.pkgVarType(x.Name, depth); t != nil {
+				return t
+			}
+			return env.dotMember(x.Name).valueType()
 		case d.typ != nil:
 			return d.typ
 		case d.init != nil:
@@ -458,6 +526,11 @@ func (env *ctxEnv) siteTypeOf(id *ast.Ident, stack []ast.Node, depth int) ast.Ex
 
 // fieldTypeOf returns the type of the field or method value sel selects.
 func (env *ctxEnv) fieldTypeOf(sel *ast.SelectorExpr, stack []ast.Node, depth int) ast.Expr {
+	// a variable or a function of another package of the module: web.Default
+	if mem := env.pkgMember(sel, stack); mem != nil {
+		return mem.valueType()
+	}
+
 	base := env.typeOfAt(sel.X, stack, depth+1)
 	if base == nil {
 		// a method expression: holder.get, (*holder).get
@@ -468,7 +541,7 @@ func (env *ctxEnv) fieldTypeOf(sel *ast.SelectorExpr, stack []ast.Node, depth in
 	}
 
 	var found ast.Expr
-	if spec := env.typeDecl[ctxTypeName(base)]; spec == nil {
+	if spec := env.typeSpec(env.typeKey(base)); spec == nil {
 		// a struct type written where it is used: s *struct{ c *fiber.Ctx }
 		found = env.structFieldType(base, sel.Sel.Name, depth+1)
 	} else if found = env.structFieldType(spec.Type, sel.Sel.Name, depth+1); found != nil {
@@ -494,8 +567,8 @@ func (env *ctxEnv) methodExprType(sel *ast.SelectorExpr) ast.Expr {
 	if star, ok := x.(*ast.StarExpr); ok {
 		x = ast.Unparen(star.X)
 	}
-	if id, ok := x.(*ast.Ident); ok && env.typeDecl[id.Name] != nil {
-		if ft, _ := env.methodFuncType(id, sel.Sel.Name, 0); ft != nil {
+	if env.typeSpec(env.typeKey(x)) != nil {
+		if ft, _ := env.methodFuncType(x, sel.Sel.Name, 0); ft != nil {
 			return ft
 		}
 	}
@@ -533,8 +606,8 @@ func (env *ctxEnv) structFieldType(t ast.Expr, name string, depth int) ast.Expr 
 		return env.structFieldType(x.X, name, depth+1)
 	case *ast.IndexListExpr:
 		return env.structFieldType(x.X, name, depth+1)
-	case *ast.Ident:
-		if spec := env.typeDecl[x.Name]; spec != nil {
+	case *ast.Ident, *ast.SelectorExpr:
+		if spec := env.typeSpec(env.typeKey(x)); spec != nil {
 			return env.structFieldType(spec.Type, name, depth+1)
 		}
 	case *ast.StructType:
@@ -585,17 +658,25 @@ func (env *ctxEnv) callResults(call *ast.CallExpr, stack []ast.Node, depth int) 
 		return env.identCallResults(call, fun, nil, stack, depth)
 	case *ast.IndexExpr:
 		// f[int](x), or the conversion box[int](x)
-		if id, ok := fun.X.(*ast.Ident); ok {
-			return env.identCallResults(call, id, []ast.Expr{fun.Index}, stack, depth)
-		}
+		return env.instantiatedCallResults(call, fun.X, []ast.Expr{fun.Index}, stack, depth)
 	case *ast.IndexListExpr:
-		if id, ok := fun.X.(*ast.Ident); ok {
-			return env.identCallResults(call, id, fun.Indices, stack, depth)
-		}
+		return env.instantiatedCallResults(call, fun.X, fun.Indices, stack, depth)
 	case *ast.FuncLit:
 		return ctxResultTypes(fun.Type)
 	case *ast.ParenExpr, *ast.StarExpr, *ast.ArrayType, *ast.MapType:
 		return []ast.Expr{fun}
+	}
+	return nil
+}
+
+// instantiatedCallResults is callResults for the call of the generic function or
+// the conversion to the generic type base, with the type arguments given.
+func (env *ctxEnv) instantiatedCallResults(call *ast.CallExpr, base ast.Expr, explicit []ast.Expr, stack []ast.Node, depth int) []ast.Expr {
+	switch x := base.(type) {
+	case *ast.Ident:
+		return env.identCallResults(call, x, explicit, stack, depth)
+	case *ast.SelectorExpr:
+		return env.memberResults(env.pkgMember(x, stack), call, explicit, stack, depth)
 	}
 	return nil
 }
@@ -612,7 +693,7 @@ func (env *ctxEnv) identCallResults(call *ast.CallExpr, id *ast.Ident, explicit 
 
 	switch {
 	case env.funcDecl[id.Name] != nil:
-		return env.funcResults(env.funcDecl[id.Name].Type, call, explicit, stack, depth)
+		return env.funcResults(env.funcDeclOf(id.Name).Type, call, explicit, stack, depth)
 	case env.typeDecl[id.Name] != nil:
 		return []ast.Expr{call.Fun}
 	case id.Name == mw3BuiltinNew && len(call.Args) == 1:
@@ -622,11 +703,40 @@ func (env *ctxEnv) identCallResults(call *ast.CallExpr, id *ast.Ident, explicit 
 	case id.Name == mw3BuiltinAppend && len(call.Args) > 0:
 		return []ast.Expr{env.typeOfAt(call.Args[0], stack, depth+1)}
 	}
+	return env.memberResults(env.dotMember(id.Name), call, explicit, stack, depth)
+}
+
+// memberResults is callResults for the call of a function of another package of
+// the module, or the conversion to one of its types. It is nil when the member is
+// no function or type.
+func (env *ctxEnv) memberResults(mem *ctxMember, call *ast.CallExpr, explicit []ast.Expr, stack []ast.Node, depth int) []ast.Expr {
+	switch {
+	case mem == nil:
+		return nil
+	case mem.fn != nil:
+		return env.funcResults(mem.fn.Type, call, explicit, stack, depth)
+	case mem.spec != nil:
+		return []ast.Expr{call.Fun}
+	}
 	return nil
 }
 
 // methodCallResults is callResults for a call of a selector.
 func (env *ctxEnv) methodCallResults(call *ast.CallExpr, fun *ast.SelectorExpr, stack []ast.Node, depth int) []ast.Expr {
+	// a function of another package of the module: ctxutil.From(c)
+	if mem := env.pkgMember(fun, stack); mem != nil {
+		if results := env.memberResults(mem, call, nil, stack, depth); results != nil {
+			return results
+		}
+		if mem.typ != nil {
+			// a variable that holds a function
+			if held := env.funcTypeOf(mem.typ, depth+1); held != nil {
+				return ctxResultTypes(held)
+			}
+		}
+		return nil
+	}
+
 	switch name := fun.Sel.Name; {
 	case name == "AcquireCtx":
 		return []ast.Expr{env.fiberType(ctxTypeCtx)}
@@ -667,12 +777,12 @@ func (env *ctxEnv) funcTypeOf(t ast.Expr, depth int) *ast.FuncType {
 			return x
 		case *ast.ParenExpr:
 			t = x.X
-		case *ast.Ident:
-			spec := env.typeDecl[x.Name]
+		case *ast.Ident, *ast.SelectorExpr, *ast.IndexExpr, *ast.IndexListExpr:
+			spec := env.typeSpec(env.typeKey(x))
 			if spec == nil {
 				return nil
 			}
-			t = spec.Type
+			t = ctxSubst(spec.Type, ctxBindParams(ctxTypeParams(spec.TypeParams), ctxTypeArgs(x)))
 		default:
 			return nil
 		}
@@ -697,7 +807,7 @@ func (env *ctxEnv) receiverKind(sel *ast.SelectorExpr, stack []ast.Node, introdu
 		return kind
 	}
 
-	if name := ctxTypeName(t); name != "" {
+	if name := env.typeKey(t); name != "" {
 		if env.declares(name, sel.Sel.Name) || slices.ContainsFunc(introduced, func(n string) bool { return env.declares(name, n) }) {
 			return ctxNo
 		}
@@ -718,7 +828,7 @@ func (env *ctxEnv) receiverKindVia(sel *ast.SelectorExpr, stack []ast.Node, intr
 		return kind, ""
 	}
 
-	if name := ctxTypeName(env.typeOf(sel.X, stack)); name == "" || env.declares(name, sel.Sel.Name) {
+	if name := env.typeKey(env.typeOf(sel.X, stack)); name == "" || env.declares(name, sel.Sel.Name) {
 		return ctxNo, ""
 	}
 	if via = env.embeddedCtxOf(sel.X, stack); via == "" {
@@ -732,11 +842,17 @@ func (env *ctxEnv) receiverKindVia(sel *ast.SelectorExpr, stack []ast.Node, intr
 // context it embeds. It is empty when x is no such value.
 func (env *ctxEnv) embeddedCtxOf(x ast.Expr, stack []ast.Node) string {
 	t := env.typeOf(x, stack)
-	name := ctxTypeName(t)
+	name := env.typeKey(t)
 	if name == "" || env.typeIs(t, ctxTypeCtx) != ctxYes {
 		return ""
 	}
-	return strings.Join(env.embeddedCtxPath(name, 0), ".")
+
+	path := env.embeddedCtxPath(name, 0)
+	if ctxIsForeignKey(name) && slices.ContainsFunc(path, func(field string) bool { return !appIsExported(field) }) {
+		// a field of a type of another package that this one can not name
+		return ""
+	}
+	return strings.Join(path, ".")
 }
 
 // embeddedCtxVia is embeddedCtxOf for code that calls members of the context
@@ -748,7 +864,7 @@ func (env *ctxEnv) embeddedCtxVia(x ast.Expr, stack []ast.Node, members []string
 		return env.embeddedCtxOf(x, stack)
 	}
 
-	name := ctxTypeName(env.typeOf(x, stack))
+	name := env.typeKey(env.typeOf(x, stack))
 	if name == "" || !slices.ContainsFunc(members, func(m string) bool { return env.declares(name, m) }) {
 		return ""
 	}
@@ -760,7 +876,7 @@ func (env *ctxEnv) embeddedCtxVia(x ast.Expr, stack []ast.Node, members []string
 // that embeds it, {"Base", "Ctx"} for a type that embeds one that does), nil when
 // it does not embed it.
 func (env *ctxEnv) embeddedCtxPath(typeName string, depth int) []string {
-	spec := env.typeDecl[typeName]
+	spec := env.typeSpec(typeName)
 	if spec == nil || depth > ctxMaxDepth {
 		return nil
 	}
@@ -773,12 +889,12 @@ func (env *ctxEnv) embeddedCtxPath(typeName string, depth int) []string {
 		if len(f.Names) > 0 {
 			continue
 		}
-		if ctxIsFiberType(f.Type, env.pkgNames, ctxTypeCtx) {
+		if ctxIsFiberType(f.Type, env.pkgNames, ctxTypeCtx) || env.isCtxAlias(ast.Unparen(ctxDerefType(f.Type)), nil) {
 			return []string{ctxEmbeddedName(f.Type)}
 		}
 	}
 	for _, f := range st.Fields.List {
-		inner := ctxTypeName(f.Type)
+		inner := env.typeKey(f.Type)
 		if len(f.Names) > 0 || inner == "" || inner == typeName {
 			continue
 		}
@@ -799,10 +915,10 @@ func (env *ctxEnv) declaresAt(typeName, name string, depth int) bool {
 	if depth > ctxMaxDepth {
 		return false
 	}
-	if env.methods[typeName+"."+name] != nil {
+	if env.methodDecl(typeName, name) != nil {
 		return true
 	}
-	spec := env.typeDecl[typeName]
+	spec := env.typeSpec(typeName)
 	if spec == nil {
 		return false
 	}
@@ -815,8 +931,11 @@ func (env *ctxEnv) declaresAt(typeName, name string, depth int) bool {
 		if len(f.Names) > 0 {
 			return slices.ContainsFunc(f.Names, func(id *ast.Ident) bool { return id.Name == name })
 		}
-		// An embedded field promotes what its type declares.
-		inner := ctxTypeName(f.Type)
+		// An embedded field is called like its type, and promotes what the type declares.
+		if ctxEmbeddedName(f.Type) == name {
+			return true
+		}
+		inner := env.typeKey(f.Type)
 		return inner != "" && inner != typeName && env.declaresAt(inner, name, depth+1)
 	})
 }

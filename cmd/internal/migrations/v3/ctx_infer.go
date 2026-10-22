@@ -44,7 +44,7 @@ func (t *ctxRangeTracker) typeShape(e ast.Expr, subst map[string]*rshape, depth 
 	case *ast.Ident:
 		return t.identType(x, subst, depth)
 	case *ast.SelectorExpr:
-		return t.selectorType(x)
+		return t.selectorType(x, depth)
 	case *ast.IndexExpr:
 		return t.instantiated(x.X, []ast.Expr{x.Index}, subst, depth)
 	case *ast.IndexListExpr:
@@ -58,8 +58,8 @@ func (t *ctxRangeTracker) identType(id *ast.Ident, subst map[string]*rshape, dep
 	if bound, ok := subst[id.Name]; ok {
 		return bound
 	}
-	if spec := t.env.typeDecl[id.Name]; spec != nil {
-		return t.declared(spec, nil, depth+1)
+	if key := t.env.typeKey(id); t.env.typeSpec(key) != nil {
+		return t.declared(key, t.env.typeSpec(key), nil, depth+1)
 	}
 	if t.env.dotImported() {
 		switch id.Name {
@@ -78,7 +78,7 @@ func (t *ctxRangeTracker) identType(id *ast.Ident, subst map[string]*rshape, dep
 // selectorType is typeShape for a type of a package: fiber.Range and
 // fiber.RangeSet are the ranges, any other type of the fiber package or of a
 // package that knows nothing of ranges holds none.
-func (t *ctxRangeTracker) selectorType(sel *ast.SelectorExpr) *rshape {
+func (t *ctxRangeTracker) selectorType(sel *ast.SelectorExpr, depth int) *rshape {
 	id, ok := sel.X.(*ast.Ident)
 	if !ok {
 		return nil
@@ -93,8 +93,15 @@ func (t *ctxRangeTracker) selectorType(sel *ast.SelectorExpr) *rshape {
 			return rSet
 		}
 		return rNone
-	case t.harmless[id.Name]:
+	case t.harmless[id.Name] || id.Name == ctxExtHarmlessQualifier:
 		return rNone
+	}
+
+	// a type of another package of the module
+	if key := t.env.qualifiedKey(sel); key != "" {
+		if spec := t.env.typeSpec(key); spec != nil {
+			return t.declared(key, spec, nil, depth+1)
+		}
 	}
 	return nil
 }
@@ -108,10 +115,15 @@ func (t *ctxRangeTracker) instantiated(base ast.Expr, args []ast.Expr, subst map
 
 	switch b := base.(type) {
 	case *ast.Ident:
-		if spec := t.env.typeDecl[b.Name]; spec != nil {
-			return t.declared(spec, shapes, depth+1)
+		if key := t.env.typeKey(b); t.env.typeSpec(key) != nil {
+			return t.declared(key, t.env.typeSpec(key), shapes, depth+1)
 		}
 	case *ast.SelectorExpr:
+		if key := t.env.qualifiedKey(b); key != "" {
+			if spec := t.env.typeSpec(key); spec != nil {
+				return t.declared(key, spec, shapes, depth+1)
+			}
+		}
 		// iter.Seq[V] and iter.Seq2[K, V] are functions that call a function with the values
 		if pkg, ok := b.X.(*ast.Ident); ok && t.imports[pkg.Name] == ctxIterPackage && (b.Sel.Name == "Seq" || b.Sel.Name == "Seq2") {
 			return sequenceOf(shapes)
@@ -136,9 +148,10 @@ func ctxRootName(sel *ast.SelectorExpr) string {
 	return ""
 }
 
-// declared returns the shape of a type declared in the package, instantiated with
+// declared returns the shape of the type declared with the spec, which the
+// environment knows by the key, instantiated with
 // the type arguments given, which may be fewer than its type parameters.
-func (t *ctxRangeTracker) declared(spec *ast.TypeSpec, args []*rshape, depth int) *rshape {
+func (t *ctxRangeTracker) declared(key string, spec *ast.TypeSpec, args []*rshape, depth int) *rshape {
 	subst := map[string]*rshape{}
 	if spec.TypeParams != nil {
 		i := 0
@@ -160,6 +173,7 @@ func (t *ctxRangeTracker) declared(spec *ast.TypeSpec, args []*rshape, depth int
 	}
 	named := *under
 	named.name = spec.Name.Name
+	named.decl = key
 	named.args = args
 	return &named
 }
@@ -236,7 +250,7 @@ func (t *ctxRangeTracker) member(s *rshape, name string, depth int) *rshape {
 	case rkNone, rkSlice, rkMap, rkChan, rkFunc, rkParam:
 	}
 
-	if s.name != "" {
+	if s.decl != "" {
 		if method := t.methodOf(s, name, depth); method != nil {
 			return method
 		}
@@ -289,7 +303,7 @@ func (t *ctxRangeTracker) interfaceMethod(s *rshape, name string, depth int) *rs
 // methodOf returns the shape of the method name of a declared type, a function
 // whose type parameters are the ones of the receiver, bound to the type arguments.
 func (t *ctxRangeTracker) methodOf(s *rshape, name string, depth int) *rshape {
-	decl := t.env.methods[s.name+"."+name]
+	decl := t.env.methodDecl(s.decl, name)
 	if decl == nil {
 		return nil
 	}
@@ -402,10 +416,27 @@ func (t *ctxRangeTracker) identShape(id *ast.Ident, stack []ast.Node, depth int)
 		return t.siteShape(site, depth)
 	}
 	if pv, ok := t.env.pkgVars[id.Name]; ok {
+		if _, elsewhere := t.env.declaredElsewhere(pv.spec); elsewhere {
+			return t.typeShape(t.env.pkgVarType(id.Name, depth), nil, depth+1)
+		}
 		return t.valueSpecShape(pv.spec, pv.index, depth)
 	}
-	if decl := t.env.funcDecl[id.Name]; decl != nil {
-		return t.funcShape(decl.Type, nil, depth+1)
+	if t.env.funcDecl[id.Name] != nil {
+		return t.funcShape(t.env.funcDeclOf(id.Name).Type, nil, depth+1)
+	}
+	return t.memberShape(t.env.dotMember(id.Name), depth)
+}
+
+// memberShape returns the shape of a variable or a function of another package of
+// the module, used as a value.
+func (t *ctxRangeTracker) memberShape(mem *ctxMember, depth int) *rshape {
+	switch {
+	case mem == nil:
+		return nil
+	case mem.fn != nil:
+		return t.funcShape(mem.fn.Type, nil, depth+1)
+	case mem.typ != nil:
+		return t.typeShape(mem.typ, nil, depth+1)
 	}
 	return nil
 }
@@ -498,6 +529,9 @@ func (t *ctxRangeTracker) multiShape(init ast.Expr, index int, stack []ast.Node,
 // package.
 func (t *ctxRangeTracker) selectorShape(x *ast.SelectorExpr, stack []ast.Node, depth int) *rshape {
 	if t.isPackageName(x.X, stack) {
+		if mem := t.env.pkgMember(x, stack); mem != nil {
+			return t.memberShape(mem, depth)
+		}
 		if id, ok := x.X.(*ast.Ident); ok && (slices.Contains(t.env.pkgNames, id.Name) || t.harmless[id.Name]) {
 			return rNone
 		}
@@ -620,7 +654,7 @@ func (t *ctxRangeTracker) callResults(call *ast.CallExpr, stack []ast.Node, dept
 		if t.isRangeCall(call, stack) {
 			return []*rshape{rRange, rNone}
 		}
-		if t.isPackageName(sel.X, stack) {
+		if t.isPackageName(sel.X, stack) && t.env.pkgMember(sel, stack) == nil {
 			return t.packageResults(sel, call, stack, depth)
 		}
 	}
@@ -710,11 +744,18 @@ func (t *ctxRangeTracker) isTypeExpr(e ast.Expr, stack []ast.Node) bool {
 		if _, local := ctxResolveSite(x.Name, x.Pos(), stack); local {
 			return false
 		}
-		return t.env.typeDecl[x.Name] != nil || (ctxIsPredeclaredType(x.Name) && t.env.funcDecl[x.Name] == nil) ||
+		return t.env.typeSpec(t.env.typeKey(x)) != nil || (ctxIsPredeclaredType(x.Name) && t.env.funcDecl[x.Name] == nil) ||
 			(t.env.dotImported() && (x.Name == ctxTypeRange || x.Name == ctxTypeRangeSet))
 	case *ast.SelectorExpr:
 		id, ok := x.X.(*ast.Ident)
-		return ok && slices.Contains(t.env.pkgNames, id.Name) && (x.Sel.Name == ctxTypeRange || x.Sel.Name == ctxTypeRangeSet)
+		if !ok {
+			return false
+		}
+		if slices.Contains(t.env.pkgNames, id.Name) {
+			return x.Sel.Name == ctxTypeRange || x.Sel.Name == ctxTypeRangeSet
+		}
+		mem := t.env.pkgMember(x, stack)
+		return mem != nil && mem.spec != nil
 	case *ast.IndexExpr:
 		return t.isGenericType(x.X)
 	case *ast.IndexListExpr:
@@ -725,8 +766,8 @@ func (t *ctxRangeTracker) isTypeExpr(e ast.Expr, stack []ast.Node) bool {
 
 // isGenericType reports whether e names a generic type of the package.
 func (t *ctxRangeTracker) isGenericType(e ast.Expr) bool {
-	id, ok := e.(*ast.Ident)
-	return ok && t.env.typeDecl[id.Name] != nil && t.env.typeDecl[id.Name].TypeParams != nil
+	spec := t.env.typeSpec(t.env.typeKey(e))
+	return spec != nil && spec.TypeParams != nil
 }
 
 // packageResults returns the results of a call of a function of an imported

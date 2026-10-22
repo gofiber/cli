@@ -218,7 +218,7 @@ func (t *ctxRangeTracker) isRangeCall(call *ast.CallExpr, stack []ast.Node) bool
 	if !ok || sel.Sel.Name != ctxRange || len(call.Args) != 1 || call.Ellipsis.IsValid() {
 		return false
 	}
-	if t.env.isCtxType(sel.X) {
+	if t.env.isCtxType(sel.X, stack) {
 		return false
 	}
 	kind, _ := t.env.receiverKindVia(sel, stack, "")
