@@ -16,7 +16,10 @@ const mw3ExtractorField = "Extractor"
 const (
 	mw3KeyLookupReadNote = "%s is rebuilt from the Extractor, which replaces KeyLookup in v3: it gives \"cookie:name\", \"header:name\" or \"query:name\" " +
 		"for the lookups this migration writes, and describes the last source of an extractor that you wrote yourself."
-	mw3CookieNameReadNote = "%s is the name of the cookie the Extractor reads, and empty when it reads none, because v3 has no CookieName. " +
+	// A store has the lookup v2 made of the CookieName, a config that was given
+	// one has no KeyLookup.
+	mw3KeyLookupConfigNote = mw3KeyLookupReadNote + " A config that was given a CookieName had no KeyLookup in v2, and has the extractor of that cookie here."
+	mw3CookieNameReadNote  = "%s is the name of the cookie the Extractor reads, and empty when it reads none, because v3 has no CookieName. " +
 		"v2 returned the CookieName that the config was given, which is empty when the config used KeyLookup, so the value differs in that case."
 )
 
@@ -113,8 +116,11 @@ func (p *mw3SessionReadsPass) read(sel *ast.SelectorExpr, stack []ast.Node) {
 	p.edits.replace(end, end, ")")
 
 	note := mw3KeyLookupReadNote
-	if field == mw3CookieName {
+	switch {
+	case field == mw3CookieName:
 		note = mw3CookieNameReadNote
+	case unset:
+		note = mw3KeyLookupConfigNote
 	}
 	internal.Notef(p.fi, g.line(sel.Pos()), note, g.text(sel))
 }
