@@ -240,18 +240,6 @@ func A(p bool) fiber.Config { return fiber.Config{Prefork: p} }
 
 var ByName = map[string]func(bool) fiber.Config{"a": A}
 `,
-		"config/b.go": `package config
-
-import "github.com/gofiber/fiber/v2"
-
-func Base() fiber.Config { return fiber.Config{AppName: "b"} }
-
-func B(p bool) fiber.Config {
-	cfg := Base()
-	cfg.Prefork = p
-	return cfg
-}
-`,
 		"config/c.go": `package config
 
 import "github.com/gofiber/fiber/v2"
@@ -268,6 +256,14 @@ type ProdProvider struct{ Prefork bool }
 
 func (p ProdProvider) Config() fiber.Config { return fiber.Config{Prefork: p.Prefork} }
 `,
+		"config/e.go": `package config
+
+import "github.com/gofiber/fiber/v2"
+
+func Layer1(p bool) fiber.Config { return fiber.Config{Prefork: p} }
+
+func Layer2(p bool) fiber.Config { return Layer1(p) }
+`,
 		"main.go": `package main
 
 import (
@@ -279,13 +275,11 @@ import (
 
 func main() {
 	fmt.Println(config.C(true))
+	fiber.New(config.Layer2(true)).Listen(":3003")
 
 	var p config.Provider = config.ProdProvider{}
 	app := fiber.New(p.Config())
 	app.Listen(":3000")
-
-	b := fiber.New(config.B(true))
-	b.Listen(":3001")
 
 	a := fiber.New(config.ByName["a"](true))
 	a.Listen(":3002")
@@ -304,10 +298,68 @@ func main() {
 		byFile[n.File] = n.Message
 	}
 	assert.Contains(t, byFile["config/a.go"], "A is used as a value, at line 7 of config/a.go")
-	assert.Contains(t, byFile["config/b.go"], "this fiber.Config is not one the migration follows")
 	assert.Contains(t, byFile["config/c.go"], "the result of C is passed to another function, at line 11 of main.go")
-	assert.Contains(t, byFile["config/d.go"], "a call of Config whose receiver could not be traced may hand its config to fiber.New, at line 14 of main.go")
+	assert.Contains(t, byFile["config/d.go"], "a call of Config whose receiver could not be traced may hand its config to fiber.New, at line 15 of main.go")
+	assert.Contains(t, byFile["config/e.go"], "the result of Layer1 is returned by another function, at line 7 of config/e.go")
 	assert.Len(t, byFile, 4)
+}
+
+// A function that completes the config of another, or hands it on, holds that config in the
+// config of the registry.
+func Test_MigrateConfigListenerFields_Returned_LayeredConfigs(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"config/config.go": `package config
+
+import "github.com/gofiber/fiber/v2"
+
+// Base is the config every environment starts from.
+func Base() fiber.Config { return fiber.Config{AppName: "layered"} }
+
+// Prod completes it.
+func Prod(prefork bool) fiber.Config {
+	cfg := Base()
+	cfg.Prefork = prefork
+	return cfg
+}
+
+// Dev completes it in one branch and hands it on in the other.
+func Dev(quiet bool) fiber.Config {
+	if quiet {
+		cfg := Base()
+		cfg.DisableStartupMessage = true
+		return cfg
+	}
+	return Base()
+}
+`,
+		"main.go": `package main
+
+import (
+	"example.com/app/config"
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	fiber.New(config.Prod(true)).Listen(":3000")
+	fiber.New(config.Dev(true)).Listen(":3001")
+	fiber.New(config.Base()).Listen(":3002")
+}
+`,
+	})
+
+	_, notes := shimMigrate(t, dir)
+
+	cfg := appRead(t, dir, "config/config.go")
+	assert.Contains(t, cfg, "func Base() fiber.Config { return fiber.Config{AppName: \"layered\"} }", "the base config sets none of them")
+	assert.Contains(t, cfg, "func Prod(prefork bool) fibermigrate.Config {\n\tcfg := fibermigrate.Config{Config: Base()}\n\tcfg.Prefork = prefork\n\treturn cfg\n}")
+	assert.Contains(t, cfg, "\t\tcfg := fibermigrate.Config{Config: Base()}\n\t\tcfg.DisableStartupMessage = true\n\t\treturn cfg\n\t}\n\treturn fibermigrate.Config{Config: Base()}\n")
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, "fibermigrate.Listen(fibermigrate.New(config.Prod(true)), \":3000\")")
+	assert.Contains(t, main, "fibermigrate.Listen(fibermigrate.New(config.Dev(true)), \":3001\")")
+	assert.Contains(t, main, "fiber.New(config.Base()).Listen(\":3002\")", "the plain config keeps its type, and so does its app")
+	assert.Len(t, notes, 1)
 }
 
 // The apps made from what the function returns are started anywhere in the module,
@@ -350,6 +402,84 @@ func main() {
 	main := appRead(t, dir, "cmd/api/main.go")
 	assert.Contains(t, main, `serve.Run(fibermigrate.New(config.ForServer(false)), ":3000")`)
 	assert.Len(t, notes, 1)
+}
+
+// The code adds settings to the config that a function built, which sets none of them: they
+// move to the call that starts the app, as they do from a config the code builds itself.
+func Test_MigrateConfigListenerFields_Returned_SettingsAddedToTheConfigOfAFunction(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"config/config.go": `package config
+
+import "github.com/gofiber/fiber/v2"
+
+// Fiber is the base config of the apps.
+func Fiber() fiber.Config {
+	return fiber.Config{AppName: "demo"}
+}
+`,
+		"main.go": `package main
+
+import (
+	"os"
+
+	"example.com/app/config"
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	cfg := config.Fiber()
+	cfg.DisableStartupMessage = true
+	app := fiber.New(cfg)
+	go app.Listen(":3000")
+
+	second := config.Fiber()
+	if os.Getenv("QUIET") == "1" {
+		second.DisableStartupMessage = true
+	}
+	other := fiber.New(second)
+	other.Listen(":3001")
+
+	var third = config.Fiber()
+	third.EnablePrintRoutes = true
+	fiber.New(third).Listen(":3002")
+}
+`,
+	})
+
+	out := appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	assert.Contains(t, out, "Migrating listener related config fields")
+	assert.Equal(t, `package main
+
+import (
+	"os"
+
+	"example.com/app/config"
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	cfg := config.Fiber()
+	app := fiber.New(cfg)
+	go app.Listen(":3000", fiber.ListenConfig{DisableStartupMessage: true})
+
+	second := config.Fiber()
+	listenCfg := fiber.ListenConfig{}
+	if os.Getenv("QUIET") == "1" {
+		listenCfg.DisableStartupMessage = true
+	}
+	other := fiber.New(second)
+	other.Listen(":3001", listenCfg)
+
+	var third = config.Fiber()
+	fiber.New(third).Listen(":3002", fiber.ListenConfig{EnablePrintRoutes: true})
+}
+`, appRead(t, dir, "main.go"))
+	assert.Empty(t, internal.DrainNotes(dir))
+
+	assert.Empty(t, appRun(t, dir, v3.MigrateConfigListenerFields), "a second run changes nothing")
 }
 
 // A field that has the name of the method that builds the config is not the method.

@@ -125,8 +125,31 @@ func shimReturn(w *appShimWork, f *appFile, ret *ast.ReturnStmt, retyped map[ast
 		return shimWrapLiteral(w, f, r)
 	case *ast.Ident:
 		return shimReturnedVariable(w, f, r, retyped)
+	case *ast.CallExpr:
+		if shimWrapCall(w, f, r) {
+			return ""
+		}
 	}
 	return fmt.Sprintf("line %d returns %s, which the migration cannot give the settings to", line, f.g.text(ret.Results[0]))
+}
+
+// shimWrapCall plans the call of a function that returns a fiber.Config, which the
+// config of the registry holds as its embedded fiber.Config. It reports false for any
+// other call.
+func shimWrapCall(w *appShimWork, f *appFile, call *ast.CallExpr) bool {
+	if _, _, isAppConfig := f.appConfigCall(call); isAppConfig {
+		return false
+	}
+	callee, found := f.calleeOf(call, 0)
+	if !found || callee.decl == nil || !callee.file.returnsConfig(callee.decl) {
+		return false
+	}
+
+	g := f.g
+	edits := w.editsOf(f)
+	edits.replace(g.offset(call.Pos()), g.offset(call.Pos()), w.qualifier(f)+appShimConfigType+"{Config: ")
+	edits.replace(g.offset(call.End()), g.offset(call.End()), "}")
+	return true
 }
 
 // shimReturnedVariable plans the variable that a function returns: it holds the
@@ -146,12 +169,20 @@ func shimReturnedVariable(w *appShimWork, f *appFile, id *ast.Ident, retyped map
 	qual := w.qualifier(f) + appShimConfigType
 	switch {
 	case b.init != nil:
-		lit, isLit := ast.Unparen(b.init).(*ast.CompositeLit)
-		if !isLit || lit.Type == nil || f.fiberTypeName(lit.Type) != appNameConfig {
+		switch init := ast.Unparen(b.init).(type) {
+		case *ast.CompositeLit:
+			if init.Type == nil || f.fiberTypeName(init.Type) != appNameConfig {
+				return fmt.Sprintf("%s is declared from %s, which the migration cannot give the settings to", id.Name, g.text(b.init))
+			}
+			if why := shimWrapLiteral(w, f, init); why != "" {
+				return why
+			}
+		case *ast.CallExpr:
+			if !shimWrapCall(w, f, init) {
+				return fmt.Sprintf("%s is declared from %s, which the migration cannot give the settings to", id.Name, g.text(b.init))
+			}
+		default:
 			return fmt.Sprintf("%s is declared from %s, which the migration cannot give the settings to", id.Name, g.text(b.init))
-		}
-		if why := shimWrapLiteral(w, f, lit); why != "" {
-			return why
 		}
 		if b.typ != nil {
 			w.editsOf(f).replaceNode(g, b.typ, qual)

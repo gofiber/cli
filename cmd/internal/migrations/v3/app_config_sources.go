@@ -85,6 +85,21 @@ func (f *appFile) configSources() []*appListenSource {
 					out = append(out, src)
 				}
 			}
+			if len(x.Values) == len(x.Names) {
+				for i, value := range x.Values {
+					if src := f.sourceOfConfigCall(value, x.Names[i].Name, f.specScope(x)); src != nil {
+						out = append(out, src)
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			if len(x.Rhs) == 1 {
+				if id, isDefine := appSingleDefine(x, x.Rhs[0]); isDefine {
+					if src := f.sourceOfConfigCall(x.Rhs[0], id.Name, f.parent[x]); src != nil {
+						out = append(out, src)
+					}
+				}
+			}
 		}
 		return true
 	})
@@ -97,6 +112,44 @@ func (f *appFile) configSources() []*appListenSource {
 		}
 	}
 	return keep
+}
+
+// sourceOfConfigCall returns the source for the variable name that is declared with
+// the result of a call of a function that returns a fiber.Config: the code adds the
+// settings to the config the function built, which does not set any of them itself.
+func (f *appFile) sourceOfConfigCall(rhs ast.Expr, name string, scope ast.Node) *appListenSource {
+	call, ok := rhs.(*ast.CallExpr)
+	if !ok || name == "_" || f.isNewCall(call) {
+		return nil
+	}
+	if _, _, isAppConfig := f.appConfigCall(call); isAppConfig {
+		return nil // the config of an app is read, which has its own handling
+	}
+	callee, found := f.calleeOf(call, 0)
+	if !found || callee.decl == nil || !callee.file.returnsConfig(callee.decl) || appSetsListenerFields(callee.decl) {
+		return nil
+	}
+	return &appListenSource{file: f, node: call, scope: scope, name: name}
+}
+
+// appSetsListenerFields reports whether the body of the function names one of the
+// settings that v3 moved: it builds a config that is a source of its own.
+func appSetsListenerFields(fn *ast.FuncDecl) bool {
+	found := false
+	ast.Inspect(fn, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.KeyValueExpr:
+			if id, ok := x.Key.(*ast.Ident); ok && appListenerFieldV3(id.Name) != "" {
+				found = true
+			}
+		case *ast.SelectorExpr:
+			if appListenerFieldV3(x.Sel.Name) != "" {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // sourceOfLiteral works out what a fiber.Config literal is used for.
@@ -634,6 +687,9 @@ const appProblemConditional = "it is assigned conditionally or outside the funct
 // has to run unconditionally, before the app is created, and not depend on the
 // config itself.
 func (src *appListenSource) assignProblem(as *ast.AssignStmt) string {
+	if src.retFn != nil {
+		return "" // the apps are made by the callers of the function, which see no assignment
+	}
 	if src.scope == nil || src.file.parent[as] != src.scope {
 		return appProblemConditional
 	}
