@@ -2,14 +2,14 @@ package v3_test
 
 import (
 	"bytes"
-	"fmt"
-	"os"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gofiber/cli/cmd/internal"
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
 
@@ -18,188 +18,293 @@ const (
 	swaggerUIModule = "swaggerui"
 )
 
-func Test_MigrateSwaggerPackages(t *testing.T) {
-	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
-		switch module {
-		case swaggoModule:
-			return "v3.1.0", nil
-		case swaggerUIModule:
-			return "v3.0.1", nil
-		default:
-			return "", fmt.Errorf("unexpected module %s", module)
-		}
-	})
-	t.Cleanup(restore)
+func swaggerVersions(t *testing.T) {
+	t.Helper()
+	contribVersions(t, map[string]string{swaggoModule: "v1.0.13", swaggerUIModule: "v1.0.14"})
+}
 
+// The README of the module imports it without a name, and the v3 package is
+// called swaggerui.
+func Test_MigrateSwaggerPackages(t *testing.T) {
+	swaggerVersions(t)
 	dir := t.TempDir()
 
 	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/contrib/swagger"
+
+import (
+	"github.com/gofiber/contrib/swagger"
+	"github.com/gofiber/fiber/v2"
+)
 
 func main() {
-    _ = swagger.Config{}
-}`)
-
-	modContent := `module example
+	app := fiber.New()
+	app.Use(swagger.New(swagger.Config{BasePath: "/", FilePath: "./docs/swagger.json"}))
+}
+`)
+	contribWriteFile(t, dir, "go.mod", `module example
 
 go 1.22
 
-require github.com/gofiber/contrib/swagger v1.0.0
+require github.com/gofiber/contrib/swagger v1.3.0
 
-replace github.com/gofiber/contrib/swagger => ../local`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+replace github.com/gofiber/contrib/swagger => ../local
+`)
 
 	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&buf), dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `swagger "github.com/gofiber/contrib/v3/swaggerui"`)
+	contribRequireParses(t, content)
+	assert.Contains(t, content, "\tswagger \"github.com/gofiber/contrib/v3/swaggerui\"\n")
+	assert.Contains(t, content, `app.Use(swagger.New(swagger.Config{`)
+	assert.Contains(t, content, "\t\"github.com/gofiber/fiber/v2\"\n", "the fiber import is somebody else's")
 
-	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggerui v3.0.1")
-	assert.Contains(t, mod, "replace github.com/gofiber/contrib/v3/swaggerui => ../local")
+	assert.Equal(t, `module example
 
+go 1.22
+
+require github.com/gofiber/contrib/v3/swaggerui v1.0.14
+
+replace github.com/gofiber/contrib/v3/swaggerui => ../local
+`, readFile(t, filepath.Join(dir, "go.mod")))
 	assert.Contains(t, buf.String(), "Migrating swagger packages")
 }
 
 func Test_MigrateSwaggerPackages_FiberSwagger(t *testing.T) {
-	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
-		switch module {
-		case swaggoModule:
-			return "v3.2.0", nil
-		case swaggerUIModule:
-			return "v3.0.0", nil
-		default:
-			return "", fmt.Errorf("unexpected module %s", module)
-		}
-	})
-	t.Cleanup(restore)
-
+	swaggerVersions(t)
 	dir := t.TempDir()
 
 	file := writeTempFile(t, dir, `package main
+
 import (
-    "fmt"
-    "github.com/gofiber/swagger"
+	"fmt"
+
+	_ "example/docs"
+	"github.com/gofiber/swagger"
 )
 
 func main() {
-    fmt.Println(swagger.Config{})
-}`)
-
-	modContent := `module example
-
-go 1.22
-
-require github.com/gofiber/swagger v1.1.0
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+	fmt.Println(swagger.HandlerDefault)
+}
+`)
+	contribWriteFile(t, dir, "go.mod", "module example\n\ngo 1.22\n\nrequire github.com/gofiber/swagger v1.1.1\n")
 
 	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&buf), dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, `swagger "github.com/gofiber/contrib/v3/swaggo"`)
-
-	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggo v3.2.0")
-
+	contribRequireParses(t, content)
+	assert.Contains(t, content, "\tswagger \"github.com/gofiber/contrib/v3/swaggo\"\n")
+	assert.Contains(t, content, "\t_ \"example/docs\"\n")
+	assert.Equal(t, "module example\n\ngo 1.22\n\nrequire github.com/gofiber/contrib/v3/swaggo v1.0.13\n",
+		readFile(t, filepath.Join(dir, "go.mod")))
 	assert.Contains(t, buf.String(), "Migrating swagger packages")
 }
 
-func Test_MigrateSwaggerPackages_Idempotent(t *testing.T) {
-	calls := 0
-	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
-		calls++
-		switch module {
-		case swaggoModule:
-			return "v3.0.1", nil
-		case swaggerUIModule:
-			return "v3.2.1", nil
-		default:
-			return "", fmt.Errorf("unexpected module %s", module)
-		}
-	})
-	t.Cleanup(restore)
-
+func Test_MigrateSwaggerPackages_KeepsAnExplicitName(t *testing.T) {
+	swaggerVersions(t)
 	dir := t.TempDir()
 
 	file := writeTempFile(t, dir, `package main
-import swagger "github.com/gofiber/contrib/v3/swaggo"
 
-func main() {
-    _ = swagger.Config{}
-}`)
+import (
+	fiberSwagger "github.com/gofiber/swagger"
+	swag "github.com/gofiber/contrib/swagger"
+)
 
-	modContent := `module example
+var _, _ = fiberSwagger.New, swag.New
+`)
+
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "\tfiberSwagger \"github.com/gofiber/contrib/v3/swaggo\"\n")
+	assert.Contains(t, content, "\tswag \"github.com/gofiber/contrib/v3/swaggerui\"\n")
+}
+
+// The file is edited where the import is, not printed again: comments, blank
+// lines and the order of the declarations stay as the user wrote them.
+func Test_MigrateSwaggerPackages_KeepsTheRestOfTheFile(t *testing.T) {
+	swaggerVersions(t)
+	dir := t.TempDir()
+
+	file := writeTempFile(t, dir, `// Package main serves the API.
+package main
+
+import (
+	// the docs
+	_ "example/docs" // generated by swag
+
+	"github.com/gofiber/swagger" // swagger ui
+)
+
+// route registers the documentation.
+func route(r interface{ Get(string, ...any) }) {
+	r.Get("/swagger/*", swagger.HandlerDefault) // GET /swagger/index.html
+}
+`)
+
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	assert.Equal(t, `// Package main serves the API.
+package main
+
+import (
+	// the docs
+	_ "example/docs" // generated by swag
+
+	swagger "github.com/gofiber/contrib/v3/swaggo" // swagger ui
+)
+
+// route registers the documentation.
+func route(r interface{ Get(string, ...any) }) {
+	r.Get("/swagger/*", swagger.HandlerDefault) // GET /swagger/index.html
+}
+`, readFile(t, file))
+}
+
+func Test_MigrateSwaggerPackages_LeavesTheOtherContribModulesToTheContribMigration(t *testing.T) {
+	swaggerVersions(t)
+	dir := t.TempDir()
+
+	source := `package main
+
+import (
+	"github.com/gofiber/contrib/jwt"
+)
+
+var _ = jwtware.New
+`
+	file := writeTempFile(t, dir, source)
+	contribWriteFile(t, dir, "go.mod", "module example\n\nrequire github.com/gofiber/contrib/jwt v1.1.2\n")
+
+	var buf bytes.Buffer
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&buf), dir, nil, nil))
+
+	assert.Equal(t, source, readFile(t, file))
+	assert.Contains(t, readFile(t, filepath.Join(dir, "go.mod")), "contrib/jwt v1.1.2")
+	assert.Empty(t, buf.String())
+}
+
+func Test_MigrateContribPackages_LeavesSwaggerToTheSwaggerMigration(t *testing.T) {
+	swaggerVersions(t)
+	dir := t.TempDir()
+
+	source := `package main
+
+import "github.com/gofiber/swagger"
+
+var _ = swagger.New
+`
+	file := writeTempFile(t, dir, source)
+
+	var buf bytes.Buffer
+	require.NoError(t, v3.MigrateContribPackages(newCmd(&buf), dir, nil, nil))
+
+	assert.Equal(t, source, readFile(t, file))
+	assert.Empty(t, buf.String())
+}
+
+func Test_MigrateSwaggerPackages_Idempotent(t *testing.T) {
+	swaggerVersions(t)
+	dir := t.TempDir()
+
+	file := writeTempFile(t, dir, `package main
+
+import (
+	"github.com/gofiber/contrib/swagger"
+	swaggo "github.com/gofiber/swagger"
+)
+
+var _, _ = swagger.New, swaggo.New
+`)
+	contribWriteFile(t, dir, "go.mod", `module example
 
 go 1.22
 
 require (
-    github.com/gofiber/contrib/v3/swaggo v3.0.1
-    github.com/gofiber/contrib/v3/swaggerui v3.2.1
-)`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+	github.com/gofiber/contrib/swagger v1.3.0
+	github.com/gofiber/swagger v1.1.1
+)
+`)
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
-	firstContent := readFile(t, file)
-	firstMod := readFile(t, filepath.Join(dir, "go.mod"))
+	var first bytes.Buffer
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&first), dir, nil, nil))
+	assert.Contains(t, first.String(), "Migrating swagger packages")
+	migrated, migratedMod := readFile(t, file), readFile(t, filepath.Join(dir, "go.mod"))
 
-	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
-	secondContent := readFile(t, file)
-	secondMod := readFile(t, filepath.Join(dir, "go.mod"))
-
-	assert.Equal(t, firstContent, secondContent)
-	assert.Equal(t, firstMod, secondMod)
-	assert.Empty(t, buf.String())
-	assert.Equal(t, 2, calls)
-}
-
-func Test_MigrateSwaggerPackages_PreservesExistingImports(t *testing.T) {
 	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
-		switch module {
-		case swaggoModule:
-			return "v3.4.0", nil
-		case swaggerUIModule:
-			return "v3.2.1", nil
-		default:
-			return "", fmt.Errorf("unexpected module %s", module)
-		}
+		return "", errors.New("unexpected lookup of " + module)
 	})
 	t.Cleanup(restore)
 
+	var second bytes.Buffer
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&second), dir, nil, nil))
+
+	assert.Equal(t, migrated, readFile(t, file))
+	assert.Equal(t, migratedMod, readFile(t, filepath.Join(dir, "go.mod")))
+	assert.Empty(t, second.String())
+	assert.Empty(t, internal.DrainNotes(dir))
+}
+
+func Test_MigrateSwaggerPackages_PreservesExistingV3Imports(t *testing.T) {
+	swaggerVersions(t)
+	dir := t.TempDir()
+
+	source := `package main
+
+import "github.com/gofiber/contrib/v3/swaggo"
+
+func main() {
+	_ = swaggo.Config{}
+}
+`
+	file := writeTempFile(t, dir, source)
+	mod := "module example\n\ngo 1.22\n\nrequire github.com/gofiber/contrib/v3/swaggo v1.0.2\n"
+	contribWriteFile(t, dir, "go.mod", mod)
+
+	var buf bytes.Buffer
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&buf), dir, nil, nil))
+
+	assert.Equal(t, source, readFile(t, file))
+	assert.Equal(t, mod, readFile(t, filepath.Join(dir, "go.mod")), "an existing requirement is not bumped")
+	assert.Empty(t, buf.String())
+}
+
+func Test_MigrateSwaggerPackages_FailedLookupLeavesTheModuleAlone(t *testing.T) {
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		if module == swaggoModule {
+			return "", errors.New("offline")
+		}
+		return "v1.0.14", nil
+	})
+	t.Cleanup(restore)
 	dir := t.TempDir()
 
 	file := writeTempFile(t, dir, `package main
-import "github.com/gofiber/contrib/v3/swaggo"
 
-func main() {
-    _ = swaggo.Config{}
-}`)
+import (
+	swaggo "github.com/gofiber/swagger"
+	"github.com/gofiber/contrib/swagger"
+)
 
-	modContent := `module example
+var _, _ = swaggo.New, swagger.New
+`)
+	contribWriteFile(t, dir, "go.mod", `module example
 
-go 1.22
+require (
+	github.com/gofiber/contrib/swagger v1.3.0
+	github.com/gofiber/swagger v1.1.1
+)
+`)
 
-require github.com/gofiber/contrib/v3/swaggo v3.4.0
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+	require.NoError(t, v3.MigrateSwaggerPackages(newCmd(&bytes.Buffer{}), dir, nil, nil))
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateSwaggerPackages(cmd, dir, nil, nil))
-
-	assert.Equal(t, `package main
-import "github.com/gofiber/contrib/v3/swaggo"
-
-func main() {
-    _ = swaggo.Config{}
-}`, readFile(t, file))
-
-	assert.Equal(t, modContent, readFile(t, filepath.Join(dir, "go.mod")))
-	assert.Empty(t, buf.String())
+	content := readFile(t, file)
+	assert.Contains(t, content, "swaggo \"github.com/gofiber/swagger\"")
+	assert.Contains(t, content, "swagger \"github.com/gofiber/contrib/v3/swaggerui\"")
+	mod := readFile(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, mod, "github.com/gofiber/swagger v1.1.1")
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/swaggerui v1.0.14")
+	require.Len(t, internal.DrainNotes(dir), 1)
 }
