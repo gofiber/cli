@@ -195,7 +195,13 @@ func (m *csrfMigration) assignment(as *ast.AssignStmt, stack []ast.Node) {
 		}
 	case csrfExtractor:
 		m.extractor(as.Rhs[0], stack)
-	case csrfSessionKey, csrfHandlerContextKey, csrfCookie:
-		m.notef(as, "csrf.Config has no %s in v3: remove this assignment", field)
+	case csrfSessionKey, csrfHandlerContextKey:
+		if start, end, found := mw1StatementSpan(m.g, as, stack); found {
+			m.edits.replace(start, end, "")
+		} else {
+			m.notef(as, "csrf.Config has no %s in v3: remove this assignment", field)
+		}
+	case csrfCookie:
+		m.notef(as, "csrf.Config has no Cookie in v3: set CookieName, CookieDomain, CookiePath, CookieSecure, CookieHTTPOnly and CookieSameSite (left as it is)")
 	}
 }

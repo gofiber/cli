@@ -648,6 +648,10 @@ func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack
 		h.reportUnmigrated(newCall, "its config "+id.Name+" has fields it does not know")
 		return cfg, split, false
 	}
+	if field := h.assignedV2Field(id.Name); field != "" {
+		h.reportUnmigrated(newCall, "its config "+id.Name+" gets "+field+" assigned after its declaration and has to be split by hand")
+		return cfg, split, false
+	}
 	if !hasV2OnlyField(lit) {
 		// nothing to split: both routes can share it
 		split = hcSplit{liveness: id.Name, readiness: id.Name}
@@ -673,6 +677,26 @@ func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack
 	parsed.liveness.elems = nil
 	parsed.readiness.elems = nil
 	return parsed, split, true
+}
+
+// assignedV2Field returns the first field of v2 that the file assigns to a
+// variable of that name, as in `cfg.LivenessProbe = probe`, or "".
+func (h *hcMigration) assignedV2Field(name string) string {
+	field := ""
+	h.g.walk(func(n ast.Node, _ []ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || field != "" {
+			return field == ""
+		}
+		for _, lhs := range as.Lhs {
+			sel, isSel := lhs.(*ast.SelectorExpr)
+			if isSel && isIdentNamed(sel.X, name) && slices.Contains(hcV2OnlyFields, sel.Sel.Name) {
+				field = sel.Sel.Name
+			}
+		}
+		return true
+	})
+	return field
 }
 
 func hasV2OnlyField(lit *ast.CompositeLit) bool {

@@ -500,6 +500,52 @@ func main() {
 	}
 }
 
+func Test_MigrateHealthcheckConfig_ConfigAssignedFieldByField(t *testing.T) {
+	t.Parallel()
+
+	// the fields are assigned after the declaration: the config cannot be split
+	// where it is declared, and sharing it would register probes that v3 does not know
+	src := `package main
+
+` + hcImports + `
+func main() {
+	app := fiber.New()
+
+	cfg := healthcheck.Config{}
+	cfg.LivenessProbe = func(c *fiber.Ctx) bool { return true }
+	cfg.ReadinessEndpoint = "/ready"
+	app.Use(healthcheck.New(cfg))
+
+	other := healthcheck.Config{}
+	other.Next = func(c *fiber.Ctx) bool { return false }
+	app.Use("/other", healthcheck.New(other))
+}
+`
+	res := mw1Run(t, v3.MigrateHealthcheckConfig, src)
+
+	// only the config that is complete in its declaration is migrated
+	assert.Equal(t, `package main
+
+`+hcImports+`
+func main() {
+	app := fiber.New()
+
+	cfg := healthcheck.Config{}
+	cfg.LivenessProbe = func(c *fiber.Ctx) bool { return true }
+	cfg.ReadinessEndpoint = "/ready"
+	app.Use(healthcheck.New(cfg))
+
+	other := healthcheck.Config{}
+	other.Next = func(c *fiber.Ctx) bool { return false }
+	app.Get("/other"+healthcheck.LivenessEndpoint, healthcheck.New(other))
+	app.Get("/other"+healthcheck.ReadinessEndpoint, healthcheck.New(other))
+}
+`, res.file())
+	if assert.Len(t, res.notes, 1) {
+		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: healthcheck.New() was left as it is: its config cfg gets LivenessProbe assigned after its declaration", mw1LineOf(t, src, "app.Use(healthcheck.New(cfg))")))
+	}
+}
+
 func Test_MigrateHealthcheckConfig_StandaloneV2Config(t *testing.T) {
 	t.Parallel()
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gofiber/cli/cmd/internal/migrations/v3"
 )
@@ -613,6 +614,46 @@ func config() csrf.Config {
 }
 `, res.file())
 	assert.Empty(t, res.notes)
+}
+
+func Test_MigrateCSRFConfig_AssignmentsOfFieldsThatAreGone(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateCSRFConfig, `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/csrf"
+)
+
+func config() csrf.Config {
+	cfg := csrf.Config{}
+	cfg.SessionKey = "csrf"
+	cfg.HandlerContextKey = "handler" // the key
+	cfg.Cookie = &fiber.Cookie{Name: "csrf_", Secure: true}
+	cfg.CookieName = "other"
+	return cfg
+}
+`)
+
+	// the keys have no effect in v3 and go, the cookie is the user's to spread over the fields
+	assert.Equal(t, `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/csrf"
+)
+
+func config() csrf.Config {
+	cfg := csrf.Config{}
+	cfg.Cookie = &fiber.Cookie{Name: "csrf_", Secure: true}
+	cfg.CookieName = "other"
+	return cfg
+}
+`, res.file())
+	require.Len(t, res.notes, 1)
+	assert.Contains(t, res.notes[0], "main.go:10: ")
+	assert.Contains(t, res.notes[0], "csrf.Config has no Cookie in v3: set CookieName")
 }
 
 func Test_MigrateCSRFConfig_Alias(t *testing.T) {
