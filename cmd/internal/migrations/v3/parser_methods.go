@@ -112,12 +112,20 @@ func ctxParserHint(sel *ast.SelectorExpr) string {
 // value c.AllParams, which is not called, becomes the literal itself, a
 // func() map[string]string: a context that is a plain variable is used by the
 // literal as it is, any other receiver is evaluated where the method value was,
-// as Go does, and handed to the literal that returns the function.
+// as Go does, and handed to the literal that returns the function. A type that
+// embeds the context hands the embedded context over, as AllParams of v2 used
+// that one and not what the type declares.
 func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node, via string) {
 	call, isCall := ctxParentCall(sel, stack)
 	if isCall && len(call.Args) != 0 {
 		noter.notef(sel.Pos(), "AllParams does not exist in Fiber v3: build the map with a loop over c.Route().Params that calls c.Params(name)")
 		return
+	}
+
+	// The method belongs to the context, whatever the type that embeds it does
+	// with the names of its methods: the literal gets the context itself.
+	if via == "" {
+		via = env.embeddedCtxOf(sel.X, stack)
 	}
 
 	plan.add(func(e *editSet) {

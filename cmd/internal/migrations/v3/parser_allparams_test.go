@@ -186,6 +186,64 @@ func (c *Context) paramsFunc() func() map[string]string {
 			msg: "Migrating parser methods",
 		},
 		{
+			name: "a type that embeds the context hands the embedded context over",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Context struct{ *fiber.Ctx }
+
+// Params hides the one of the embedded context, which AllParams of v2 used.
+func (c *Context) Params(key string, defaults ...string) string { return "x" }
+
+func (c *Context) all() map[string]string { return c.AllParams() }
+
+type Page struct {
+	*Context
+	title string
+}
+
+func (p *Page) all() func() map[string]string { return p.AllParams }
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Context struct{ *fiber.Ctx }
+
+// Params hides the one of the embedded context, which AllParams of v2 used.
+func (c *Context) Params(key string, defaults ...string) string { return "x" }
+
+func (c *Context) all() map[string]string {
+	return func(c fiber.Ctx) map[string]string {
+		params := make(map[string]string, len(c.Route().Params))
+		for _, name := range c.Route().Params {
+			params[name] = c.Params(name)
+		}
+		return params
+	}(c.Ctx)
+}
+
+type Page struct {
+	*Context
+	title string
+}
+
+func (p *Page) all() func() map[string]string {
+	return func(c fiber.Ctx) func() map[string]string {
+		return func() map[string]string {
+			params := make(map[string]string, len(c.Route().Params))
+			for _, name := range c.Route().Params {
+				params[name] = c.Params(name)
+			}
+			return params
+		}
+	}(p.Context.Ctx)
+}
+`,
+			msg: "Migrating parser methods",
+		},
+		{
 			name: "a method value of another type stays",
 			in: `package main
 

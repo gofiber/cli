@@ -484,6 +484,27 @@ func each(sets ...fiber.RangeSet) {}
 			msg: "Migrating context method renames",
 		},
 		{
+			name: "a function of another file of the package that spells the fiber package its own way",
+			others: map[string]string{"report.go": `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+func report(r f.Range, sets ...f.RangeSet) error { return nil }
+`},
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	r, err := c.Range(10)
+	if err != nil {
+		return err
+	}
+	return report(r, r.Ranges...)
+}
+`,
+		},
+		{
 			name: "a field, a channel, an interface and a return that are not declared as a range",
 			in: `package main
 

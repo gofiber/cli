@@ -36,13 +36,13 @@ const (
 )
 
 // ctxRangeTracker follows the ranges a request context returns through a file.
-// In v2 the Start and End of a range are int, in v3 they are int64, so the places
-// that read them as int need a conversion, and the places that set them one in
-// the other direction. Only the types of the declarations of the file tell
-// where a range goes: the tracker knows the variable that takes the result of
-// c.Range, the Ranges of it, the elements of those, and the values that are
-// declared as one of the types of the fiber package. A range that is handed to
-// a place it can not follow is reported.
+// In v2 the Start and End of a range are int, in v3 they are int64: the places
+// that read them as int need a conversion, and so do the places that set them.
+// There are no types to ask, so the tracker goes by the declarations of the
+// file: the variable that takes the result of c.Range, the Ranges of it, the
+// elements of those, and whatever is declared as one of the types of the fiber
+// package. A range that is handed to a place the tracker can not follow is
+// reported.
 type ctxRangeTracker struct {
 	env   *ctxEnv
 	noter *ctxNoter
@@ -413,10 +413,12 @@ func (t *ctxRangeTracker) typeKind(typ ast.Expr, depth int) ctxRangeKind {
 		}
 	}
 
+	// The type may be declared in another file of the package, which can bind the
+	// fiber package to another name.
 	switch {
-	case ctxIsFiberType(typ, t.env.names, ctxTypeRange):
+	case ctxIsFiberType(typ, t.env.pkgNames, ctxTypeRange):
 		return ctxRangeValue
-	case ctxIsFiberType(typ, t.env.names, ctxTypeRangeSet):
+	case ctxIsFiberType(typ, t.env.pkgNames, ctxTypeRangeSet):
 		return ctxRangeSet
 	}
 	return ctxRangeNone
