@@ -788,7 +788,6 @@ func configured(url, token, ua string, payload []byte, headers map[string]string
 	req.Header.SetCookie("sid", "abc")
 	req.Header.Add("X-Trace", "1")
 	req.Header.Set("X-Version", fmt.Sprintf("v%d", 3))
-	req.URI().QueryArgs().Add("debug", "1")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -796,6 +795,7 @@ func configured(url, token, ua string, payload []byte, headers map[string]string
 		req.Header.Set(k, v)
 	}
 	req.SetRequestURI(url)
+	req.URI().QueryArgs().Add("debug", "1")
 	req.SetBody(payload)
 	if err := a.Parse(); err != nil {
 		return nil, err
@@ -863,7 +863,6 @@ func configured(url, token, ua string, payload []byte, headers map[string]string
 	a.SetCookie("sid", "abc")
 	a.AddHeader("X-Trace", "1")
 	a.SetHeader("X-Version", fmt.Sprintf("v%d", 3))
-	a.AddParam("debug", "1")
 	if token != "" {
 		a.SetHeader("Authorization", "Bearer "+token)
 	}
@@ -871,6 +870,7 @@ func configured(url, token, ua string, payload []byte, headers map[string]string
 		a.SetHeader(k, v)
 	}
 	a.SetURL(url)
+	a.AddParam("debug", "1")
 	a.SetRawBody(payload)
 	resp, err := a.Send()
 	if err != nil {
@@ -899,7 +899,7 @@ func agentSetters(url string, v map[string]any) (int, error) {
 func userAgentWithParen(url string) ([]byte, error) {
 	a := client.C().R()
 	a.SetMethod(fiber.MethodGet)
-	a.SetHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+	a.SetUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 	a.SetURL(url)
 	resp, err := a.Send()
 	if err != nil {

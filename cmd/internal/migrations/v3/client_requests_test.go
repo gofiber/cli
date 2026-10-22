@@ -842,6 +842,22 @@ func notALiteral(base, qs string) ([]byte, error) {
 	return body, nil
 }
 
+func queryBeforeURL(url string) ([]byte, error) {
+	a := fiber.AcquireAgent()
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.URI().QueryArgs().Add("dropped", "1")
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
 func requestArgs(url string) ([]byte, error) {
 	a := fiber.AcquireAgent()
 	req := a.Request()
@@ -909,6 +925,22 @@ func notALiteral(base, qs string) ([]byte, error) {
 	return body, nil
 }
 
+func queryBeforeURL(url string) ([]byte, error) {
+	a := fiber.AcquireAgent()
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.URI().QueryArgs().Add("dropped", "1")
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
 func requestArgs(url string) ([]byte, error) {
 	a := client.C().R()
 	a.SetMethod(fiber.MethodGet)
@@ -927,6 +959,7 @@ func requestArgs(url string) ([]byte, error) {
 			notes: []string{
 				"main.go:28: QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both",
 				"main.go:38: left as Fiber v2 code: QueryString() with a value that is not a string literal (put the query in the URL instead)",
+				"main.go:48: left as Fiber v2 code: a query is added to the URL before SetRequestURI(), which discards it in Fiber v2",
 			},
 		},
 		{
@@ -1375,6 +1408,15 @@ func closing(url string) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// The v3 client sets User-Agent and Referer itself: header calls would be lost.
+func agentAndReferer(url, ua string) ([]byte, error) {
+	_, b, errs := fiber.Get(url).Set("User-Agent", ua).Add("referer", "https://example.com/").Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return b, nil
+}
 `,
 			},
 			want: map[string]string{
@@ -1464,6 +1506,16 @@ func closing(url string) ([]byte, error) {
 		Header: map[string]string{"Connection": "close"},
 		Cookie: map[string]string{"a": "1", "b": "2"},
 	})
+	if err != nil {
+		return nil, err
+	}
+	b := resp.Body()
+	return b, nil
+}
+
+// The v3 client sets User-Agent and Referer itself: header calls would be lost.
+func agentAndReferer(url, ua string) ([]byte, error) {
+	resp, err := client.Get(url, client.Config{UserAgent: ua, Referer: "https://example.com/"})
 	if err != nil {
 		return nil, err
 	}

@@ -128,6 +128,9 @@ type clientOp struct {
 	setsMethod bool
 	// setsURL marks an op that sets the URL, urlArg is its argument.
 	setsURL bool
+	// touchesURI marks an op that changes the URI the request was given, which
+	// setting the request URI replaces.
+	touchesURI bool
 }
 
 // clientHeaderKey returns the lower-case name of a literal header key,
@@ -357,8 +360,15 @@ func clientHeaderOp(op clientOp, call string, keyExpr ast.Expr, key, val string,
 	} else if k, err := strconv.Unquote(key); err == nil {
 		op.header = strings.ToLower(k)
 	}
-	if op.header == "host" {
+	switch op.header {
+	case "host":
 		return op, "a Host header (the v3 client cannot send a Host header that differs from the URL)"
+	case "user-agent":
+		// The v3 client sets these two headers itself, from the user agent and
+		// the referer of the request, and discards what a header call set.
+		return clientScalarOp(op, clientMemberUserAgent, val)
+	case "referer":
+		return clientScalarOp(op, "Referer", val)
 	}
 	if v, err := strconv.Unquote(val); err == nil {
 		op.headerVal = v
@@ -643,6 +653,7 @@ func (f *clientFile) reqOp(path string, call *ast.CallExpr, u *clientUnit) (op c
 				call = "SetParam"
 			}
 			op.req = fmt.Sprintf("%s(%s, %s)", call, a(0), a(1))
+			op.touchesURI = true
 			return op, ""
 		}
 	case "Header.SetHost", "Header.SetHostBytes", "URI().SetHost", "URI().SetHostBytes":
