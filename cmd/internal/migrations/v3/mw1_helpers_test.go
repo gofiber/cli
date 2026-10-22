@@ -144,7 +144,7 @@ func mw1LineOf(t *testing.T, src, needle string) int {
 
 // mw1Packages are the packages whose qualifiers the migrations write into the
 // code they produce.
-var mw1Packages = strings.Fields("extractors fiber strings time os fs sha256 base64 healthcheck csrf basicauth cors cache encryptcookie envvar favicon")
+var mw1Packages = strings.Fields("extractors fiber strings time os fs sha256 base64 healthcheck csrf basicauth cors cache encryptcookie envvar favicon fibermigrate")
 
 var mw1VersionElement = regexp.MustCompile(`^v[0-9]+$`)
 
