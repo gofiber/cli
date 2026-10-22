@@ -47,6 +47,7 @@ const (
 	cacheStorage        = "Storage"
 	cacheKey            = "Key"
 	cacheKeyGenerator   = "KeyGenerator"
+	cacheMaxBytes       = "MaxBytes"
 )
 
 // cacheV3Fields are the fields that only exist in v3: a config that sets one
@@ -60,6 +61,11 @@ var cacheV3Fields = []string{
 // completed with the defaults of v2.
 const cacheDefaultNote = "cache.ConfigDefault is not what it was in v2 (it sends Cache-Control headers and keeps responses for five minutes): " +
 	"set DisableCacheControl and Expiration on the copy"
+
+// cacheZeroNote is the note for a config variable without a value that cannot
+// be completed with the defaults of v2.
+const cacheZeroNote = "a cache.Config without values is not what it was in v2 (it sends Cache-Control headers and keeps responses for five minutes): " +
+	"set DisableCacheControl and Expiration"
 
 // cacheMigration is the state of the rewrite of one file.
 type cacheMigration struct {
@@ -90,7 +96,7 @@ func migrateCacheContent(content string, fi internal.FileInfo) string {
 				m.config(lit)
 			}
 		case *ast.CallExpr:
-			m.bareNew(x, names)
+			m.newCall(x, names)
 		case *ast.AssignStmt:
 			if _, field, isAssign := mw1AssignedField(x, stack, names); isAssign {
 				m.assignment(x, field)
@@ -100,6 +106,8 @@ func migrateCacheContent(content string, fi internal.FileInfo) string {
 		case *ast.ValueSpec:
 			if len(x.Values) == 1 && mw1IsMember(x.Values[0], names, "ConfigDefault") {
 				m.rep.notef(x, cacheDefaultNote)
+			} else if len(x.Values) == 0 && x.Type != nil && mw1IsMember(x.Type, names, "Config") {
+				m.zeroValue(x, stack)
 			}
 		}
 		return true
@@ -127,14 +135,20 @@ func (m *cacheMigration) v2Defaults(withControl, withExpiration bool) []string {
 	return elems
 }
 
-// bareNew gives cache.New() without a config the config of v2.
-func (m *cacheMigration) bareNew(call *ast.CallExpr, names []string) {
-	if len(call.Args) != 0 || !mw1IsMember(call.Fun, names, "New") {
+// newCall gives cache.New() without a config, and cache.New(cache.ConfigDefault),
+// the config of v2.
+func (m *cacheMigration) newCall(call *ast.CallExpr, names []string) {
+	if !mw1IsMember(call.Fun, names, "New") {
 		return
 	}
 	pkg, _, _ := mw1Selector(call.Fun)
-	text := pkg + ".Config{" + strings.Join(m.v2Defaults(true, true), ", ") + "}"
-	m.edits.replace(m.g.offset(call.Rparen), m.g.offset(call.Rparen), text)
+	switch {
+	case len(call.Args) == 0:
+		offset := m.g.offset(call.Rparen)
+		m.edits.replace(offset, offset, pkg+".Config{"+strings.Join(m.v2Defaults(true, true), ", ")+"}")
+	case len(call.Args) == 1 && mw1IsMember(call.Args[0], names, "ConfigDefault"):
+		m.edits.replaceNode(m.g, call.Args[0], pkg+".Config{"+strings.Join(m.v2Defaults(true, true), ", ")+"}")
+	}
 }
 
 // config rewrites a cache.Config literal.
@@ -176,8 +190,8 @@ func (m *cacheMigration) config(lit *ast.CompositeLit) {
 	}
 	elems := m.v2Defaults(fields[cacheControl] == nil, fields[cacheExpiration] == nil)
 	if len(elems) > 0 {
-		offset, text := mw1AppendElements(m.g, lit, elems)
-		m.edits.replace(offset, offset, text)
+		start, end, text := mw1AddElements(m.g, lit, elems)
+		m.edits.replace(start, end, text)
 	}
 }
 
@@ -239,45 +253,50 @@ func (m *cacheMigration) defaultCopy(as *ast.AssignStmt, stack []ast.Node, names
 	if !ok || as.Tok != token.DEFINE || len(stack) == 0 {
 		return
 	}
-	block, ok := stack[len(stack)-1].(*ast.BlockStmt)
+	list, ok := mw1StmtList(stack[len(stack)-1])
 	if !ok || !mw1StartsLine(m.g.src, m.g.offset(as.Pos())) {
 		m.rep.notef(as, cacheDefaultNote)
 		return
 	}
+	m.restoreDefaults(as, id.Name, list, true)
+}
 
-	// the fields that the code sets after the declaration
-	set := map[string]bool{}
-	after := false
-	for _, stmt := range block.List {
-		if stmt == ast.Stmt(as) {
-			after = true
-			continue
-		}
-		if !after {
-			continue
-		}
-		ast.Inspect(stmt, func(n ast.Node) bool {
-			if assign, isAssign := n.(*ast.AssignStmt); isAssign && len(assign.Lhs) == 1 {
-				if sel, isSel := assign.Lhs[0].(*ast.SelectorExpr); isSel && isIdentNamed(sel.X, id.Name) {
-					set[sel.Sel.Name] = true
+// zeroValue restores the defaults of v2 in a config variable that is declared
+// without a value, `var cfg cache.Config`, whose zero value is a different
+// config in v3. stack holds the ancestors of the spec.
+func (m *cacheMigration) zeroValue(spec *ast.ValueSpec, stack []ast.Node) {
+	const ancestors = 3 // the declaration, the statement that holds it, and the block
+	if len(stack) >= ancestors {
+		if decl, ok := stack[len(stack)-2].(*ast.DeclStmt); ok && mw1StartsLine(m.g.src, m.g.offset(decl.Pos())) {
+			if list, isList := mw1StmtList(stack[len(stack)-3]); isList {
+				for _, name := range spec.Names {
+					m.restoreDefaults(decl, name.Name, list, false)
 				}
+				return
 			}
-			return true
-		})
+		}
 	}
+	m.rep.notef(spec, cacheZeroNote)
+}
+
+// restoreDefaults adds the statements that set the defaults of v2 after the
+// statement that declares the config variable name, unless the code sets a
+// field itself later in the same list. fromDefault is whether the variable
+// starts as a copy of cache.ConfigDefault, which also limits the size of the
+// cache in v3.
+func (m *cacheMigration) restoreDefaults(decl ast.Stmt, name string, list []ast.Stmt, fromDefault bool) {
+	set := mw1FieldsSetAfter(list, decl, name)
 
 	var stmts []string
 	if !set[cacheControl] && !set[cacheDisableControl] {
-		stmts = append(stmts, id.Name+"."+cacheDisableControl+" = true")
+		stmts = append(stmts, name+"."+cacheDisableControl+" = true")
 	}
 	if !set[cacheExpiration] {
-		stmts = append(stmts, id.Name+"."+cacheExpiration+" = "+m.timeName+".Minute")
+		stmts = append(stmts, name+"."+cacheExpiration+" = "+m.timeName+".Minute")
 		m.usesTime = true
 	}
-	if len(stmts) == 0 {
-		return
+	if fromDefault && !set[cacheMaxBytes] {
+		stmts = append(stmts, name+"."+cacheMaxBytes+" = 0")
 	}
-	indent := mw1Indent(m.g.src, m.g.offset(as.Pos()))
-	end := m.g.offset(as.End())
-	m.edits.replace(end, end, "\n"+indent+strings.Join(stmts, "\n"+indent))
+	mw1InsertStatements(m.g, &m.edits, decl, stmts)
 }

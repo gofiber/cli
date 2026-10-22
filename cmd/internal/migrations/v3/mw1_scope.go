@@ -259,32 +259,28 @@ func mw1MultiLine(g *goSource, lit *ast.CompositeLit) bool {
 	return g.line(lit.Lbrace) != g.line(lit.Rbrace)
 }
 
-// mw1AppendElements returns the offset and the text that add elements to the
-// end of a composite literal.
-func mw1AppendElements(g *goSource, lit *ast.CompositeLit, elems []string) (offset int, text string) {
-	multi := mw1MultiLine(g, lit)
-	if len(lit.Elts) == 0 {
-		offset = g.offset(lit.Lbrace) + 1
-		if multi {
-			return offset, "\n" + strings.Join(elems, ",\n") + ",\n"
-		}
-		return offset, strings.Join(elems, ", ")
+// mw1AddElements returns the edit (the range it replaces and the text) that
+// adds elements to a composite literal. It is written so that no edit to the
+// elements of the literal can get in its way: a multi-line literal gets lines of
+// their own before the one with the closing brace, and a single-line literal
+// gets the elements first, since the last element may go.
+func mw1AddElements(g *goSource, lit *ast.CompositeLit, elems []string) (start, end int, text string) {
+	if !mw1MultiLine(g, lit) {
+		start = g.offset(lit.Lbrace)
+		return start, start + 1, "{" + strings.Join(elems, ", ") + ", "
 	}
 
-	offset = g.offset(lit.Elts[len(lit.Elts)-1].End())
-	comma := mw1SkipSpaces(g.src, offset)
-	hasComma := comma < len(g.src) && g.src[comma] == ','
-	switch {
-	case multi && hasComma:
-		// after the comma, and after the comment that trails it
-		return mw1TrailingComment(g.src, comma+1), "\n" + strings.Join(elems, ",\n") + ","
-	case multi:
-		return offset, ",\n" + strings.Join(elems, ",\n") + ","
-	case hasComma:
-		return comma + 1, " " + strings.Join(elems, ", ") + ","
-	default:
-		return offset, ", " + strings.Join(elems, ", ")
+	rbrace := g.offset(lit.Rbrace)
+	lineStart := strings.LastIndexByte(g.src[:rbrace], '\n') + 1
+	indent := mw1Indent(g.src, rbrace)
+	if strings.TrimSpace(g.src[lineStart:rbrace]) == "" {
+		indent += "\t" // the brace is alone: the elements are one level deeper
 	}
+	var lines []byte
+	for _, elem := range elems {
+		lines = append(lines, indent+elem+",\n"...)
+	}
+	return lineStart, lineStart, string(lines)
 }
 
 // mw1QuoteList renders a []string literal.
@@ -477,4 +473,54 @@ func mw1ImportKind(path string) int {
 		return mw1OtherImport
 	}
 	return mw1StdImport
+}
+
+// mw1StmtList returns the statements of a block or of a case of a switch or a
+// select.
+func mw1StmtList(n ast.Node) ([]ast.Stmt, bool) {
+	switch x := n.(type) {
+	case *ast.BlockStmt:
+		return x.List, true
+	case *ast.CaseClause:
+		return x.Body, true
+	case *ast.CommClause:
+		return x.Body, true
+	}
+	return nil, false
+}
+
+// mw1FieldsSetAfter returns the fields that the statements after decl assign to
+// the variable name, as in `name.Field = value`.
+func mw1FieldsSetAfter(list []ast.Stmt, decl ast.Stmt, name string) map[string]bool {
+	set := map[string]bool{}
+	after := false
+	for _, stmt := range list {
+		if stmt == decl {
+			after = true
+			continue
+		}
+		if !after {
+			continue
+		}
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if assign, isAssign := n.(*ast.AssignStmt); isAssign && len(assign.Lhs) == 1 {
+				if sel, isSel := assign.Lhs[0].(*ast.SelectorExpr); isSel && isIdentNamed(sel.X, name) {
+					set[sel.Sel.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	return set
+}
+
+// mw1InsertStatements adds statements, each on a line of its own, after the
+// statement decl.
+func mw1InsertStatements(g *goSource, edits *editSet, decl ast.Stmt, stmts []string) {
+	if len(stmts) == 0 {
+		return
+	}
+	indent := mw1Indent(g.src, g.offset(decl.Pos()))
+	end := g.offset(decl.End())
+	edits.replace(end, end, "\n"+indent+strings.Join(stmts, "\n"+indent))
 }

@@ -17,6 +17,16 @@ const csrfImports = `import (
 )
 `
 
+// csrfImportsTime are the imports once the migration has added time, for the
+// lifetime of v2.
+const csrfImportsTime = `import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/csrf"
+)
+`
+
 const csrfExtractorsImport = `"github.com/gofiber/fiber/v3/extractors"`
 
 func Test_MigrateCSRFConfig(t *testing.T) {
@@ -83,16 +93,16 @@ func configs() []fiber.Handler {
 
 	file := res.file()
 	for _, want := range []string{
-		`csrf.Config{Extractor: extractors.FromHeader("X-CSRF-Token")}`,
-		`csrf.Config{Extractor: extractors.FromForm("_csrf"), CookieName: "c"}`,
-		`csrf.Config{Extractor: extractors.FromQuery("csrf")}`,
-		`csrf.Config{Extractor: extractors.FromParam("csrf")}`,
-		`csrf.Config{Extractor: extractors.FromHeader("X-XSRF-TOKEN")}`,
-		`csrf.Config{Extractor: extractors.FromHeader(csrf.HeaderName)}`,
-		`csrf.Config{Extractor: extractors.FromForm(lookupName)}`,
-		`csrf.Config{Extractor: extractors.FromHeader("X-" + lookupName)}`,
-		"\t\tcsrf.New(csrf.Config{}),\n",
-		"Extractor:  extractors.FromHeader(\"X-Csrf-Token\"), // where the token is sent",
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromHeader("X-CSRF-Token")}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromForm("_csrf"), CookieName: "c"}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromQuery("csrf")}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromParam("csrf")}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromHeader("X-XSRF-TOKEN")}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromHeader(csrf.HeaderName)}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromForm(lookupName)}`,
+		`csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromHeader("X-" + lookupName)}`,
+		"\t\tcsrf.New(csrf.Config{IdleTimeout: time.Hour}),\n",
+		"Extractor:   extractors.FromHeader(\"X-Csrf-Token\"), // where the token is sent",
 	} {
 		assert.Contains(t, file, want)
 	}
@@ -123,10 +133,19 @@ func configs(lookup string) []fiber.Handler {
 	res := mw1Run(t, v3.MigrateCSRFConfig, src)
 
 	// no silent fall back to the default header extractor: the compiler points at the field
-	assert.Equal(t, src, res.file())
-	assert.Empty(t, res.stdout)
+	file := res.file()
+	for _, want := range []string{
+		`csrf.Config{IdleTimeout: time.Hour, KeyLookup: "cookie:csrf_"}`,
+		`csrf.Config{IdleTimeout: time.Hour, KeyLookup: lookup, CookieName: "c"}`,
+		`csrf.Config{IdleTimeout: time.Hour, KeyLookup: "body:token"}`,
+		`KeyLookup:   "header:X-A",`,
+		`TokenLookup: "header:X-B",`,
+	} {
+		assert.Contains(t, file, want)
+	}
+	assert.NotContains(t, file, "Extractor")
 	if assert.Len(t, res.notes, 4) {
-		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: csrf.Config has no KeyLookup in v3", mw1LineOf(t, src, `"cookie:csrf_"`)))
+		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: csrf.Config has no KeyLookup in v3", mw1LineOf(t, file, `"cookie:csrf_"`)))
 		assert.Contains(t, res.notes[0], "v3 panics when the extractor reads the CSRF cookie")
 	}
 }
@@ -154,8 +173,8 @@ var _ = csrf.New(csrf.Config{KeyLookup: "header:X-Csrf-Token", Expiration: time.
 `,
 	})
 
-	assert.Contains(t, res.files["main.go"], `csrf.New(csrf.Config{Extractor: extractors.FromParam("csrf")})`)
-	assert.Contains(t, res.files["main.go"], `csrf.Config{KeyLookup: "cookie:csrf_"}`)
+	assert.Contains(t, res.files["main.go"], `csrf.New(csrf.Config{IdleTimeout: time.Hour, Extractor: extractors.FromParam("csrf")})`)
+	assert.Contains(t, res.files["main.go"], `csrf.Config{IdleTimeout: time.Hour, KeyLookup: "cookie:csrf_"}`)
 	assert.Contains(t, res.files["z.go"], `csrf.Config{Extractor: extractors.FromHeader("X-Csrf-Token"), IdleTimeout: time.Hour}`)
 }
 
@@ -175,10 +194,10 @@ var d = cs.Config{Extractor: cs.CsrfFromParam("csrf")}
 `)
 
 	file := res.file()
-	assert.Contains(t, file, `var a = cs.Config{Extractor: extractors.FromHeader(cs.HeaderName)}`)
-	assert.Contains(t, file, `var b = cs.Config{Extractor: extractors.FromForm("_csrf")}`)
-	assert.Contains(t, file, `var c = cs.Config{Extractor: extractors.FromQuery("csrf")}`)
-	assert.Contains(t, file, `var d = cs.Config{Extractor: extractors.FromParam("csrf")}`)
+	assert.Contains(t, file, `var a = cs.Config{IdleTimeout: time.Hour, Extractor: extractors.FromHeader(cs.HeaderName)}`)
+	assert.Contains(t, file, `var b = cs.Config{IdleTimeout: time.Hour, Extractor: extractors.FromForm("_csrf")}`)
+	assert.Contains(t, file, `var c = cs.Config{IdleTimeout: time.Hour, Extractor: extractors.FromQuery("csrf")}`)
+	assert.Contains(t, file, `var d = cs.Config{IdleTimeout: time.Hour, Extractor: extractors.FromParam("csrf")}`)
 	assert.Contains(t, file, csrfExtractorsImport)
 }
 
@@ -207,7 +226,9 @@ var _ = csrf.New(csrf.Config{Extractor: csrf.CsrfFromCookie("csrf_")})
 `
 	res := mw1Run(t, v3.MigrateCSRFConfig, src)
 
-	assert.Equal(t, src, res.file())
+	// the helper stays, so that the compiler points at it
+	assert.Contains(t, res.file(), `csrf.Config{IdleTimeout: time.Hour, Extractor: csrf.CsrfFromCookie("csrf_")}`)
+	assert.NotContains(t, res.file(), "extractors")
 	if assert.Len(t, res.notes, 1) {
 		assert.Contains(t, res.notes[0], "csrf.CsrfFromCookie is gone in v3, which panics when the extractor reads the CSRF cookie")
 	}
@@ -292,7 +313,7 @@ var _ = csrf.New(csrf.Config{
 })
 `)
 
-	assert.Contains(t, res.file(), `Extractor: extractors.FromHeader("X-A"),`)
+	assert.Contains(t, res.file(), `Extractor:   extractors.FromHeader("X-A"),`)
 	assert.NotContains(t, res.file(), "KeyLookup")
 	assert.Empty(t, res.notes)
 }
@@ -347,8 +368,8 @@ var _ = csrf.New(csrf.Config{
 	CookieSameSite: "Strict",
 })
 
-var _ = csrf.New(csrf.Config{CookieName: "c", CookieSecure: true})
-var _ = csrf.New(csrf.Config{})
+var _ = csrf.New(csrf.Config{IdleTimeout: time.Hour, CookieName: "c", CookieSecure: true})
+var _ = csrf.New(csrf.Config{IdleTimeout: time.Hour})
 `, res.file())
 	assert.Empty(t, res.notes)
 }
@@ -368,9 +389,9 @@ var d = csrf.Config{CookieExpires: 1, Expiration: 2}
 `
 	res := mw1Run(t, v3.MigrateCSRFConfig, src)
 
-	assert.Contains(t, res.file(), `var a = csrf.Config{Cookie: cookie}`)
-	assert.Contains(t, res.file(), `var b = csrf.Config{Cookie: &fiber.Cookie{Name: "c"}, CookieName: "other"}`)
-	assert.Contains(t, res.file(), `var c = csrf.Config{Cookie: &fiber.Cookie{Name: "c"}, CookieSecure: true}`)
+	assert.Contains(t, res.file(), `var a = csrf.Config{IdleTimeout: time.Hour, Cookie: cookie}`)
+	assert.Contains(t, res.file(), `var b = csrf.Config{IdleTimeout: time.Hour, Cookie: &fiber.Cookie{Name: "c"}, CookieName: "other"}`)
+	assert.Contains(t, res.file(), `var c = csrf.Config{IdleTimeout: time.Hour, Cookie: &fiber.Cookie{Name: "c"}, CookieSecure: true}`)
 	assert.Contains(t, res.file(), `var d = csrf.Config{CookieExpires: 1, IdleTimeout: 2}`)
 	assert.Len(t, res.notes, 4)
 }
@@ -499,10 +520,11 @@ func typed(h *csrf.CSRFHandler, c *fiber.Ctx) error { return h.DeleteToken(c) }
 
 	assert.Equal(t, `package main
 
-`+csrfImports+`
+`+csrfImportsTime+`
 func mw() fiber.Handler {
 	return csrf.New(csrf.Config{
-		CookieName: "csrf_",
+		CookieName:  "csrf_",
+		IdleTimeout: time.Hour,
 	})
 }
 
@@ -639,20 +661,16 @@ func config() csrf.Config {
 	// the keys have no effect in v3 and go, the cookie is the user's to spread over the fields
 	assert.Equal(t, `package main
 
-import (
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/csrf"
-)
-
+`+csrfImportsTime+`
 func config() csrf.Config {
-	cfg := csrf.Config{}
+	cfg := csrf.Config{IdleTimeout: time.Hour}
 	cfg.Cookie = &fiber.Cookie{Name: "csrf_", Secure: true}
 	cfg.CookieName = "other"
 	return cfg
 }
 `, res.file())
 	require.Len(t, res.notes, 1)
-	assert.Contains(t, res.notes[0], "main.go:10: ")
+	assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: ", mw1LineOf(t, res.file(), "cfg.Cookie =")))
 	assert.Contains(t, res.notes[0], "csrf.Config has no Cookie in v3: set CookieName")
 }
 
@@ -777,4 +795,107 @@ var b = csrf.Config{KeyLookup: "cookie:csrf_"}
 	if assert.Len(t, res.notes, 1) {
 		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: ", line))
 	}
+}
+
+func Test_MigrateCSRFConfig_DefaultLifetime(t *testing.T) {
+	t.Parallel()
+
+	// a token lasted an hour in v2 and lasts half an hour in v3
+	res := mw1Run(t, v3.MigrateCSRFConfig, `package main
+
+`+csrfImportsTime+`
+var shared csrf.Config
+
+var sharedCopy = csrf.ConfigDefault
+
+func handlers() []fiber.Handler {
+	copied := csrf.ConfigDefault
+	copied.CookieName = "copied"
+
+	timed := csrf.ConfigDefault
+	timed.Expiration = 5 * time.Minute
+
+	var declared csrf.Config
+	declared.CookieName = "declared"
+
+	return []fiber.Handler{
+		csrf.New(),
+		csrf.New(csrf.ConfigDefault),
+		csrf.New(csrf.Config{}),
+		csrf.New(csrf.Config{CookieName: "c", Expiration: time.Minute}),
+		csrf.New(csrf.Config{CookieExpires: time.Minute}),
+		csrf.New(csrf.Config{
+			CookieName: "multi",
+			CookieSecure: true,
+		}),
+		csrf.New(csrf.Config{TrustedOrigins: []string{"https://a.example"}}),
+		csrf.New(copied), csrf.New(timed), csrf.New(declared),
+	}
+}
+`)
+
+	assert.Equal(t, `package main
+
+`+csrfImportsTime+`
+var shared csrf.Config
+
+var sharedCopy = csrf.ConfigDefault
+
+func handlers() []fiber.Handler {
+	copied := csrf.ConfigDefault
+	copied.IdleTimeout = time.Hour
+	copied.CookieName = "copied"
+
+	timed := csrf.ConfigDefault
+	timed.IdleTimeout = 5 * time.Minute
+
+	var declared csrf.Config
+	declared.IdleTimeout = time.Hour
+	declared.CookieName = "declared"
+
+	return []fiber.Handler{
+		csrf.New(csrf.Config{IdleTimeout: time.Hour}),
+		csrf.New(csrf.Config{IdleTimeout: time.Hour}),
+		csrf.New(csrf.Config{IdleTimeout: time.Hour}),
+		csrf.New(csrf.Config{CookieName: "c", IdleTimeout: time.Minute}),
+		csrf.New(csrf.Config{IdleTimeout: time.Minute}),
+		csrf.New(csrf.Config{
+			CookieName:   "multi",
+			CookieSecure: true,
+			IdleTimeout:  time.Hour,
+		}),
+		csrf.New(csrf.Config{TrustedOrigins: []string{"https://a.example"}}),
+		csrf.New(copied), csrf.New(timed), csrf.New(declared),
+	}
+}
+`, res.file())
+
+	// the variables of the package cannot be completed by statements
+	if assert.Len(t, res.notes, 2) {
+		assert.Contains(t, res.notes[0], "a csrf.Config without values is not what it was in v2")
+		assert.Contains(t, res.notes[1], "csrf.ConfigDefault is not what it was in v2")
+	}
+
+	second := mw1Run(t, v3.MigrateCSRFConfig, res.file())
+	assert.Equal(t, res.file(), second.file())
+	assert.Empty(t, second.stdout)
+}
+
+func Test_MigrateCSRFConfig_DefaultLifetimeUsesTheAliasOfTime(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateCSRFConfig, `package main
+
+import (
+	clock "time"
+
+	"github.com/gofiber/fiber/v2/middleware/csrf"
+)
+
+var _ = clock.Second
+
+var _ = csrf.New(csrf.Config{CookieName: "c"})
+`)
+
+	assert.Contains(t, res.file(), `csrf.Config{IdleTimeout: clock.Hour, CookieName: "c"}`)
 }

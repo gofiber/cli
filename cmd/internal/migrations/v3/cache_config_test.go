@@ -175,8 +175,8 @@ func configs(st fiber.Storage) []fiber.Handler {
 	return []fiber.Handler{
 		cache.New(cache.Config{DisableCacheControl: true, Expiration: time.Minute}),
 		cache.New(cache.Config{DisableCacheControl: true, Expiration: time.Minute}),
-		cache.New(cache.Config{Expiration: 10 * time.Minute, DisableCacheControl: true}),
-		cache.New(cache.Config{Storage: st, DisableCacheControl: true, Expiration: time.Minute}),
+		cache.New(cache.Config{DisableCacheControl: true, Expiration: 10 * time.Minute}),
+		cache.New(cache.Config{DisableCacheControl: true, Expiration: time.Minute, Storage: st}),
 		cache.New(cache.Config{
 			Storage:             st,
 			DisableCacheControl: true,
@@ -319,7 +319,7 @@ func handler(a, b fiber.Storage) fiber.Handler {
 }
 `)
 
-	assert.Contains(t, res.file(), `cache.Config{Expiration: time.Hour, Storage: b, DisableCacheControl: true}`)
+	assert.Contains(t, res.file(), `cache.Config{DisableCacheControl: true, Expiration: time.Hour, Storage: b}`)
 }
 
 func Test_MigrateCacheConfig_Idempotent(t *testing.T) {
@@ -382,6 +382,7 @@ func plain() cache.Config {
 	cfg := cache.ConfigDefault
 	cfg.DisableCacheControl = true
 	cfg.Expiration = time.Minute
+	cfg.MaxBytes = 0
 	cfg.Methods = []string{fiber.MethodGet}
 	return cfg
 }
@@ -389,6 +390,7 @@ func plain() cache.Config {
 func expiration() cache.Config {
 	cfg := cache.ConfigDefault
 	cfg.DisableCacheControl = true
+	cfg.MaxBytes = 0
 	cfg.Expiration = 2 * time.Minute
 	return cfg
 }
@@ -396,6 +398,7 @@ func expiration() cache.Config {
 func control(on bool) cache.Config {
 	cfg := cache.ConfigDefault
 	cfg.Expiration = time.Minute
+	cfg.MaxBytes = 0
 	if on {
 		cfg.DisableCacheControl = false
 	}
@@ -407,4 +410,92 @@ var shared = cache.ConfigDefault
 	if assert.Len(t, res.notes, 1) {
 		assert.Contains(t, res.notes[0], "cache.ConfigDefault is not what it was in v2")
 	}
+}
+
+func Test_MigrateCacheConfig_ConfigWithoutAValue(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateCacheConfig, `package main
+
+`+cacheImports+`
+var shared cache.Config
+
+func configs() []cache.Config {
+	var plain cache.Config
+	var timed cache.Config
+	timed.Expiration = time.Hour
+	var cached cache.Config
+	cached.CacheControl = true
+	return []cache.Config{plain, timed, cached, shared}
+}
+
+func handlers() []fiber.Handler {
+	var both, other cache.Config
+	return []fiber.Handler{cache.New(both), cache.New(other)}
+}
+`)
+
+	assert.Equal(t, `package main
+
+`+cacheImports+`
+var shared cache.Config
+
+func configs() []cache.Config {
+	var plain cache.Config
+	plain.DisableCacheControl = true
+	plain.Expiration = time.Minute
+	var timed cache.Config
+	timed.DisableCacheControl = true
+	timed.Expiration = time.Hour
+	var cached cache.Config
+	cached.Expiration = time.Minute
+	cached.DisableCacheControl = false
+	return []cache.Config{plain, timed, cached, shared}
+}
+
+func handlers() []fiber.Handler {
+	var both, other cache.Config
+	both.DisableCacheControl = true
+	both.Expiration = time.Minute
+	other.DisableCacheControl = true
+	other.Expiration = time.Minute
+	return []fiber.Handler{cache.New(both), cache.New(other)}
+}
+`, res.file())
+	// a variable of the package cannot be completed by statements
+	if assert.Len(t, res.notes, 1) {
+		assert.Contains(t, res.notes[0], "a cache.Config without values is not what it was in v2")
+	}
+
+	second := mw1Run(t, v3.MigrateCacheConfig, res.file())
+	assert.Equal(t, res.file(), second.file())
+	assert.Empty(t, second.stdout)
+}
+
+func Test_MigrateCacheConfig_NewWithTheDefaultConfig(t *testing.T) {
+	t.Parallel()
+
+	// the default config of v3 is another one than the default config of v2
+	res := mw1Run(t, v3.MigrateCacheConfig, `package main
+
+import "github.com/gofiber/fiber/v2/middleware/cache"
+
+var _ = cache.New(cache.ConfigDefault)
+`)
+
+	assert.Equal(t, `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2/middleware/cache"
+)
+
+var _ = cache.New(cache.Config{DisableCacheControl: true, Expiration: time.Minute})
+`, res.file())
+	assert.Empty(t, res.notes)
+
+	second := mw1Run(t, v3.MigrateCacheConfig, res.file())
+	assert.Equal(t, res.file(), second.file())
+	assert.Empty(t, second.stdout)
 }

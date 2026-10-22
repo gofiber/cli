@@ -69,10 +69,13 @@ type csrfMigration struct {
 	// extractors.ErrNotFound.
 	customExtractors map[*ast.FuncLit]bool
 	extractorsName   string
+	timeName         string
 	names            []string
 	edits            editSet
 	needsExtractors  bool
 	usesExtractors   bool
+	needsTime        bool
+	usesTime         bool
 }
 
 func migrateCSRFContent(content string, fi internal.FileInfo, idx *mw1Index) string {
@@ -87,6 +90,7 @@ func migrateCSRFContent(content string, fi internal.FileInfo, idx *mw1Index) str
 
 	m := &csrfMigration{g: g, rep: newMW1Reporter(g, fi), idx: idx, path: fi.Path, names: names, customExtractors: map[*ast.FuncLit]bool{}}
 	m.extractorsName, m.needsExtractors = mw1ImportName(content, csrfExtractorsPath, "extractors")
+	m.timeName, m.needsTime = mw1ImportName(content, "time", "time")
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
@@ -94,11 +98,16 @@ func migrateCSRFContent(content string, fi internal.FileInfo, idx *mw1Index) str
 			if lit, isConfig := mw1ConfigLit(x, names); isConfig {
 				m.config(lit, stack)
 			}
+		case *ast.CallExpr:
+			m.newCall(x)
+		case *ast.ValueSpec:
+			m.valueSpec(x, stack)
 		case *ast.AssignStmt:
 			if m.handlerAssignment(x, stack) {
 				return false
 			}
 			m.assignment(x, stack)
+			m.defaultCopy(x, stack)
 		case *ast.TypeAssertExpr:
 			return !m.handlerAssertion(x, stack)
 		case *ast.SelectorExpr:
@@ -111,6 +120,9 @@ func migrateCSRFContent(content string, fi internal.FileInfo, idx *mw1Index) str
 	out := applied
 	if m.usesExtractors && m.needsExtractors {
 		out = mw1AddImport(out, csrfExtractorsPath)
+	}
+	if m.usesTime && m.needsTime {
+		out = mw1AddImport(out, "time")
 	}
 	m.rep.flush(&m.edits, applied, out)
 	return out
@@ -159,6 +171,7 @@ func (m *csrfMigration) config(lit *ast.CompositeLit, stack []ast.Node) {
 	if kv := fields[csrfExtractor]; kv != nil {
 		m.extractor(kv.Value, stack)
 	}
+	m.defaultLifetime(lit, fields, stack)
 }
 
 // notef leaves a note on the line of the node.
