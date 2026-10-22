@@ -98,8 +98,9 @@ func fetchContribV3Version(module string) (version string, err error) {
 	runErr := cmd.Wait()
 	timer.Stop()
 	if runErr != nil {
+		// The go command names the module and says what is wrong.
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", fmt.Errorf("go list %s@latest: %s: %w", path, msg, runErr)
+			return "", fmt.Errorf("%s: %w", msg, runErr)
 		}
 		return "", fmt.Errorf("go list %s@latest: %w", path, runErr)
 	}

@@ -320,3 +320,89 @@ func contribComparesError(stack []ast.Node) bool {
 	}
 	return false
 }
+
+// jwtLegacyOnly are the settings of the standalone gofiber/jwt module that
+// contrib/v3/jwt has no field for (key sets are JWKSetURLs there, and the
+// refresh of the keys is not configurable).
+var jwtLegacyOnly = []string{
+	"SigningKeys", "KeySetURL", "KeySetURLs", "KeyRefreshSuccessHandler", "KeyRefreshErrorHandler",
+	"KeyRefreshInterval", "KeyRefreshRateLimit", "KeyRefreshTimeout", "KeyRefreshUnknownKID",
+}
+
+// jwtLegacyAlgs are the algorithm constants of the standalone module.
+var jwtLegacyAlgs = []string{
+	"HS256", "HS384", "HS512", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+}
+
+// jwtLegacy migrates what a file written for the standalone gofiber/jwt module
+// needs besides the path of its import: the key of the config, the golang-jwt
+// version and the message of the error for a missing token. It runs while the
+// import is moved, since afterwards nothing tells which module the file used.
+func (f *contribFile) jwtLegacy() {
+	var legacy []contribImport
+	var names []string
+	for _, imp := range contribImportsOf(f.g, "jwt") {
+		if imp.legacy {
+			legacy = append(legacy, imp)
+			names = append(names, imp.name)
+		}
+	}
+	if len(legacy) == 0 {
+		return
+	}
+
+	for _, c := range f.findConfigs(names) {
+		f.jwtLegacyConfig(c)
+	}
+	f.jwtErrors(legacy)
+	f.jwtLegacyImports()
+}
+
+// jwtLegacyConfig moves the key of a config of the standalone gofiber/jwt module.
+// It took the key itself and the algorithm next to it (HS256 when none was
+// given); contrib/v3/jwt takes a SigningKey that holds both.
+func (f *contribFile) jwtLegacyConfig(c *contribConfig) {
+	defer c.finish()
+
+	for _, field := range jwtLegacyOnly {
+		if s := c.get(field); s != nil {
+			f.notef(s.pos(), "jwt Config: %s of the standalone gofiber/jwt module has no counterpart in contrib/v3/jwt "+
+				"(SigningKey takes a jwtware.SigningKey{Key: ..., JWTAlg: ...}, key sets are JWKSetURLs); move it by hand", field)
+			return
+		}
+	}
+
+	key, method := c.get("SigningKey"), c.get("SigningMethod")
+	if key != nil {
+		if lit, ok := key.value.(*ast.CompositeLit); !ok || lit.Type == nil || !contribIsPkgType(lit.Type, []string{c.pkg}, "SigningKey") {
+			alg := strconv.Quote("HS256")
+			if method != nil {
+				alg = f.jwtLegacyAlg(method.value, c.pkg)
+			}
+			f.edits.replaceNode(f.g, key.value, c.pkg+".SigningKey{Key: "+f.g.text(key.value)+", JWTAlg: "+alg+"}")
+		}
+	}
+	c.remove("SigningMethod")
+}
+
+// jwtLegacyAlg writes the algorithm that SigningMethod names: the constants of the
+// standalone module are strings now.
+func (f *contribFile) jwtLegacyAlg(e ast.Expr, pkg string) string {
+	if sel, ok := e.(*ast.SelectorExpr); ok && isIdentNamed(sel.X, pkg) && slices.Contains(jwtLegacyAlgs, sel.Sel.Name) {
+		return strconv.Quote(sel.Sel.Name)
+	}
+	return f.g.text(e)
+}
+
+// jwtLegacyImports moves the golang-jwt import of a file that used the standalone
+// module from v4 to v5: contrib/v3/jwt hands tokens and claims of v5 over.
+func (f *contribFile) jwtLegacyImports() {
+	for _, spec := range f.g.file.Imports {
+		if contribUnquote(spec.Path.Value) != "github.com/golang-jwt/jwt/v4" {
+			continue
+		}
+		f.edits.replaceNode(f.g, spec.Path, strconv.Quote("github.com/golang-jwt/jwt/v5"))
+		f.notef(spec.Pos(), "the standalone gofiber/jwt module used golang-jwt/jwt v4 and contrib/v3/jwt uses v5, "+
+			"so this import moved to v5 (jwt.StandardClaims is jwt.RegisteredClaims there)")
+	}
+}

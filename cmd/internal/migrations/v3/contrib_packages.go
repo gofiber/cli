@@ -343,9 +343,11 @@ func (r *contribRun) resolve(mods []*contribGoMod) {
 			continue
 		}
 		r.skipped[l.short] = true
+		reason := strings.Join(strings.Fields(l.err.Error()), " ")
+		reason = strings.TrimSuffix(strings.TrimPrefix(reason, "fetch contrib version: "), ": exit status 1")
 		r.noteGoModf(l.mod.path, l.row,
 			"could not look up the latest version of %s (%s); its imports and go.mod entries were left on the v2 module, run the migration again once the Go module proxy is reachable",
-			l.path, strings.Join(strings.Fields(l.err.Error()), " "))
+			l.path, reason)
 	}
 }
 
@@ -364,7 +366,8 @@ func (r *contribRun) rewriteImports(content string, fi internal.FileInfo) string
 		return content
 	}
 
-	var edits editSet
+	f := newContribFile(g, fi)
+	legacyJWT := false
 	for _, spec := range g.file.Imports {
 		target, ok := contribTargetOf(contribUnquote(spec.Path.Value))
 		if !ok || !r.moves(target) {
@@ -378,13 +381,20 @@ func (r *contribRun) rewriteImports(content string, fi internal.FileInfo) string
 		if spec.Name == nil && target.alias != "" {
 			path = target.alias + " " + path
 		}
-		edits.replaceNode(g, spec.Path, path)
+		f.edits.replaceNode(g, spec.Path, path)
 
 		if target.note != "" {
 			internal.Notef(fi, g.line(spec.Pos()), "%s", target.note)
 		}
+
+		// The standalone jwt module has a config of its own, which only the
+		// import can tell from the config of contrib/v3/jwt.
+		legacyJWT = legacyJWT || contribLegacyJWTRe.MatchString(contribUnquote(spec.Path.Value))
 	}
-	return edits.apply(content)
+	if legacyJWT {
+		f.jwtLegacy()
+	}
+	return f.apply()
 }
 
 // writeGoMods rewrites the go.mod files; every module is already resolved.
