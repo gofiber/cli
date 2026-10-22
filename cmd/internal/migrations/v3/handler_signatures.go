@@ -20,7 +20,10 @@ var ctxReflectPath = regexp.MustCompile(`^reflect$`)
 // into the fiber.Ctx of v3, an interface. Only types are rewritten, in files
 // that import the fiber package, under whatever name they import it.
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, ctxHandlerSignaturesContent)
+	run := newCtxRun()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return ctxHandlerSignaturesContent(content, fi, run)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate handler signatures: %w", err)
 	}
@@ -33,29 +36,36 @@ func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	return nil
 }
 
-func ctxHandlerSignaturesContent(content string, fi internal.FileInfo) string {
-	if !strings.Contains(content, ctxTypeCtx) {
+func ctxHandlerSignaturesContent(content string, fi internal.FileInfo, run *ctxRun) string {
+	if !strings.Contains(content, "*") {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
+	names := env.names
 	reflectNames := importNames(content, ctxReflectPath, "reflect")
 
 	var edits editSet
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		star, ok := n.(*ast.StarExpr)
-		if !ok || !ctxIsCtxTypeName(star.X, names, stack) {
+		if !ok {
 			return true
 		}
 
+		// The pointer to an alias of the context, to Ctx in a package that says
+		// type Ctx = fiber.Ctx, is a pointer to the interface just the same.
+		ctxType := ctxQualifier(names) + ctxTypeCtx
+		if !ctxIsCtxTypeName(star.X, names, stack) {
+			if !env.isCtxAlias(star.X, stack) {
+				return true
+			}
+			ctxType = g.text(star.X)
+		}
+
 		if conv, ok := ctxConversionOf(star, stack); ok {
-			ctxMigrateCtxConversion(g, &edits, fi, star, conv, stack[:len(stack)-2], reflectNames, ctxQualifier(names)+ctxTypeCtx)
+			ctxMigrateCtxConversion(g, &edits, fi, star, conv, stack[:len(stack)-2], reflectNames, ctxType)
 			return true
 		}
 
