@@ -14,8 +14,7 @@ import (
 // A repository can hold several modules: the index of each answers for the import
 // paths and the directories of the others, and keeps its finders to its own packages.
 func Test_ModuleIndex_Workspace(t *testing.T) {
-	t.Parallel()
-
+	// the subtests share the indexes, which are not safe for concurrent use
 	dir := modTestFiles(t, map[string]string{
 		"go.mod":               "// the repository itself is no module\n",
 		"go.work":              "go 1.25\n\nuse (\n\t./app\n\t./shared\n)\n",

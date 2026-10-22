@@ -138,7 +138,7 @@ func (fl *appFlow) finish() (commit func(), refusal appShimRefusal) {
 			return tell(fmt.Sprintf("the config goes between %s and %s, which belong to different Go modules: "+
 				"each module gets a registry of its own, and two of them cannot exchange values", appFileLabel(fl.seed), appFileLabel(f)))
 		case !pl.editable(f):
-			return tell(fmt.Sprintf("%s holds the config and is not part of the migration", appFileLabel(f)))
+			return tell(appFileLabel(f) + " holds the config and is not part of the migration")
 		}
 	}
 
@@ -176,7 +176,7 @@ func (fl *appFlow) finish() (commit func(), refusal appShimRefusal) {
 			planned = fp.edits.edits
 		}
 		if appEditsOverlap(slices.Concat(planned, es.edits)) {
-			return tell(fmt.Sprintf("its changes overlap other changes of %s", appFileLabel(f)))
+			return tell("its changes overlap other changes of " + appFileLabel(f))
 		}
 	}
 
@@ -286,9 +286,9 @@ func sortedByPos[K interface {
 func (sp *appShimModule) recordChange(c appFlowChange) {
 	list, exposed := &sp.configs, &sp.exposedConfigs
 	switch c.how {
-	case "take":
+	case changeTake:
 		list, exposed = &sp.takes, &sp.exposedTypes
-	case "hold":
+	case changeHold:
 		list, exposed = &sp.holds, &sp.exposedTypes
 	}
 	if !slices.Contains(*list, c.label) {
@@ -382,14 +382,14 @@ func (fl *appFlow) drop(mod goModule) (commit func(), why string) {
 	// the files it changes are the project's, and nothing else changes them
 	for f, es := range edits {
 		if fm, ok := pl.moduleOf(f); !ok || fm.root != mod.root || !pl.editable(f) {
-			return nil, fmt.Sprintf("%s is not part of the migration", appFileLabel(f))
+			return nil, appFileLabel(f) + " is not part of the migration"
 		}
 		var planned []textEdit
 		if fp := pl.plan.files[f.path]; fp != nil {
 			planned = fp.edits.edits
 		}
 		if appEditsOverlap(slices.Concat(planned, es.edits)) {
-			return nil, fmt.Sprintf("its changes overlap other changes of %s", appFileLabel(f))
+			return nil, "its changes overlap other changes of " + appFileLabel(f)
 		}
 	}
 

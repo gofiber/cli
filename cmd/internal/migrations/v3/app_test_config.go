@@ -135,7 +135,7 @@ func (f *appFile) looksLikeRequest(e ast.Expr) bool {
 		return false
 	}
 	sel, ok := appStripType(t).(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Request" {
+	if !ok || sel.Sel.Name != clientMethodRequest {
 		return false
 	}
 	id, isIdent := sel.X.(*ast.Ident)

@@ -70,13 +70,13 @@ func (c appFlowClass) what() string {
 
 // appFlowKey identifies a place that holds a value of the set.
 type appFlowKey struct {
-	kind  appFlowKind
-	class appFlowClass
 	// node is the declaration of the variable (see appBinding.node), of the function
 	// or of the struct type.
-	node ast.Node
-	name string
-	idx  int
+	node  ast.Node
+	name  string
+	idx   int
+	kind  appFlowKind
+	class appFlowClass
 }
 
 // appFlowLimit bounds how many places one set may have: a set that large is not
@@ -107,6 +107,19 @@ type appFlow struct {
 	// changed are the declarations whose type changes, for the note.
 	changed []appFlowChange
 }
+
+// What a declaration of the project does with the config.
+const (
+	changeReturn = "return"
+	changeTake   = "take"
+	changeHold   = "hold"
+)
+
+// The names of the builtin functions the flow looks at.
+const (
+	appBuiltinLen = "len"
+	appBuiltinCap = "cap"
+)
 
 // appFlowChange is a declaration of the project that holds the config.
 type appFlowChange struct {
@@ -212,7 +225,7 @@ func (fl *appFlow) claimExpr(f *appFile, e ast.Expr, class appFlowClass, usage b
 			return
 		}
 	case *ast.Ident:
-		if x.Name == "nil" {
+		if x.Name == mw1NilIdent {
 			if _, bound := f.binding(x); !bound {
 				return
 			}
@@ -297,7 +310,7 @@ func (fl *appFlow) claimCall(f *appFile, call *ast.CallExpr, idx int, class appF
 		fl.failf(f, call, "the config of an app is handed on (%s)", f.g.text(call))
 		return
 	}
-	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "append" && class == flowFuncs && len(call.Args) > 0 {
+	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == mw3BuiltinAppend && class == flowFuncs && len(call.Args) > 0 {
 		if _, bound := f.binding(id); !bound {
 			fl.claimExpr(f, call.Args[0], flowFuncs, false)
 			for i, arg := range call.Args[1:] {
@@ -365,6 +378,8 @@ func (fl *appFlow) claimField(td *appTypeDecl, name string, class appFlowClass) 
 // change. It fails when t is not the type the class says.
 func (fl *appFlow) retype(f *appFile, t ast.Expr, class appFlowClass) bool {
 	switch class {
+	case flowConfig:
+		return fl.retypeConfig(f, t)
 	case flowApp:
 		// nothing changes for an app: the type must be one that cannot hand it to code
 		// that starts it
@@ -387,7 +402,11 @@ func (fl *appFlow) retype(f *appFile, t ast.Expr, class appFlowClass) bool {
 		fl.failf(f, t, "the functions that take the config are held by a value of type %s", f.g.text(t))
 		return false
 	}
+	return false
+}
 
+// retypeConfig is retype for a place that holds the config.
+func (fl *appFlow) retypeConfig(f *appFile, t ast.Expr) bool {
 	if _, variadic := t.(*ast.Ellipsis); variadic {
 		fl.failf(f, t, "the config is held by a variadic parameter")
 		return false
@@ -501,13 +520,12 @@ func (fl *appFlow) use(f *appFile, e ast.Expr, class appFlowClass) {
 			return
 		}
 	case *ast.CallExpr:
-		if p.Fun == e {
-			if class == flowFunc {
-				fl.applied(f, p)
-				return
-			}
-		} else {
+		if p.Fun != e {
 			fl.argument(f, p, e, class)
+			return
+		}
+		if class == flowFunc {
+			fl.applied(f, p)
 			return
 		}
 	case *ast.AssignStmt:
@@ -575,7 +593,7 @@ func (fl *appFlow) argument(f *appFile, call *ast.CallExpr, e ast.Expr, class ap
 		switch {
 		case class != flowConfig:
 			fl.failf(f, e, "%s is %s", class.what(), f.useOf(e))
-		case !f.isPlainNew(call):
+		case !isPlainNew(call):
 			fl.failf(f, call, "the config is passed to %s, which the registry does not stand in for", f.g.text(call.Fun))
 		case !fl.seenNew[call]:
 			fl.seenNew[call] = true
@@ -586,11 +604,11 @@ func (fl *appFlow) argument(f *appFile, call *ast.CallExpr, e ast.Expr, class ap
 	if id, isIdent := call.Fun.(*ast.Ident); isIdent && (class == flowFuncs || class == flowFunc) {
 		if _, bound := f.binding(id); !bound {
 			switch id.Name {
-			case "len", "cap":
+			case appBuiltinLen, appBuiltinCap:
 				if class == flowFuncs {
 					return
 				}
-			case "append":
+			case mw3BuiltinAppend:
 				fl.use(f, call, flowFuncs) // the slice that append returns holds them
 				return
 			}
@@ -612,7 +630,8 @@ func (fl *appFlow) argument(f *appFile, call *ast.CallExpr, e ast.Expr, class ap
 				return
 			}
 		case *ast.SelectorExpr:
-			if id, isIdent := fun.X.(*ast.Ident); class == flowConfig && !(isIdent && f.isImportName(id)) && f.fieldHolder(fun.X, fun.Sel.Name) != nil {
+			id, isIdent := fun.X.(*ast.Ident)
+			if class == flowConfig && (!isIdent || !f.isImportName(id)) && f.fieldHolder(fun.X, fun.Sel.Name) != nil {
 				fl.claimExpr(f, fun, flowFunc, false) // a field that holds a function
 				return
 			}
@@ -639,7 +658,7 @@ func (fl *appFlow) argument(f *appFile, call *ast.CallExpr, e ast.Expr, class ap
 
 // isPlainNew reports whether the call is fiber.New, which the registry's New stands
 // in for, and not fiber.NewWithCustomCtx.
-func (f *appFile) isPlainNew(call *ast.CallExpr) bool {
+func isPlainNew(call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
 		return fun.Sel.Name == mw2New
@@ -682,7 +701,7 @@ func (fl *appFlow) store(f *appFile, as *ast.AssignStmt, lhs ast.Expr, class app
 			return
 		}
 		if as.Tok == token.DEFINE {
-			fl.claimVar(f.bindingOf(decl{init: f.assignedValue(as, x)}, x.Name), class)
+			fl.claimVar(f.bindingOf(decl{init: assignedValue(as, x)}, x.Name), class)
 			return
 		}
 		fl.claimExpr(f, x, class, false)
@@ -700,7 +719,7 @@ func (fl *appFlow) store(f *appFile, as *ast.AssignStmt, lhs ast.Expr, class app
 }
 
 // assignedValue returns the expression a short variable declaration gives to id.
-func (f *appFile) assignedValue(as *ast.AssignStmt, id *ast.Ident) ast.Expr {
+func assignedValue(as *ast.AssignStmt, id *ast.Ident) ast.Expr {
 	i := slices.Index(as.Lhs, ast.Expr(id))
 	switch {
 	case i < 0:
@@ -727,7 +746,7 @@ func (fl *appFlow) storeInLiteral(f *appFile, kv *ast.KeyValueExpr, e ast.Expr, 
 		fl.failf(f, e, "%s is %s", class.what(), f.useOf(e))
 		return
 	}
-	holder := td.file.structHolding(td, key.Name, 0)
+	holder := structHolding(td, key.Name, 0)
 	if holder == nil {
 		fl.failf(f, e, "%s is %s", class.what(), f.useOf(e))
 		return

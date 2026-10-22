@@ -149,7 +149,7 @@ func (fl *appFlow) claimSiblings(b appBinding, class appFlowClass) {
 func (fl *appFlow) scanParam(b appBinding, fld *ast.Field, class appFlowClass) {
 	f := b.file
 	owner := f.enclosingFuncOfField(fld)
-	list, _ := f.parent[fld].(*ast.FieldList)
+	list := f.fieldList(fld)
 
 	if lit, isLit := owner.(*ast.FuncLit); isLit {
 		if class != flowConfig || list != lit.Type.Params {
@@ -191,7 +191,7 @@ func (fl *appFlow) scanParam(b appBinding, fld *ast.Field, class appFlowClass) {
 	}
 
 	if class == flowConfig {
-		fl.noteFunc(f, fn, "take")
+		fl.noteFunc(f, fn, changeTake)
 	}
 	calls, refs := fl.callersOf(f, fn)
 	for _, c := range calls {
@@ -249,7 +249,7 @@ func (fl *appFlow) scanResult(f *appFile, fn *ast.FuncDecl, idx int, class appFl
 		return
 	}
 	if class == flowConfig {
-		fl.noteFunc(f, fn, "return")
+		fl.noteFunc(f, fn, changeReturn)
 	}
 
 	want := appResultCount(fn.Type)
@@ -283,9 +283,9 @@ func (fl *appFlow) scanResult(f *appFile, fn *ast.FuncDecl, idx int, class appFl
 // scanField follows a field of a struct type: the values it is given, and what the
 // code does with it.
 func (fl *appFlow) scanField(td *appTypeDecl, name string, class appFlowClass) {
-	st, _ := td.spec.Type.(*ast.StructType)
 	var fld *ast.Field
-	if st != nil {
+	st, isStruct := td.spec.Type.(*ast.StructType)
+	if isStruct {
 		fld = appStructField(st, name)
 	}
 	if fld == nil {
@@ -370,7 +370,7 @@ func (fl *appFlow) fieldInLiteral(f *appFile, lit *ast.CompositeLit, st *ast.Str
 func (fl *appFlow) selects(f *appFile, sel *ast.SelectorExpr, td *appTypeDecl, name string) bool {
 	if t, tf := f.valueType(sel.X, 0); t != nil {
 		rd := tf.resolveNamedType(t)
-		return rd != nil && rd.file.structHolding(rd, name, 0) == td
+		return rd != nil && structHolding(rd, name, 0) == td
 	}
 
 	// the receiver is of a type that cannot be told: an unexported field can only be
@@ -396,18 +396,18 @@ func (f *appFile) fieldHolder(x ast.Expr, name string) *appTypeDecl {
 	if td == nil {
 		return nil
 	}
-	return td.file.structHolding(td, name, 0)
+	return structHolding(td, name, 0)
 }
 
 // structHolding returns the declaration of the struct type that declares the field
 // name for td: td itself, or the embedded type it is promoted from.
-func (f *appFile) structHolding(td *appTypeDecl, name string, depth int) *appTypeDecl {
+func structHolding(td *appTypeDecl, name string, depth int) *appTypeDecl {
 	if depth > appMaxDepth {
 		return nil
 	}
 	if td.spec.Assign.IsValid() {
 		if inner := td.file.resolveNamedType(td.spec.Type); inner != nil {
-			return inner.file.structHolding(inner, name, depth+1)
+			return structHolding(inner, name, depth+1)
 		}
 		return nil
 	}
@@ -423,7 +423,7 @@ func (f *appFile) structHolding(td *appTypeDecl, name string, depth int) *appTyp
 			continue
 		}
 		if emb := td.file.resolveNamedType(fld.Type); emb != nil {
-			if holder := emb.file.structHolding(emb, name, depth+1); holder != nil {
+			if holder := structHolding(emb, name, depth+1); holder != nil {
 				return holder
 			}
 		}
@@ -455,7 +455,7 @@ func (fl *appFlow) noteFunc(f *appFile, fn *ast.FuncDecl, how string) {
 // noteField records that the field holds the config.
 func (fl *appFlow) noteField(td *appTypeDecl, name string) {
 	label := td.file.ix.pkgLabel(td.file) + td.spec.Name.Name + "." + name
-	fl.addChange(td.file, appFlowChange{label: label, how: "hold"}, appIsExported(td.spec.Name.Name) && appIsExported(name))
+	fl.addChange(td.file, appFlowChange{label: label, how: changeHold}, appIsExported(td.spec.Name.Name) && appIsExported(name))
 }
 
 // noteVar records that the variable of the package holds the config.
@@ -463,7 +463,7 @@ func (fl *appFlow) noteVar(b appBinding) {
 	if b.scope != nil {
 		return
 	}
-	fl.addChange(b.file, appFlowChange{label: b.file.ix.pkgLabel(b.file) + b.name, how: "hold"}, appIsExported(b.name))
+	fl.addChange(b.file, appFlowChange{label: b.file.ix.pkgLabel(b.file) + b.name, how: changeHold}, appIsExported(b.name))
 }
 
 // pkgLabel is the prefix of a name of the package of f in a note.
@@ -482,4 +482,13 @@ func (fl *appFlow) addChange(f *appFile, c appFlowChange, exported bool) {
 	if !slices.ContainsFunc(fl.changed, func(o appFlowChange) bool { return o.label == c.label && o.how == c.how }) {
 		fl.changed = append(fl.changed, c)
 	}
+}
+
+// fieldList returns the list of parameters, results or receivers the field is in.
+func (f *appFile) fieldList(fld *ast.Field) *ast.FieldList {
+	list, ok := f.parent[fld].(*ast.FieldList)
+	if !ok {
+		return nil
+	}
+	return list
 }

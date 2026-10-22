@@ -122,9 +122,7 @@ type appPlanner struct {
 	// followed are the reads and assignments of settings that the migration handled
 	// where a config it follows is held by a variable or handed on.
 	followed map[*ast.SelectorExpr]bool
-	// unreadable is set when a file that may start an app does not parse.
-	unreadable bool
-	ix         *appIndex
+	ix       *appIndex
 	// visited are the Go files of the walk, including those the migration did not
 	// open because nothing in them mentions fiber.
 	visited map[string]internal.FileInfo
@@ -144,6 +142,8 @@ type appPlanner struct {
 	starts  []*appStartInfo
 	values  []*appValueInfo
 	sources []*appListenSource
+	// unreadable is set when a file that may start an app does not parse.
+	unreadable bool
 }
 
 // appPlanListenerFields reads the project and plans the migration.

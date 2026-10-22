@@ -64,11 +64,11 @@ type moduleIndex struct {
 	pkgs   map[string]*modPackage
 	users  map[string][]*modFile
 	member map[string]bool
-	mod    goModule
-	order  []string
 	// hub hands out the indexes of the other modules of the repository, nil for an
 	// index that knows only its own module.
-	hub *moduleIndexes
+	hub   *moduleIndexes
+	mod   goModule
+	order []string
 	// listed is set once order holds every directory of the module.
 	listed bool
 }
@@ -85,11 +85,11 @@ type moduleIndex struct {
 // packages the finders go through (packages) stay those of the module.
 type moduleIndexes struct {
 	byRoot map[string]*moduleIndex
+	// root is the directory the workspace was found for.
+	root string
 	// workspace are the modules below the directory the run started in, longest
 	// path first, found when the first index is asked for.
 	workspace []goModule
-	// root is the directory the workspace was found for.
-	root string
 }
 
 // of returns the index of the module the file belongs to, nil when it belongs to

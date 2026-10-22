@@ -907,15 +907,15 @@ func Test_MigrateConfigListenerFields_DeadConstructors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
 		files map[string]string
-		// what the file lost or kept
-		gone []string
-		kept []string
+		name  string
 		// phrase is what the note about the dropped settings says, when it is not the
 		// one for a function that never runs
 		phrase string
-		notes  int
+		// what the file lost or kept
+		gone  []string
+		kept  []string
+		notes int
 	}{
 		{
 			name: "an unexported function that nothing calls",

@@ -176,7 +176,7 @@ func (fl *appFlow) scanFamily(td *appTypeDecl) {
 	if !fl.retypeFuncType(td.file, ft) {
 		return
 	}
-	fl.addChange(td.file, appFlowChange{label: td.file.ix.pkgLabel(td.file) + name, how: "take"}, appIsExported(name))
+	fl.addChange(td.file, appFlowChange{label: td.file.ix.pkgLabel(td.file) + name, how: changeTake}, appIsExported(name))
 
 	for _, pf := range fl.pl.ix.moduleFiles() {
 		if isShimFile(pf.path, pf.g.src) {
@@ -264,7 +264,7 @@ func (fl *appFlow) mention(f *appFile, m ast.Expr) {
 // mentionField follows a parameter, result, receiver or field that has the function
 // type.
 func (fl *appFlow) mentionField(f *appFile, fld *ast.Field, class appFlowClass) {
-	list, _ := f.parent[fld].(*ast.FieldList)
+	list := f.fieldList(fld)
 	if list == nil {
 		fl.failf(f, fld, "the functions that take the config are held in a way the migration does not follow")
 		return
