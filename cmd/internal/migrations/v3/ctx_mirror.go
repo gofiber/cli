@@ -111,6 +111,19 @@ type ctxMirrors struct {
 // interface of the project that mirrors methods of the context of v2 which v3 removed, and
 // says which interfaces a fiber.Ctx no longer implements.
 func MigrateContextMirrors(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
+	// Most projects declare no such interface: a look at the text says so before the files
+	// are parsed.
+	maybe := false
+	if _, err := internal.ChangeFileContentInfo(cwd, func(content string, _ internal.FileInfo) string {
+		maybe = maybe || ctxMayDeclareMirror(content)
+		return content
+	}); err != nil {
+		return fmt.Errorf("failed to look for interfaces that mirror the context: %w", err)
+	}
+	if !maybe {
+		return nil
+	}
+
 	run := newCtxRun()
 	mirrors := &ctxMirrors{handed: map[string][]string{}}
 
@@ -139,10 +152,30 @@ func MigrateContextMirrors(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func ctxMirrorsContent(content string, fi internal.FileInfo, run *ctxRun, mirrors *ctxMirrors, dry bool) string {
-	if !strings.Contains(content, "interface") && len(mirrors.handed) == 0 && !dry {
-		return content
+// ctxMethodSpec matches the declaration of a method of the context of v2 that v3 removed or
+// changed where an interface declares it: at the start of a line, or behind a brace or a semicolon.
+var ctxMethodSpec = regexp.MustCompile(`(?m)(^|[{;])[ \t]*(` + strings.Join(ctxMirrorMethodNames(), "|") + `)\(`)
+
+// ctxMirrorMethodNames returns the names of the methods of the context that v3 removed or changed.
+func ctxMirrorMethodNames() []string {
+	names := make([]string, 0, len(ctxLegacyMethods)+len(ctxChangedMethods))
+	for name := range ctxLegacyMethods {
+		names = append(names, name)
 	}
+	for name := range ctxChangedMethods {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ctxMayDeclareMirror reports whether the text of a file can declare an interface with a method of
+// the context of v2 that v3 removed or changed.
+func ctxMayDeclareMirror(content string) bool {
+	return strings.Contains(content, "interface") && ctxMethodSpec.MatchString(content)
+}
+
+func ctxMirrorsContent(content string, fi internal.FileInfo, run *ctxRun, mirrors *ctxMirrors, dry bool) string {
 	g, env, ok := run.open(fi, content)
 	if !ok {
 		if !dry {
@@ -242,8 +275,8 @@ func ctxMirrorHints(m *ctxMirror) string {
 // ctxMirrorAdvice says what to do about an interface the context no longer implements.
 func ctxMirrorAdvice(m *ctxMirror) string {
 	if m.adaptable() {
-		return fmt.Sprintf("The migration wraps the context in fibermigrate.%s{Ctx: c}, a fiber.Ctx that has the removed methods as they were in v2, where it finds it given to the interface; wrap the ones it did not find the same way, or ask for what v3 has (%s)",
-			legacyShimType, ctxMirrorHints(m))
+		return fmt.Sprintf("The migration wraps the context in fibermigrate.%s{Ctx: c}, a fiber.Ctx that has the removed methods as they were in v2, where it finds it given to the interface; wrap the ones it did not find the same way, or ask for what v3 has instead (fiber.Params[int](c, key), fiber.Query[int](c, key), c.Bind().Body(&v), the Ctx itself as a context.Context)",
+			legacyShimType)
 	}
 	return fmt.Sprintf("The changed methods (%s) cannot be added to a fiber.Ctx without giving up the ones of v3: write a type that implements the interface around the context, with %s",
 		ctxListNames(m.changed), ctxMirrorHints(m))
