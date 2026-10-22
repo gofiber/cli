@@ -37,7 +37,7 @@ const (
 
 // appMaxDepth bounds how far the resolvers follow declarations, which also
 // keeps them from looping on cyclic ones.
-const appMaxDepth = 10
+const appMaxDepth = 24
 
 // appRouterMethods are the methods of an app or router that return the router
 // again, so that app.Group("/a").Get(...) is still a router.

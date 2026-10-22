@@ -98,6 +98,14 @@ func Test_ModuleIndex_Workspace(t *testing.T) {
 		assert.Equal(t, []string{"example.com/app"}, got)
 	})
 
+	t.Run("the packages of the repository", func(t *testing.T) {
+		var got []string
+		for _, p := range app.repositoryPackages() {
+			got = append(got, p.importPath)
+		}
+		assert.Equal(t, []string{"example.com/app", "example.com/app/tools", "example.com/shared/web"}, got)
+	})
+
 	t.Run("the files of every module that import a package", func(t *testing.T) {
 		var got []string
 		for _, f := range app.importers("example.com/shared/web") {
@@ -106,6 +114,17 @@ func Test_ModuleIndex_Workspace(t *testing.T) {
 			got = append(got, filepath.ToSlash(rel))
 		}
 		assert.Equal(t, []string{"app/main.go", "app/tools/gen.go", "shared/web/x_test.go"}, got)
+	})
+
+	t.Run("the files of the module that import a package of a dependency", func(t *testing.T) {
+		var got []string
+		for _, f := range app.importers("github.com/gofiber/fiber/v2") {
+			rel, err := filepath.Rel(dir, f.path)
+			require.NoError(t, err)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		assert.Empty(t, got, "the module has no file that imports it")
+		assert.Empty(t, tools.importers("example.com/other"), "a package that is nobody's")
 	})
 
 	t.Run("an index of its own module only", func(t *testing.T) {

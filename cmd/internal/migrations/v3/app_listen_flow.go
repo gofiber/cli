@@ -291,8 +291,12 @@ func (fl *appFlow) claimSelector(f *appFile, sel *ast.SelectorExpr, class appFlo
 		return
 	}
 	holder := f.fieldHolder(sel.X, sel.Sel.Name)
-	if holder == nil {
+	switch {
+	case holder == nil && class == flowConfig:
 		fl.failf(f, sel, "the struct that has the field %s could not be traced", f.g.text(sel))
+		return
+	case holder == nil:
+		fl.failf(f, sel, "%s comes from %s, which is not a field the migration can trace", class.what(), f.g.text(sel))
 		return
 	}
 	fl.claimField(holder, sel.Sel.Name, class)

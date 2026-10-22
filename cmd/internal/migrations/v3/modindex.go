@@ -435,6 +435,17 @@ func (ix *moduleIndex) packages() []*modPackage {
 	return out
 }
 
+// repositoryPackages is packages followed by those of the other modules of the
+// repository, for a question about the project as a whole: which version of a
+// dependency it uses.
+func (ix *moduleIndex) repositoryPackages() []*modPackage {
+	out := ix.packages()
+	for _, peer := range ix.peers() {
+		out = slices.Concat(out, peer.packages())
+	}
+	return out
+}
+
 // allPackages is packages with the packages of the external tests, which only a
 // test file of the module can see.
 func (ix *moduleIndex) allPackages() []*modPackage {
@@ -503,14 +514,22 @@ func (ix *moduleIndex) invalidate(paths ...string) {
 }
 
 // importers returns the files of the module that import the package, tests
-// included, in the order of their directories, and then those of the other modules
-// of the repository. A file that does not import fiber but calls the function of a
-// package that returns an app is one of them.
+// included, in the order of their directories. A file that does not import fiber
+// but calls the function of a package that returns an app is one of them.
+//
+// For a package of the repository itself, of this module or of another one, they
+// are followed by the files of the other modules that import it: the code that
+// calls it can be anywhere in the repository. A package of a dependency is
+// imported by each module on its own account, and only the files of this module
+// are the answer.
 func (ix *moduleIndex) importers(importPath string) []*modFile {
 	if ix == nil {
 		return nil
 	}
 	out := ix.ownImporters(importPath)
+	if _, local := ix.dirOf(importPath); !local {
+		return out
+	}
 	for _, peer := range ix.peers() {
 		out = slices.Concat(out, peer.ownImporters(importPath))
 	}
