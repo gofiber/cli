@@ -195,7 +195,7 @@ func isSliceExprDepth(e ast.Expr, stack []ast.Node, depth int) bool {
 		_, isArray := x.Type.(*ast.ArrayType)
 		return isArray
 	case *ast.Ident:
-		if x.Name == "nil" {
+		if x.Name == mw1NilIdent {
 			return true
 		}
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)

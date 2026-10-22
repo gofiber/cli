@@ -646,7 +646,7 @@ func (h *hcMigration) variableConfig(newCall *ast.CallExpr, id *ast.Ident, stack
 
 func hasV2OnlyField(lit *ast.CompositeLit) bool {
 	for _, name := range hcV2OnlyFields {
-		if kv, _ := mw1KeyValue(lit, name); kv != nil {
+		if mw1KeyValue(lit, name) != nil {
 			return true
 		}
 	}

@@ -1,0 +1,78 @@
+package v3
+
+import (
+	"go/ast"
+)
+
+// mw1ParamCount returns the number of parameters a function type declares: a
+// group such as (user, pass string) counts for each name.
+func mw1ParamCount(ft *ast.FuncType) int {
+	if ft.Params == nil {
+		return 0
+	}
+	n := 0
+	for _, f := range ft.Params.List {
+		if len(f.Names) == 0 {
+			n++
+			continue
+		}
+		n += len(f.Names)
+	}
+	return n
+}
+
+// mw1FuncParamCounts returns the parameter counts of the functions and methods
+// declared in the file with the given name. Nothing is returned when the name
+// is not declared there.
+func mw1FuncParamCounts(file *ast.File, name string) []int {
+	var counts []int
+	for _, decl := range file.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if ok && fd.Name.Name == name {
+			counts = append(counts, mw1ParamCount(fd.Type))
+		}
+	}
+	return counts
+}
+
+// mw1DeclaredWithParams reports whether e names a function or method that the
+// file declares, every declaration of which takes n parameters. For a selector
+// only the method name counts, since the receiver cannot be told without types.
+func mw1DeclaredWithParams(file *ast.File, e ast.Expr, n int) bool {
+	var name string
+	switch x := e.(type) {
+	case *ast.Ident:
+		name = x.Name
+	case *ast.SelectorExpr:
+		name = x.Sel.Name
+	default:
+		return false
+	}
+
+	counts := mw1FuncParamCounts(file, name)
+	if len(counts) == 0 {
+		return false
+	}
+	for _, c := range counts {
+		if c != n {
+			return false
+		}
+	}
+	return true
+}
+
+// mw1AppendParam returns the offset and the text that add a parameter of the
+// given type to the end of the parameter list of ft. The parameter is blank
+// when the others are named.
+func mw1AppendParam(g *goSource, ft *ast.FuncType, typ string) (offset int, text string) {
+	last := ft.Params.List[len(ft.Params.List)-1]
+	param := typ
+	if len(last.Names) > 0 {
+		param = "_ " + typ
+	}
+	offset = g.offset(last.End())
+	if g.line(last.End()) != g.line(ft.Params.Closing) {
+		return offset, ",\n" + param
+	}
+	return offset, ", " + param
+}

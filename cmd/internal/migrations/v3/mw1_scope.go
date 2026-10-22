@@ -74,19 +74,15 @@ func mw1ConfigLit(n ast.Node, names []string) (*ast.CompositeLit, bool) {
 	return lit, true
 }
 
-// mw1KeyValue returns the element `field: value` of a composite literal and its
-// index.
-func mw1KeyValue(lit *ast.CompositeLit, field string) (kv *ast.KeyValueExpr, index int) {
-	for i, elt := range lit.Elts {
+// mw1KeyValue returns the element `field: value` of a composite literal.
+func mw1KeyValue(lit *ast.CompositeLit, field string) *ast.KeyValueExpr {
+	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		if isIdentNamed(kv.Key, field) {
-			return kv, i
+		if ok && isIdentNamed(kv.Key, field) {
+			return kv
 		}
 	}
-	return nil, -1
+	return nil
 }
 
 // mw1IsConfigValue reports whether the declaration d is a value of the Config
@@ -301,6 +297,9 @@ func mw1FiberName(src string) (name string, needImport bool) {
 	}
 	return names[0], false
 }
+
+// mw1NilIdent is the predeclared nil.
+const mw1NilIdent = "nil"
 
 // mw1FiberIdent is the package name of the core module.
 const mw1FiberIdent = "fiber"
