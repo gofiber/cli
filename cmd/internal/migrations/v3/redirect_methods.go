@@ -29,7 +29,7 @@ const (
 func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateRedirectContent(content, fi, run)
+		return ctxRedirectContent(content, fi, run)
 	})
 	run.report(cwd)
 	if err != nil {
@@ -43,7 +43,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-func migrateRedirectContent(content string, fi internal.FileInfo, run *ctxRun) string {
+func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !strings.Contains(content, ctxRedirect) {
 		return content
 	}
@@ -165,45 +165,6 @@ func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.Cal
 		}
 		e.replace(g.offset(sel.Sel.Pos()), g.offset(call.End()), text)
 	})
-}
-
-// ctxStrayComments returns the comments between the parentheses of call that
-// are not part of one of its arguments, which the rewrite of a call that moves
-// its arguments around would drop.
-func ctxStrayComments(g *goSource, call *ast.CallExpr) []string {
-	all := ctxCommentsIn(g, call.Lparen, call.Rparen)
-	if len(all) == 0 {
-		return nil
-	}
-
-	inArgs := 0
-	for _, arg := range call.Args {
-		inArgs += len(ctxCommentsIn(g, arg.Pos(), arg.End()))
-	}
-	if inArgs == 0 {
-		return all
-	}
-
-	var stray []string
-	for _, group := range g.file.Comments {
-		for _, c := range group.List {
-			if c.Pos() < call.Lparen || c.End() > call.Rparen || ctxWithinAny(c, call.Args) {
-				continue
-			}
-			stray = append(stray, ctxCommentsIn(g, c.Pos(), c.End())...)
-		}
-	}
-	return stray
-}
-
-// ctxWithinAny reports whether n lies inside one of the nodes.
-func ctxWithinAny(n ast.Node, nodes []ast.Expr) bool {
-	for _, other := range nodes {
-		if n.Pos() >= other.Pos() && n.End() <= other.End() {
-			return true
-		}
-	}
-	return false
 }
 
 // ctxRouteConfig returns the RedirectConfig that carries the params of a v2

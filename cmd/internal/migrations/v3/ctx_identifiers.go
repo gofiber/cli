@@ -38,7 +38,7 @@ var ctxBinderIdents = []string{"SetParserDecoder", "ParserConfig", ctxIDParserTy
 //	fiber.SetParserDecoder, fiber.ParserConfig, fiber.ParserType
 //	                               the same names in the binder package, with Customtype now CustomType
 func MigrateCoreIdentifiers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateCoreIdentifiersContent)
+	changed, err := internal.ChangeFileContentInfo(cwd, ctxCoreIdentifiersContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate core identifiers: %w", err)
 	}
@@ -50,7 +50,7 @@ func MigrateCoreIdentifiers(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-func migrateCoreIdentifiersContent(content string, fi internal.FileInfo) string {
+func ctxCoreIdentifiersContent(content string, fi internal.FileInfo) string {
 	if !ctxContainsAny(content, ctxIDHeaderFeaturePolicy, ctxIDOldConstraintGUID, ctxIDIndexRune, ctxIDOnShutdownHandler, "SetParserDecoder", "ParserConfig", ctxIDParserType) {
 		return content
 	}

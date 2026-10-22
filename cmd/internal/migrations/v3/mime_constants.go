@@ -26,7 +26,7 @@ var ctxMimeRenames = map[string]string{
 func MigrateMimeConstants(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateMimeConstantsContent(content, fi, run)
+		return ctxMimeConstantsContent(content, fi, run)
 	})
 	run.report(cwd)
 	if err != nil {
@@ -40,7 +40,7 @@ func MigrateMimeConstants(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
-func migrateMimeConstantsContent(content string, fi internal.FileInfo, run *ctxRun) string {
+func ctxMimeConstantsContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, "MIMEApplicationJavaScript") {
 		return content
 	}

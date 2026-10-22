@@ -30,7 +30,7 @@ const (
 func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateCtxRenamesContent(content, fi, run)
+		return ctxRenamesContent(content, fi, run)
 	})
 	run.report(cwd)
 	if err != nil {
@@ -44,7 +44,7 @@ func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	return nil
 }
 
-func migrateCtxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string {
+func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ".Format(", ".Protocol(", ".Hostname(", ".Range(") {
 		return content
 	}

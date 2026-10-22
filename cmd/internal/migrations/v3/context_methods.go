@@ -37,7 +37,7 @@ const (
 func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateContextMethodsContent(content, fi, run)
+		return ctxContextMethodsContent(content, fi, run)
 	})
 	run.report(cwd)
 	if err != nil {
@@ -51,7 +51,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun) string {
+func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if strings.Contains(content, ctxContextMarker) ||
 		!ctxContainsAny(content, ctxContextCallName, ctxUserContext, ctxSetUserContext) {
 		return content

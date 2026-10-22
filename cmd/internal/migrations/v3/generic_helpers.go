@@ -40,7 +40,7 @@ const ctxParamsInt = "ParamsInt"
 func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateGenericHelpersContent(content, fi, run)
+		return ctxGenericHelpersContent(content, fi, run)
 	})
 	run.report(cwd)
 	if err != nil {
@@ -54,7 +54,7 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun) string {
+func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ctxParamsInt, "QueryInt", "QueryFloat", "QueryBool") {
 		return content
 	}

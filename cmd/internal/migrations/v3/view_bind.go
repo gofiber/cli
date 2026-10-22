@@ -16,7 +16,7 @@ import (
 func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return migrateViewBindContent(content, fi, run)
+		return ctxViewBindContent(content, fi, run)
 	})
 	run.report(cwd)
 	if err != nil {
@@ -30,7 +30,7 @@ func MigrateViewBind(cmd *cobra.Command, cwd string, _, _ *semver.Version) error
 	return nil
 }
 
-func migrateViewBindContent(content string, fi internal.FileInfo, run *ctxRun) string {
+func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ".Bind(") {
 		return content
 	}

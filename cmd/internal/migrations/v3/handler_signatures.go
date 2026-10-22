@@ -20,7 +20,7 @@ var ctxReflectPath = regexp.MustCompile(`^reflect$`)
 // into the fiber.Ctx of v3, an interface. Only types are rewritten, in files
 // that import the fiber package, under whatever name they import it.
 func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateHandlerSignaturesContent)
+	changed, err := internal.ChangeFileContentInfo(cwd, ctxHandlerSignaturesContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate handler signatures: %w", err)
 	}
@@ -33,7 +33,7 @@ func MigrateHandlerSignatures(cmd *cobra.Command, cwd string, _, _ *semver.Versi
 	return nil
 }
 
-func migrateHandlerSignaturesContent(content string, fi internal.FileInfo) string {
+func ctxHandlerSignaturesContent(content string, fi internal.FileInfo) string {
 	if !strings.Contains(content, ctxTypeCtx) {
 		return content
 	}
