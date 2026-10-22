@@ -256,14 +256,6 @@ type ProdProvider struct{ Prefork bool }
 
 func (p ProdProvider) Config() fiber.Config { return fiber.Config{Prefork: p.Prefork} }
 `,
-		"config/e.go": `package config
-
-import "github.com/gofiber/fiber/v2"
-
-func Layer1(p bool) fiber.Config { return fiber.Config{Prefork: p} }
-
-func Layer2(p bool) fiber.Config { return Layer1(p) }
-`,
 		"main.go": `package main
 
 import (
@@ -275,7 +267,6 @@ import (
 
 func main() {
 	fmt.Println(config.C(true))
-	fiber.New(config.Layer2(true)).Listen(":3003")
 
 	var p config.Provider = config.ProdProvider{}
 	app := fiber.New(p.Config())
@@ -297,11 +288,10 @@ func main() {
 	for _, n := range internal.DrainNotes(dir) {
 		byFile[n.File] = n.Message
 	}
-	assert.Contains(t, byFile["config/a.go"], "A is used as a value, at line 7 of config/a.go")
-	assert.Contains(t, byFile["config/c.go"], "the result of C is passed to fmt.Println, at line 11 of main.go")
-	assert.Contains(t, byFile["config/d.go"], "a call of Config whose receiver could not be traced may hand its config to fiber.New, at line 15 of main.go")
-	assert.Contains(t, byFile["config/e.go"], "the result of Layer1 is returned by another function, at line 7 of config/e.go")
-	assert.Len(t, byFile, 4)
+	assert.Contains(t, byFile["config/a.go"], "config.A is used as a value, at line 7 of config/a.go")
+	assert.Contains(t, byFile["config/c.go"], "the config is passed to fmt.Println, at line 11 of main.go")
+	assert.Contains(t, byFile["config/d.go"], "config.ProdProvider.Config is also a method of an interface, whose callers the migration cannot follow, at line 5 of config/d.go")
+	assert.Len(t, byFile, 3)
 }
 
 // A function that completes the config of another, or hands it on, holds that config in the

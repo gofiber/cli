@@ -75,7 +75,7 @@ func (f *appFile) configSources() []*appListenSource {
 	ast.Inspect(f.g.file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CompositeLit:
-			if x.Type != nil && f.fiberTypeName(x.Type) == appNameConfig {
+			if (x.Type != nil && f.fiberTypeName(x.Type) == appNameConfig) || (x.Type == nil && f.isElidedConfig(x)) {
 				out = append(out, f.sourceOfLiteral(x))
 			}
 		case *ast.ValueSpec:
@@ -112,6 +112,26 @@ func (f *appFile) configSources() []*appListenSource {
 		}
 	}
 	return keep
+}
+
+// isElidedConfig reports whether the literal has no type because it is an element of
+// a slice, array or map of fiber.Config: []fiber.Config{{Prefork: true}}.
+func (f *appFile) isElidedConfig(lit *ast.CompositeLit) bool {
+	parent := f.parent[lit]
+	if kv, ok := parent.(*ast.KeyValueExpr); ok && kv.Value == ast.Expr(lit) {
+		parent = f.parent[kv]
+	}
+	outer, ok := parent.(*ast.CompositeLit)
+	if !ok {
+		return false
+	}
+	switch t := outer.Type.(type) {
+	case *ast.ArrayType:
+		return f.fiberTypeName(t.Elt) == appNameConfig
+	case *ast.MapType:
+		return f.fiberTypeName(t.Value) == appNameConfig
+	}
+	return false
 }
 
 // sourceOfConfigCall returns the source for the variable name that is declared with

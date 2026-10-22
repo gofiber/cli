@@ -80,8 +80,12 @@ func (p *appPackage) hasUnreadFile() bool {
 
 // droppableValue reports whether the value of a setting can be removed together
 // with it: it uses no variable that only it keeps used.
-func (src *appListenSource) droppableValue(e ast.Expr) bool {
-	needs := src.file.valueNeeds(e)
+func (src *appListenSource) droppableValue(e ast.Expr) bool { return src.file.droppableValue(e) }
+
+// droppableValue reports whether the value can be removed with the setting it is the
+// value of.
+func (f *appFile) droppableValue(e ast.Expr) bool {
+	needs := f.valueNeeds(e)
 	return !needs.unknown && !slices.ContainsFunc(needs.locals, func(b appBinding) bool { return !b.isParam() })
 }
 

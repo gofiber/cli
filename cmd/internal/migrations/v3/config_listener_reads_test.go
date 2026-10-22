@@ -190,16 +190,15 @@ func Test_MigrateConfigListenerFields_Reads_RegistryNotAvailable(t *testing.T) {
 	dir := appSingle(t, `package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-func tune(cfg *fiber.Config) { cfg.AppName = "tuned" }
-
 func main() {
 	cfg := fiber.Config{Prefork: true}
-	tune(&cfg)
+	json.Unmarshal([]byte("{}"), &cfg)
 	app := fiber.New(cfg)
 	fmt.Println(app.Config().Prefork)
 	app.Listen(":3000")
@@ -214,7 +213,7 @@ func main() {
 	notes := internal.DrainNotes(dir)
 	var read bool
 	for _, n := range notes {
-		read = read || (n.Line == 15 && strings.Contains(n.Message, "has no Prefork field in v3") && strings.Contains(n.Message, "could not be used"))
+		read = read || (n.Line == 14 && strings.Contains(n.Message, "has no Prefork field in v3") && strings.Contains(n.Message, "could not be used"))
 	}
 	assert.True(t, read, "%v", shimNotes(notes))
 }

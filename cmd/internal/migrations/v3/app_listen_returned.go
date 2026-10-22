@@ -323,7 +323,16 @@ func (f *appFile) orderNote(lit *ast.CompositeLit, drop []int, listenerFirst boo
 	}
 	return fmt.Sprintf("%s of this fiber.Config is now evaluated %s %s, where v2 evaluated the fields in the order they are written; "+
 		"both call functions or receive from channels, so check that the order of their effects does not matter",
-		strings.Join(moved, " and "), when, strings.Join(others, " and "))
+		appFieldsShort(moved), when, appFieldsShort(others))
+}
+
+// appFieldsShort joins the names of fields for a note: at most three, then the count
+// of the others.
+func appFieldsShort(names []string) string {
+	if len(names) <= 3 {
+		return strings.Join(names, " and ")
+	}
+	return strings.Join(names[:3], ", ") + fmt.Sprintf(" and %d more", len(names)-3)
 }
 
 // impure reports whether evaluating e can do more than compute a value: it calls a

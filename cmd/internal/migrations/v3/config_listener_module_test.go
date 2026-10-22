@@ -379,7 +379,8 @@ func main() {
 		notes := internal.DrainNotes(dir)
 		require.Len(t, notes, 2, "one for each setting")
 		for _, n := range notes {
-			assert.Contains(t, n.Message, "belongs to another module")
+			assert.Contains(t, n.Message, "the app is created in lib.go and started in cmd/main.go, which belong to different Go modules")
+			assert.Contains(t, n.Message, "two of them cannot exchange values")
 		}
 	})
 }

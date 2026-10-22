@@ -124,11 +124,23 @@ type appPlanner struct {
 	followed map[*ast.SelectorExpr]bool
 	// unreadable is set when a file that may start an app does not parse.
 	unreadable bool
-	root       string
-	files      []*appFile
-	starts     []*appStartInfo
-	values     []*appValueInfo
-	sources    []*appListenSource
+	ix         *appIndex
+	// visited are the Go files of the walk, including those the migration did not
+	// open because nothing in them mentions fiber.
+	visited map[string]appVisited
+	// siteIndex indexes the calls, selectors and literals of the project.
+	siteIndex *appSites
+	// flows are the sets of places that hold a config, which were changed together
+	// (see app_listen_flow.go).
+	flows []*appFlow
+	// flowWhy says why the settings assigned or read through a config were not
+	// followed, by the selector.
+	flowWhy map[*ast.SelectorExpr]string
+	root    string
+	files   []*appFile
+	starts  []*appStartInfo
+	values  []*appValueInfo
+	sources []*appListenSource
 }
 
 // appPlanListenerFields reads the project and plans the migration.
@@ -137,10 +149,13 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 
 	var files []*appFile
 	unreadable := false
+	visited := map[string]appVisited{}
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		// only a file that mentions fiber or starts an app can matter, and the
-		// file of an earlier run is not the project's code
-		if !strings.Contains(content, "fiber") && !strings.Contains(content, ".Listen") || isShimFile(fi.Path, content) {
+		// only a file that mentions fiber, starts an app or names a setting that moved
+		// (the literal of an alias of fiber.Config does) can matter, and the file of an
+		// earlier run is not the project's code
+		if !appMayMatter(content) || isShimFile(fi.Path, content) {
+			visited[fi.Path] = appVisited{fi: fi, src: content}
 			return content
 		}
 		if f, ok := ix.openFile(fi, content); ok {
@@ -163,6 +178,9 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		blocked:  map[string]string{},
 		returned: map[*ast.FuncDecl]*appReturned{},
 		followed: map[*ast.SelectorExpr]bool{},
+		flowWhy:  map[*ast.SelectorExpr]string{},
+		visited:  visited,
+		ix:       ix,
 		root:     cwd,
 		files:    files,
 		// a file that cannot be read and starts an app somewhere makes "nothing starts
@@ -173,7 +191,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
-	if len(pl.sources) > 0 {
+	if len(pl.sources) > 0 || len(pl.untracked()) > 0 {
 		for _, f := range files {
 			for _, s := range f.startsIn() {
 				pl.starts = append(pl.starts, &appStartInfo{appStart: s, origins: f.originsOf(s.sel.X, 0, 0)})
@@ -188,21 +206,31 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 			reason := pl.move(src)
 			appNoteLeftovers(src, reason)
 		}
+		pl.followUntracked()
 		pl.finishShims()
 	}
 	pl.finishReads()
-	pl.noteUntracked(files)
+	pl.noteUntracked()
 	return pl.plan, nil
 }
 
-// noteUntracked points at the settings that code reads or assigns through a
-// fiber.Config the migration does not follow, such as a struct field or a
-// parameter: they stay, and v3 does not compile them.
-func (pl *appPlanner) noteUntracked(files []*appFile) {
+// appUntracked is a read or assignment of a setting that v3 moved on a
+// fiber.Config that no source of the project accounts for: a parameter, a field, a
+// variable that a function hands on.
+type appUntracked struct {
+	file *appFile
+	sel  *ast.SelectorExpr
+}
+
+// untracked returns the settings that code reads or assigns through a fiber.Config
+// the migration has not followed so far.
+func (pl *appPlanner) untracked() []appUntracked {
 	followed := map[ast.Node]bool{}
 	for _, mr := range pl.reads {
 		for _, r := range mr.reads {
-			followed[r.sel] = true
+			if r.sel != nil {
+				followed[r.sel] = true
+			}
 		}
 	}
 	for _, src := range pl.sources {
@@ -216,20 +244,66 @@ func (pl *appPlanner) noteUntracked(files []*appFile) {
 		followed[sel] = true
 	}
 
-	for _, f := range files {
+	var out []appUntracked
+	for _, f := range pl.files {
 		ast.Inspect(f.g.file, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
-			if !ok || followed[sel] {
-				return true
-			}
-			if v3 := appListenerFieldV3(sel.Sel.Name); v3 != "" && f.kind(sel.X) == appKindConfig {
-				internal.Notef(f.fi, f.g.line(sel.Pos()),
-					"fiber.Config has no %s field in v3: set %s in the fiber.ListenConfig of the call that starts the app (this fiber.Config is not one the migration follows)",
-					sel.Sel.Name, v3)
+			if ok && !followed[sel] && appListenerFieldV3(sel.Sel.Name) != "" && f.kind(sel.X) == appKindConfig {
+				out = append(out, appUntracked{file: f, sel: sel})
 			}
 			return true
 		})
 	}
+	return out
+}
+
+// followUntracked follows the configs that code reads or assigns the settings of,
+// and changes the ones it can follow to the config of the registry.
+func (pl *appPlanner) followUntracked() {
+	for _, u := range pl.untracked() {
+		if pl.followed[u.sel] {
+			continue // a set of places that an earlier one took
+		}
+		fl := pl.newFlow(u.file)
+		fl.claimExpr(u.file, u.sel.X, flowConfig, true)
+		fl.run()
+		commit, refusal := fl.finish()
+		if commit != nil {
+			commit()
+			continue
+		}
+		pl.flowWhy[u.sel] = refusal.why
+	}
+}
+
+// noteUntracked points at the settings that code reads or assigns through a
+// fiber.Config the migration does not follow: they stay, and v3 does not compile
+// them.
+func (pl *appPlanner) noteUntracked() {
+	for _, u := range pl.untracked() {
+		v3 := appListenerFieldV3(u.sel.Sel.Name)
+		why := "this fiber.Config is not one the migration follows"
+		if reason := pl.flowWhy[u.sel]; reason != "" {
+			why += ": " + reason
+		}
+		internal.Notef(u.file.fi, u.file.g.line(u.sel.Pos()),
+			"fiber.Config has no %s field in v3: set %s in the fiber.ListenConfig of the call that starts the app (%s)",
+			u.sel.Sel.Name, v3, why)
+	}
+}
+
+// appMayMatter reports whether the content of a file can be about the listener
+// settings: it mentions fiber, starts an app, or names a setting v3 moved.
+func appMayMatter(content string) bool {
+	if strings.Contains(content, "fiber") || strings.Contains(content, ".Listen") {
+		return true
+	}
+	for _, f := range appListenerFieldNames {
+		if strings.Contains(content, f.v2) {
+			return true
+		}
+	}
+	return false
 }
 
 // appMovePlan is the work that moving the settings of one source takes.
@@ -293,6 +367,14 @@ func (src *appListenSource) hasLeftovers(ip appInPlace) bool {
 // removed from an app that is never started (see dropDead). Only when neither can
 // be done do the settings that can move move, and the others stay with a note.
 func (pl *appPlanner) move(src *appListenSource) string {
+	// the config is in a set of places that were changed together
+	if pl.flowOf(src) != nil {
+		for _, fld := range src.fields {
+			fld.problem = ""
+		}
+		return ""
+	}
+
 	// the code reads the settings of the apps of the module from their configs, which
 	// only the registry can give back
 	if mod, ok := pl.moduleOf(src.file); ok && pl.reads[mod.root] != nil {
@@ -355,6 +437,14 @@ func (pl *appPlanner) move(src *appListenSource) string {
 func (src *appListenSource) explain(reason string, refusal appShimRefusal) string {
 	if !refusal.tell {
 		return reason
+	}
+	if refusal.flow {
+		for _, fld := range src.fields {
+			if fld.problem != "" {
+				fld.problem = refusal.why
+			}
+		}
+		return refusal.why
 	}
 
 	suffix := "; the registry in " + moduleShimDir + ", which would keep it with the app, is not an option: " + refusal.why
