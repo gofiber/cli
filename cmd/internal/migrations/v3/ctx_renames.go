@@ -24,7 +24,8 @@ const (
 //	c.Format(body)     c.AutoFormat(body)   Format takes ResFmt handlers in v3
 //	c.Protocol()       c.Scheme()           Protocol is "HTTP/1.1" now, not "http"/"https"
 //	c.Hostname()       c.Host()             Hostname leaves out the port now
-//	c.Range(size)      c.Range(int64(size)) the size, and the ranges, are int64 in v3
+//	c.Range(size)      c.Range(int64(size)) the size is int64 in v3, and so are the Start and End of the ranges:
+//	                                        where they are read, int(rs.Start) gives the int of v2
 //
 // Only methods of a fiber context are rewritten.
 func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -45,7 +46,7 @@ func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 }
 
 func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string {
-	if !ctxContainsAny(content, ".Format(", ".Protocol(", ".Hostname(", ".Range(") {
+	if !ctxContainsAny(content, ".Format(", ".Protocol(", ".Hostname(", ctxTypeRange) {
 		return content
 	}
 	names := fiberNames(content)
@@ -104,10 +105,11 @@ func ctxRenamesContent(content string, fi internal.FileInfo, run *ctxRun) string
 				e.replaceNode(g, arg, "int64("+ctxRenderNode(e, g, arg)+")")
 			})
 		}
-		noter.oncef("range", sel.Pos(),
-			"c.Range takes an int64 size in Fiber v3, and the Start and End of the returned ranges are int64: convert them where they are used as int")
 		return true
 	})
+
+	// The Start and End of the ranges are int64 in v3, where v2 had int.
+	ctxQueueRangeReads(&plan, noter, env)
 
 	return plan.apply(content)
 }

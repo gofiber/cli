@@ -172,7 +172,6 @@ func handler(c *fiber.Ctx, size int) error {
 	return err
 }
 `,
-			notes: []string{"c.Range takes an int64 size in Fiber v3"},
 		},
 		{
 			name: "a size in parentheses",
@@ -194,8 +193,7 @@ func handler(c *fiber.Ctx, size int) error {
 	return err
 }
 `,
-			msg:   "Migrating context method renames",
-			notes: []string{"c.Range takes an int64 size in Fiber v3"},
+			msg: "Migrating context method renames",
 		},
 	})
 }
