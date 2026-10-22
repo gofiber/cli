@@ -90,9 +90,15 @@ func (p *mw2Planner) qualifier(role *mw2Role) string {
 		}
 	}
 
-	name, alias := role.pkg, ""
+	name, alias := role.pkg, role.alias
+	if alias != "" {
+		name = alias
+	}
 	if mw2NameTaken(p.f.g, p.f.kr.pkg, name) {
 		name = "fiber" + role.pkg
+		if role.alias != "" {
+			name = role.alias + "v3"
+		}
 		alias = name
 	}
 	p.plan.imports = append(p.plan.imports, mw2Import{alias: alias, path: role.addPath})

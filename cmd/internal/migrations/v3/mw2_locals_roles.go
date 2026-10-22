@@ -2,7 +2,11 @@ package v3
 
 import (
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +33,13 @@ type mw2Role struct {
 	pkg string
 	// addPath is the import path to add when a file reads the value without importing the package.
 	addPath string
+	// alias is the name the import added for addPath gets, "" when the package is
+	// called what its path says (the v3 package of the Fiber middleware for sentry is
+	// called sentry, and sentry-go is called that in the files that read the hub).
+	alias string
+	// nameOf gives the name that an import of the path has when it names none, "" or
+	// nil for pkg.
+	nameOf func(importPath string) string
 	// field is the config field that holds the key.
 	field string
 	// defaultKey is the key v2 used when the field was empty, "" when the value was only stored once the field was set.
@@ -47,13 +58,15 @@ type mw2Role struct {
 // The names of the middleware packages that keep values in the request locals,
 // and of the context key field most of them have.
 const (
-	mw2PkgRequestID = "requestid"
-	mw2PkgKeyAuth   = "keyauth"
-	mw2PkgCSRF      = "csrf"
-	mw2PkgBasicAuth = "basicauth"
-	mw2PkgJWT       = "jwtware"
-	mw2PkgPaseto    = "pasetoware"
-	mw2FieldKey     = "ContextKey"
+	mw2PkgRequestID   = "requestid"
+	mw2PkgKeyAuth     = "keyauth"
+	mw2PkgCSRF        = "csrf"
+	mw2PkgBasicAuth   = "basicauth"
+	mw2PkgJWT         = "jwtware"
+	mw2PkgPaseto      = "pasetoware"
+	mw2PkgSentry      = "sentry"
+	mw2PkgFiberSentry = "fibersentry"
+	mw2FieldKey       = "ContextKey"
 	// mw2ReaderFromContext is the name most of the v3 readers have.
 	mw2ReaderFromContext = "FromContext"
 )
@@ -102,6 +115,24 @@ var mw2Roles = []*mw2Role{
 		re: mw2Paseto, pkg: mw2PkgPaseto, addPath: "github.com/gofiber/contrib/v3/paseto",
 		field: mw2FieldKey, defaultKey: "auth-token", reader: mw2ReaderFromContext, kind: mw2KindAny,
 	},
+	{
+		// The hub of the request. The v2 middleware had no setting for the key and
+		// kept the hub under "sentry-hub", where code that does not use
+		// GetHubFromContext read it from; the v3 one stores it under a key of a
+		// private type. The package is called fibersentry at v2 and sentry at v3, and
+		// the files that read the hub import sentry-go as sentry.
+		re: sentryContribPath, pkg: mw2PkgSentry, addPath: sentryContribV3Import, alias: mw2PkgFiberSentry, nameOf: mw2SentryName,
+		defaultKey: "sentry-hub", reader: "GetHubFromContext", kind: mw2KindPointer, pointers: []string{"Hub"},
+	},
+}
+
+// mw2SentryName is the name that an import of the Fiber middleware for sentry has
+// when it names none.
+func mw2SentryName(importPath string) string {
+	if strings.Contains(importPath, "/fibersentry") {
+		return mw2PkgFiberSentry
+	}
+	return mw2PkgSentry
 }
 
 // mw2DefaultContextKey is the paseto constant that names the default key.
@@ -223,13 +254,43 @@ func (kr *mw2KeyResolver) middlewareDefault(sel *ast.SelectorExpr) (mw2Key, bool
 func mw2RoleNames(src string) map[string][]*mw2Role {
 	names := map[string][]*mw2Role{}
 	for _, role := range mw2Roles {
-		for _, name := range importNames(src, role.re, role.pkg) {
+		for _, name := range role.importNames(src) {
 			if name != "." {
 				names[name] = append(names[name], role)
 			}
 		}
 	}
 	return names
+}
+
+// importNames returns the identifiers src binds to the package of the role.
+func (r *mw2Role) importNames(src string) []string {
+	if r.nameOf == nil {
+		return importNames(src, r.re, r.pkg)
+	}
+
+	// the name of an import that has none depends on the path
+	var names []string
+	for _, path := range mw2ImportPaths(src, r.re) {
+		names = append(names, importNames(src, regexp.MustCompile(`^`+regexp.QuoteMeta(path)+`$`), r.nameOf(path))...)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+// mw2ImportPaths returns the import paths of src that match re.
+func mw2ImportPaths(src string, re *regexp.Regexp) []string {
+	file, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ImportsOnly|parser.SkipObjectResolution)
+	if err != nil && file == nil {
+		return nil
+	}
+	var paths []string
+	for _, spec := range file.Imports {
+		if path, unquoteErr := strconv.Unquote(spec.Path.Value); unquoteErr == nil && re.MatchString(path) && !slices.Contains(paths, path) {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 // mw2IsLocalsCall reports whether n is a call of a method called Locals and

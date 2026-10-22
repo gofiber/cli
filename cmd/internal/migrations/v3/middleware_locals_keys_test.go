@@ -301,3 +301,162 @@ func Test_MigrateMiddlewareLocals_KeyOfAnotherModule(t *testing.T) {
 		assert.Contains(t, run.notes[0].Message, "The value of its key could not be resolved")
 	}
 }
+
+// The middleware for sentry keeps the hub of the request under "sentry-hub" at v2,
+// where code that does not call GetHubFromContext reads it from; v3 keeps it under
+// a key of a private type, so the read finds nothing.
+func Test_MigrateMiddlewareLocals_SentryHub(t *testing.T) {
+	t.Parallel()
+
+	const reader = `package httpserver
+
+import (
+	"github.com/getsentry/sentry-go"
+	"github.com/gofiber/fiber/v2"
+)
+
+var sentryHubKey = "sentry-hub"
+
+func gentlelyGetHubFromContext(ctx *fiber.Ctx) *sentry.Hub {
+	if hub, ok := ctx.Locals(sentryHubKey).(*sentry.Hub); ok {
+		return hub
+	}
+	return nil
+}
+
+func byName(ctx *fiber.Ctx) *sentry.Hub {
+	return ctx.Locals("sentry-hub").(*sentry.Hub)
+}
+`
+
+	tests := []struct {
+		name   string
+		server string
+	}{
+		{
+			name: "the import of v2",
+			server: `package httpserver
+
+import (
+	"github.com/gofiber/contrib/fibersentry"
+	"github.com/gofiber/fiber/v2"
+)
+
+func New() *fiber.App {
+	app := fiber.New()
+	app.Use(fibersentry.New(fibersentry.Config{Repanic: true}))
+	return app
+}
+`,
+		},
+		{
+			name: "the import after the module moved",
+			server: `package httpserver
+
+import (
+	fibersentry "github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v2"
+)
+
+func New() *fiber.App {
+	app := fiber.New()
+	app.Use(fibersentry.New(fibersentry.Config{Repanic: true}))
+	return app
+}
+`,
+		},
+		{
+			name: "the import of v3 under its own name",
+			server: `package httpserver
+
+import (
+	"github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v2"
+)
+
+func New() *fiber.App {
+	app := fiber.New()
+	app.Use(sentry.New())
+	return app
+}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := mw2Apply(t, v3.MigrateMiddlewareLocals, map[string]string{
+				"go.mod":                   localsGoMod,
+				"internal/server/mw.go":    strings.Replace(tt.server, "package httpserver", "package server", 1),
+				"internal/httpserver/h.go": reader,
+			})
+
+			// the file reads the hub where sentry-go is called sentry: the middleware is imported under a name of its own
+			h := run.file(t, "internal/httpserver/h.go")
+			assert.Contains(t, h, `fibersentry "github.com/gofiber/contrib/v3/sentry"`)
+			assert.Contains(t, h, "hub, ok := fibersentry.GetHubFromContext(ctx), fibersentry.GetHubFromContext(ctx) != nil; ok {")
+			assert.Contains(t, h, "return fibersentry.GetHubFromContext(ctx)")
+			assert.NotContains(t, h, "Locals")
+			assert.Contains(t, h, `"github.com/getsentry/sentry-go"`)
+			assert.Empty(t, run.notes)
+		})
+	}
+}
+
+func Test_MigrateMiddlewareLocals_SentryHubIsLeftAloneWithoutTheMiddleware(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"github.com/getsentry/sentry-go"
+	"github.com/gofiber/fiber/v2"
+)
+
+func hub(c *fiber.Ctx) *sentry.Hub {
+	// the application keeps a hub of its own under that key
+	return c.Locals("sentry-hub").(*sentry.Hub)
+}
+`
+	content, run := mw2Single(t, v3.MigrateMiddlewareLocals, src)
+
+	assert.Equal(t, src, content)
+	assert.Empty(t, run.out)
+	assert.Empty(t, run.notes)
+}
+
+func Test_MigrateMiddlewareLocals_SentryHubStoredByTheApplication(t *testing.T) {
+	t.Parallel()
+
+	run := mw2Apply(t, v3.MigrateMiddlewareLocals, map[string]string{
+		"main.go": `package main
+
+import (
+	"github.com/getsentry/sentry-go"
+	"github.com/gofiber/contrib/fibersentry"
+	"github.com/gofiber/fiber/v2"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(fibersentry.New())
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("sentry-hub", sentry.CurrentHub().Clone())
+		return c.Next()
+	})
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendString(c.Locals("sentry-hub").(*sentry.Hub).LastEventID().String())
+	})
+}
+`,
+	})
+
+	// the application writes that key too: it is not clear whose hub the read wants
+	assert.Contains(t, run.file(t, "main.go"), `c.Locals("sentry-hub").(*sentry.Hub)`)
+	if assert.Len(t, run.notes, 1) {
+		assert.Contains(t, run.notes[0].Message, "your own code stores a value under that key too")
+		assert.Contains(t, run.notes[0].Message, "sentry.GetHubFromContext(c)")
+	}
+}
