@@ -30,41 +30,51 @@ type mw2LoggerType struct {
 	stub bool
 }
 
+// mw2LoggerModule is what is known about the loggers of one module.
+type mw2LoggerModule struct {
+	// types are the custom loggers.
+	types []*mw2LoggerType
+	// setsLogger is set when the module installs a logger with log.SetLogger,
+	// which makes it the one log.DefaultLogger hands out.
+	setsLogger bool
+}
+
 // mw2Loggers finds the custom loggers of the modules of a project.
 type mw2Loggers struct {
 	modules *mw2Modules
-	scanned map[string][]*mw2LoggerType
+	scanned map[string]*mw2LoggerModule
 }
 
 func newMW2Loggers(root string) *mw2Loggers {
-	return &mw2Loggers{modules: newMW2Modules(root), scanned: map[string][]*mw2LoggerType{}}
+	return &mw2Loggers{modules: newMW2Modules(root), scanned: map[string]*mw2LoggerModule{}}
 }
 
-// module returns the custom loggers of the module that holds file.
-func (l *mw2Loggers) module(file string) []*mw2LoggerType {
+// module returns the loggers of the module that holds file.
+func (l *mw2Loggers) module(file string) *mw2LoggerModule {
 	root := l.modules.moduleOf(file)
-	if types, ok := l.scanned[root]; ok {
-		return types
+	if m, ok := l.scanned[root]; ok {
+		return m
 	}
 
 	scan := &mw2LoggerScan{withContext: map[mw2TypeKey]bool{}, results: map[mw2TypeKey]*mw2LoggerResult{}}
-	l.scanned[root] = nil
+	m := &mw2LoggerModule{}
+	l.scanned[root] = m
 	if err := mw2Walk(root, func(path string) {
 		if l.modules.moduleOf(path) == root {
 			scan.add(path)
 		}
 	}); err != nil {
-		return nil
+		return m
 	}
-	types := scan.types()
-	l.scanned[root] = types
-	return types
+	m.types = scan.types()
+	m.setsLogger = scan.setsLogger
+	return m
 }
 
 // find returns the custom logger called name of the package in the directory of file.
 func (l *mw2Loggers) find(file, pkg, name string) *mw2LoggerType {
 	key := mw2TypeKey{dir: filepath.Dir(filepath.Clean(file)), pkg: pkg, name: name}
-	for _, t := range l.module(file) {
+	for _, t := range l.module(file).types {
 		if t.key() == key {
 			return t
 		}
@@ -85,6 +95,7 @@ func (t *mw2LoggerType) key() mw2TypeKey {
 type mw2LoggerScan struct {
 	withContext map[mw2TypeKey]bool
 	results     map[mw2TypeKey]*mw2LoggerResult
+	setsLogger  bool
 }
 
 // add reads the logger methods of one file.
@@ -100,6 +111,7 @@ func (s *mw2LoggerScan) add(path string) {
 	}
 	logNames := importNames(string(src), mw2Log, "log")
 	dir := filepath.Dir(filepath.Clean(path))
+	s.setsLogger = s.setsLogger || mw2CallsSetLogger(file, logNames)
 
 	for _, d := range file.Decls {
 		fn, ok := d.(*ast.FuncDecl)
@@ -120,6 +132,18 @@ func (s *mw2LoggerScan) add(path string) {
 			s.results[key] = mw2ResultOf(res.List[0].Type, file, fset, string(src))
 		}
 	}
+}
+
+// mw2CallsSetLogger reports whether file calls SetLogger of the log package.
+func mw2CallsSetLogger(file *ast.File, logNames []string) bool {
+	found := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok && mw2IsSelector(call.Fun, logNames, "SetLogger") {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // types returns the custom loggers that were found, in a stable order.

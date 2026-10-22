@@ -248,6 +248,8 @@ func (m *myLogger) Logger() *stdlog.Logger                                { retu
 func (m *myLogger) WithContext(ctx context.Context) fiberlog.CommonLogger { return m }
 
 var _ fiberlog.AllLogger = (*myLogger)(nil)
+
+func install() { fiberlog.SetLogger(&myLogger{}) }
 `,
 		"b.go": `package main
 
@@ -272,7 +274,33 @@ func use() { _ = fiberlog.DefaultLogger() }
 	assert.Contains(t, run.file(t, "a.go"), "var _ fiberlog.AllLogger[*stdlog.Logger] = (*myLogger)(nil)")
 	assert.Contains(t, run.file(t, "b.go"), "fiberlog.DefaultLogger()", "no single type argument fits")
 	require.Len(t, run.notes, 1)
-	assert.Contains(t, run.notes[0].Message, "different types")
+	assert.Equal(t, "b.go", run.notes[0].File)
+	assert.Contains(t, run.notes[0].Message, "several whose Logger() return different types")
+}
+
+func Test_MigrateLoggerGenerics_InstalledLoggerOfAnotherModule(t *testing.T) {
+	t.Parallel()
+
+	// DefaultLogger[T]() answers nil for any T that is not the type the installed logger's Logger() returns.
+	content, run := mw2Single(t, v3.MigrateLoggerGenerics, `package main
+
+import (
+	fiberzap "github.com/gofiber/contrib/fiberzap/v2"
+	fiberlog "github.com/gofiber/fiber/v2/log"
+)
+
+func main() {
+	fiberlog.SetLogger(fiberzap.NewLogger())
+	fiberlog.DefaultLogger().SetLevel(fiberlog.LevelDebug)
+}
+`)
+
+	assert.Contains(t, content, "fiberlog.SetLogger(fiberzap.NewLogger())", "the type argument of SetLogger is inferred")
+	assert.Contains(t, content, "fiberlog.DefaultLogger().SetLevel", "no guess for the type argument")
+	require.Len(t, run.notes, 1)
+	assert.Equal(t, 10, run.notes[0].Line)
+	assert.Contains(t, run.notes[0].Message, "is not one of the project's own")
+	assert.Empty(t, run.out)
 }
 
 func Test_MigrateLoggerGenerics_SkipNonFiber(t *testing.T) {

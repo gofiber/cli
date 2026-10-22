@@ -131,7 +131,7 @@ func (r *mw2LoggerRewriter) typeArgument(sel *ast.SelectorExpr, stack []ast.Node
 			return r.render(impl.result)
 		}
 	}
-	return r.projectArgument()
+	return r.projectArgument(sel)
 }
 
 // mw2EnclosingValueSpec returns the declaration whose type is sel.
@@ -181,18 +181,20 @@ func mw2ImplementerName(e ast.Expr) string {
 }
 
 // projectArgument is the type argument of the logger the project registers: the
-// one its custom logger returns from Logger(), or the *log.Logger of the default
-// logger when it has no custom logger.
-func (r *mw2LoggerRewriter) projectArgument() (string, bool) {
-	custom := r.loggers.module(r.fi.Path)
-	if len(custom) == 0 {
+// one its custom logger returns from Logger(), or the *log.Logger of the built-in
+// logger when the project installs no logger of its own.
+func (r *mw2LoggerRewriter) projectArgument(at ast.Node) (string, bool) {
+	m := r.loggers.module(r.fi.Path)
+	if !m.setsLogger {
 		return r.stdLoggerType(), true
 	}
-	if arg, ok := mw2UniqueResult(custom); ok {
-		return r.render(arg)
+	if len(m.types) > 0 {
+		if arg, ok := mw2UniqueResult(m.types); ok {
+			return r.render(arg)
+		}
 	}
 
-	internal.Notef(r.fi, 0, "the project has custom loggers whose Logger() return different types; give log.AllLogger, log.ConfigurableLogger and log.DefaultLogger their type argument by hand")
+	internal.Notef(r.fi, r.g.line(at.Pos()), "the logger installed with log.SetLogger is not one of the project's own, or the project has several whose Logger() return different types; write the type argument of log.AllLogger, log.ConfigurableLogger and log.DefaultLogger (it is what the logger's Logger() returns) by hand")
 	return "", false
 }
 
@@ -235,7 +237,7 @@ func (r *mw2LoggerRewriter) defaultLogger(call *ast.CallExpr) {
 		return
 	}
 
-	arg, ok := r.projectArgument()
+	arg, ok := r.projectArgument(call)
 	if !ok {
 		return
 	}

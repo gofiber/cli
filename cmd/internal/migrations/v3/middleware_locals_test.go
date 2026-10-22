@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -931,4 +932,139 @@ func main() {
 	require.Len(t, run.notes, 1)
 	assert.Contains(t, run.notes[0].Message, "The value of its key could not be resolved")
 	assert.Contains(t, run.notes[0].Message, "requestid.FromContext(c)")
+}
+
+func Test_MigrateMiddlewareLocals_RemovesTheKeyFieldInEveryLayout(t *testing.T) {
+	t.Parallel()
+
+	content, run := mw2Single(t, v3.MigrateMiddlewareLocals, `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+var (
+	alone    = requestid.Config{ContextKey: "a"}
+	trailing = requestid.Config{ContextKey: "a",}
+	first    = requestid.Config{ContextKey: "a", Header: "X-One"}
+	last     = requestid.Config{Header: "X-Two", ContextKey: "a"}
+	middle   = requestid.Config{Header: "X-Three", ContextKey: "a", Next: nil}
+	lines    = requestid.Config{
+		Header: "X-Four",
+		// the key under which the id is stored
+		ContextKey: "a", // key comment
+		Next:       nil,
+	}
+	lastLine = requestid.Config{
+		Header:     "X-Five",
+		ContextKey: "a"}
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(alone), requestid.New(trailing), requestid.New(first), requestid.New(last), requestid.New(middle), requestid.New(lines), requestid.New(lastLine))
+}
+`)
+
+	assert.NotContains(t, content, "ContextKey")
+	assert.NotContains(t, content, "key comment")
+	assert.NotContains(t, content, "the key under which")
+	assert.Contains(t, content, "alone    = requestid.Config{}")
+	assert.Contains(t, content, "trailing = requestid.Config{}")
+	assert.Contains(t, content, `first    = requestid.Config{Header: "X-One"}`)
+	assert.Contains(t, content, `last     = requestid.Config{Header: "X-Two"}`)
+	assert.Contains(t, content, `middle   = requestid.Config{Header: "X-Three", Next: nil}`)
+	assert.Contains(t, content, "Header: \"X-Four\",\n\t\tNext:   nil,")
+	assert.Contains(t, content, `Header: "X-Five"}`)
+	assert.Empty(t, run.notes)
+}
+
+func Test_MigrateMiddlewareLocals_CSRFHandlerAfterTheTypeWasRenamed(t *testing.T) {
+	t.Parallel()
+
+	// The csrf migration renames CSRFHandler to Handler; the read is the same either way.
+	content, _ := mw2Single(t, v3.MigrateMiddlewareLocals, `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/csrf"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(csrf.New())
+	app.Post("/logout", func(c fiber.Ctx) error {
+		if handler, ok := c.Locals(csrf.ConfigDefault.HandlerContextKey).(*csrf.Handler); ok {
+			return handler.DeleteToken(c)
+		}
+		return nil
+	})
+}
+`)
+
+	assert.Contains(t, content, "if handler, ok := csrf.HandlerFromContext(c), csrf.HandlerFromContext(c) != nil; ok {")
+}
+
+func Test_MigrateMiddlewareLocals_V3CodeIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/keyauth"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New())
+	app.Use(keyauth.New(keyauth.Config{Validator: func(c fiber.Ctx, key string) (bool, error) { return true, nil }}))
+	app.Get("/", func(c fiber.Ctx) error {
+		c.Locals("mine", 1)
+		return c.SendString(requestid.FromContext(c) + keyauth.TokenFromContext(c))
+	})
+}
+`
+	content, run := mw2Single(t, v3.MigrateMiddlewareLocals, src)
+
+	assert.Equal(t, src, content)
+	assert.Empty(t, run.out)
+	assert.Empty(t, run.notes)
+}
+
+func Test_MigrateMiddlewareLocals_WindowsLineEndings(t *testing.T) {
+	t.Parallel()
+
+	src := strings.ReplaceAll(`package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{
+		Header: "X-Trace",
+		// the key
+		ContextKey: "rid", // under which the id is stored
+		Next:       nil,
+	}))
+	app.Get("/", func(c *fiber.Ctx) error {
+		id, ok := c.Locals("rid").(string)
+		if !ok {
+			return nil
+		}
+		return c.SendString(id)
+	})
+}
+`, "\n", "\r\n")
+	content, _ := mw2Single(t, v3.MigrateMiddlewareLocals, src)
+
+	assert.NotContains(t, content, "ContextKey")
+	assert.NotContains(t, content, "under which")
+	assert.Contains(t, content, "id, ok := requestid.FromContext(c), requestid.FromContext(c) != \"\"")
+	assert.Contains(t, content, "Header: \"X-Trace\",\n\t\tNext:   nil,")
 }

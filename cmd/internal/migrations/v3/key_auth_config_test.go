@@ -297,6 +297,32 @@ func main() {
 	assert.Empty(t, run.notes)
 }
 
+func Test_MigrateKeyAuthConfig_IgnoresStringsAndComments(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2/middleware/keyauth"
+)
+
+// keyauth.Config{KeyLookup: "header:X-Old", AuthScheme: "Token"} is what v2 wanted.
+var usage = "keyauth.Config{KeyLookup: \"query:k\"}"
+
+var raw = ` + "`" + `KeyLookup: "cookie:c", AuthScheme: "Basic"` + "`" + `
+
+func main() {
+	fmt.Println(usage, raw, keyauth.ErrMissingOrMalformedAPIKey)
+}
+`
+	content, run := mw2Single(t, v3.MigrateKeyAuthConfig, src)
+
+	assert.Equal(t, src, content)
+	assert.Empty(t, run.out)
+}
+
 func Test_MigrateKeyAuthConfig_V3ConfigIsLeftAlone(t *testing.T) {
 	t.Parallel()
 
