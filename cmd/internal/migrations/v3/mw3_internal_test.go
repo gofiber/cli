@@ -383,6 +383,16 @@ func purge() error { return store.Reset() }
 			rewrite: mw3SessionMethodsContent,
 		},
 		{
+			name: "session methods: fmt for the keys",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+func keys(sess *session.Session) []string { return sess.Keys() }
+`,
+			rewrite: mw3SessionMethodsContent,
+		},
+		{
 			name: "session source: the import goes with its last use",
 			src: `package main
 
@@ -504,6 +514,11 @@ var _ = fiber.New
 			})
 		}
 	}
+	keysBodies := []string{
+		"func f(c *fiber.Ctx) []string {\n\tstore := session.New()\n\tsess, _ := store.Get(c)\n\treturn sess.Keys()\n}",
+		"func f(sess *session.Session) int {\n\treturn len(sess.Keys())\n}",
+		"func f(sess *session.Session) {\n\tfor _, k := range sess.Keys() {\n\t\tfmt.Println(k)\n\t}\n}",
+	}
 	sourceBodies := []string{
 		"func f(src session.Source) bool { return src == session.SourceCookie }",
 		"var kinds = map[session.Source]string{\n\tsession.SourceCookie: \"c\",\n\tsession.SourceHeader: \"h\",\n}",
@@ -516,6 +531,7 @@ var _ = fiber.New
 	run("session extractor", sessionHeader, sessionBodies, mw3SessionExtractorContent)
 	run("session store", sessionHeader, sessionBodies, mw3SessionStoreContent)
 	run("session methods", sessionHeader, sessionBodies, mw3SessionMethodsContent)
+	run("session methods keys", sessionHeader, keysBodies, mw3SessionMethodsContent)
 	readBodies := []string{
 		"var s = session.New()\nvar _ = s.KeyLookup",
 		"func f(s *session.Store) string {\n\treturn s.KeyLookup + s.CookieName\n}",
