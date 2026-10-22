@@ -189,6 +189,109 @@ func use() error { return err }
 			},
 		},
 		{
+			name: "errs_compat_slices",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func accumulate(urls []string) []error {
+	var all []error
+	for _, u := range urls {
+		_, _, errs := fiber.Get(u).Bytes()
+		all = append(all, errs...)
+	}
+	return all
+}
+
+func returnsSlice(url string) (int, []byte, []error) {
+	code, body, errs := fiber.Get(url).Bytes()
+	return code, body, errs
+}
+
+func countsAndRanges(url string) {
+	_, _, errs := fiber.Get(url).Bytes()
+	for i, e := range errs {
+		fmt.Println(i, e)
+	}
+	if len(errs) == 1 {
+		fmt.Println("one")
+	}
+}
+
+func inClosure(url string) func() int {
+	_, _, errs := fiber.Get(url).Bytes()
+	return func() int { return len(errs) }
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func accumulate(urls []string) []error {
+	var all []error
+	for _, u := range urls {
+		_, err := client.Get(u)
+		var errs []error
+		if err != nil {
+			errs = []error{err}
+		}
+		all = append(all, errs...)
+	}
+	return all
+}
+
+func returnsSlice(url string) (int, []byte, []error) {
+	resp, err := client.Get(url)
+	var code int
+	var body []byte
+	var errs []error
+	if err == nil {
+		code = resp.StatusCode()
+		body = resp.Body()
+	}
+	if err != nil {
+		errs = []error{err}
+	}
+	return code, body, errs
+}
+
+func countsAndRanges(url string) {
+	_, err := client.Get(url)
+	var errs []error
+	if err != nil {
+		errs = []error{err}
+	}
+	for i, e := range errs {
+		fmt.Println(i, e)
+	}
+	if len(errs) == 1 {
+		fmt.Println("one")
+	}
+}
+
+func inClosure(url string) func() int {
+	_, err := client.Get(url)
+	var errs []error
+	if err != nil {
+		errs = []error{err}
+	}
+	return func() int { return len(errs) }
+}
+`,
+			},
+		},
+		{
 			name: "errs_idioms",
 			files: map[string]string{
 				"main.go": `package main

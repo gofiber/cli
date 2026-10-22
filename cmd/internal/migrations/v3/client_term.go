@@ -285,7 +285,9 @@ func (e *clientEmit) repeatedCheck(it *clientItem, handler string, mode clientEr
 	f := e.f
 	t := it.term
 	l := it.list
-	if t.ifStmt != nil || mode != clientErrsRewrite || it.idx+1 >= len(l.stmts) {
+	// The check of a request that decodes the body is also the check of the
+	// decoding, which the handler of Parse knows nothing about.
+	if t.ifStmt != nil || t.kind == clientTermStruct || mode != clientErrsRewrite || it.idx+1 >= len(l.stmts) {
 		return nil
 	}
 	next, ok := l.stmts[it.idx+1].(*ast.IfStmt)

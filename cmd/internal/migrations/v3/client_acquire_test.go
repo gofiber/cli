@@ -912,6 +912,67 @@ func userAgentWithParen(url string) ([]byte, error) {
 			},
 		},
 		{
+			name: "acquire_struct_identical",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+)
+
+type user struct{ Name string }
+
+func decode(url string) (*user, error) {
+	var u user
+	a := fiber.AcquireAgent()
+	defer fiber.ReleaseAgent(a)
+	req := a.Request()
+	req.Header.SetMethod(fiber.MethodGet)
+	req.SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return nil, err
+	}
+	_, _, errs := a.Struct(&u)
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return &u, nil
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"errors"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+type user struct{ Name string }
+
+func decode(url string) (*user, error) {
+	var u user
+	a := client.C().R()
+	a.SetMethod(fiber.MethodGet)
+	a.SetURL(url)
+	resp, err := a.Send()
+	if errors.Is(err, client.ErrURLFormat) {
+		return nil, err
+	}
+	if err == nil {
+		err = resp.JSON(&u)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+`,
+			},
+		},
+		{
 			name: "acquire_struct_targets",
 			files: map[string]string{
 				"main.go": `package main

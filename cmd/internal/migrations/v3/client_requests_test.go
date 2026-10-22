@@ -184,6 +184,323 @@ func trailing(url string) ([]byte, error) {
 			},
 		},
 		{
+			name: "flow_loops_and_branches",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func loop(urls []string) (total int) {
+	for _, u := range urls {
+		code, body, errs := fiber.Get(u).Bytes()
+		if len(errs) > 0 {
+			log.Println(errs)
+			continue
+		}
+		total += code + len(body)
+	}
+	return total
+}
+
+func switchCases(kind, url string) (int, error) {
+	switch kind {
+	case "a":
+		code, _, errs := fiber.Get(url).Bytes()
+		if len(errs) > 0 {
+			return 0, errs[0]
+		}
+		return code, nil
+	case "b":
+		a := fiber.Post(url)
+		a.Body([]byte("x"))
+		code, _, errs := a.Bytes()
+		if len(errs) > 0 {
+			return 0, errs[0]
+		}
+		return code, nil
+	default:
+		return 0, fmt.Errorf("unknown %s", kind)
+	}
+}
+
+func inGoroutines(urls []string) {
+	var wg sync.WaitGroup
+	for _, u := range urls {
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			code, _, errs := fiber.Get(u).Bytes()
+			if len(errs) > 0 {
+				log.Println(errs[0])
+				return
+			}
+			log.Println(code)
+		}(u)
+	}
+	wg.Wait()
+}
+
+func branches(flag bool, u1, u2 string) ([]byte, error) {
+	if flag {
+		_, body, errs := fiber.Get(u1).Bytes()
+		if len(errs) > 0 {
+			return nil, errs[0]
+		}
+		return body, nil
+	} else {
+		_, body, errs := fiber.Get(u2).Bytes()
+		if len(errs) > 0 {
+			return nil, errs[0]
+		}
+		return body, nil
+	}
+}
+
+func captured(url string) {
+	a := fiber.Get(url)
+	run := func() {
+		_, _, _ = a.Bytes()
+	}
+	run()
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func loop(urls []string) (total int) {
+	for _, u := range urls {
+		resp, err := client.Get(u)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		code, body := resp.StatusCode(), resp.Body()
+		total += code + len(body)
+	}
+	return total
+}
+
+func switchCases(kind, url string) (int, error) {
+	switch kind {
+	case "a":
+		resp, err := client.Get(url)
+		if err != nil {
+			return 0, err
+		}
+		code := resp.StatusCode()
+		return code, nil
+	case "b":
+		resp2, err := client.Post(url, client.Config{Body: []byte("x")})
+		if err != nil {
+			return 0, err
+		}
+		code := resp2.StatusCode()
+		return code, nil
+	default:
+		return 0, fmt.Errorf("unknown %s", kind)
+	}
+}
+
+func inGoroutines(urls []string) {
+	var wg sync.WaitGroup
+	for _, u := range urls {
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			resp, err := client.Get(u)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			code := resp.StatusCode()
+			log.Println(code)
+		}(u)
+	}
+	wg.Wait()
+}
+
+func branches(flag bool, u1, u2 string) ([]byte, error) {
+	if flag {
+		resp, err := client.Get(u1)
+		if err != nil {
+			return nil, err
+		}
+		body := resp.Body()
+		return body, nil
+	} else {
+		resp2, err := client.Get(u2)
+		if err != nil {
+			return nil, err
+		}
+		body := resp2.Body()
+		return body, nil
+	}
+}
+
+func captured(url string) {
+	a := fiber.Get(url)
+	run := func() {
+		_, _, _ = a.Bytes()
+	}
+	run()
+}
+`,
+			},
+			notes: []string{
+				"main.go:78: left as Fiber v2 code: it is used inside a function literal",
+			},
+		},
+		{
+			name: "flow_scopes",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+)
+
+import "github.com/gofiber/fiber/v2"
+
+type server struct{ client string }
+
+func (client *server) fetch(url string) ([]byte, error) {
+	_, body, errs := fiber.Get(url).Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+
+func resultNamedResp(url string) (resp []byte, err error) {
+	_, body, errs := fiber.Get(url).Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	resp = body
+	return resp, err
+}
+
+func laterDeclarations(url string) {
+	code, _, errs := fiber.Get(url).Bytes()
+	if len(errs) > 0 {
+		return
+	}
+	resp := fmt.Sprint(code)
+	err := fmt.Errorf("later %s", resp)
+	fmt.Println(resp, err)
+}
+
+func deferred(url string) (body []byte) {
+	defer func() {
+		if errs := recover(); errs != nil {
+			fmt.Println(errs)
+		}
+	}()
+	_, b, errs := fiber.Get(url).Bytes()
+	if len(errs) > 0 {
+		panic(errs)
+	}
+	return b
+}
+
+func functionValue() {
+	get := fiber.Get
+	_ = get
+}
+
+func parameterNamedFiber(fiber string) string {
+	return fiber
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v3"
+
+	fiberclient "github.com/gofiber/fiber/v3/client"
+)
+
+type server struct{ client string }
+
+func (client *server) fetch(url string) ([]byte, error) {
+	resp, err := fiberclient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	body := resp.Body()
+	return body, nil
+}
+
+func resultNamedResp(url string) (resp []byte, err error) {
+	resp2, clientErr := fiberclient.Get(url)
+	if clientErr != nil {
+		return nil, clientErr
+	}
+	body := resp2.Body()
+	resp = body
+	return resp, err
+}
+
+func laterDeclarations(url string) {
+	resp2, clientErr := fiberclient.Get(url)
+	if clientErr != nil {
+		return
+	}
+	code := resp2.StatusCode()
+	resp := fmt.Sprint(code)
+	err := fmt.Errorf("later %s", resp)
+	fmt.Println(resp, err)
+}
+
+func deferred(url string) (body []byte) {
+	defer func() {
+		if errs := recover(); errs != nil {
+			fmt.Println(errs)
+		}
+	}()
+	resp, err := fiberclient.Get(url)
+	if err != nil {
+		panic(err)
+	}
+	b := resp.Body()
+	return b
+}
+
+func functionValue() {
+	get := fiber.Get
+	_ = get
+}
+
+func parameterNamedFiber(fiber string) string {
+	return fiber
+}
+`,
+			},
+			notes: []string{
+				"main.go:52: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+			},
+		},
+		{
 			name: "fluent_chains",
 			files: map[string]string{
 				"main.go": `package main
@@ -610,6 +927,232 @@ func requestArgs(url string) ([]byte, error) {
 			notes: []string{
 				"main.go:28: QueryString() replaced the query of this URL in Fiber v2, so the query was removed from the URL; the v3 client would send both",
 				"main.go:38: left as Fiber v2 code: QueryString() with a value that is not a string literal (put the query in the URL instead)",
+			},
+		},
+		{
+			name: "real_named_results",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+)
+
+func fetch(url string) (code int, body []byte, errs []error) {
+	a := fiber.Get(url)
+	code, body, errs = a.Bytes()
+	return
+}
+
+func fetchTwice(url string) (code int, err error) {
+	var errs []error
+	a := fiber.Get(url)
+	code, _, errs = a.Bytes()
+	if len(errs) > 0 {
+		err = errs[0]
+		return
+	}
+	return code, nil
+}
+
+func generic[T any](url string) (T, error) {
+	var out T
+	_, _, errs := fiber.Get(url).Struct(&out)
+	if len(errs) > 0 {
+		return out, errs[0]
+	}
+	return out, nil
+}
+
+type result struct {
+	Code int
+	Body string
+}
+
+func intoMap(url string) (map[string]any, error) {
+	res := map[string]any{}
+	code, body, errs := fiber.Get(url).String()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	res["code"], res["body"] = code, body
+	return res, nil
+}
+
+func elseIf(url string) error {
+	var out result
+	if code, _, errs := fiber.Get(url).Struct(&out); len(errs) > 0 {
+		return errs[0]
+	} else if code != 200 {
+		return nil
+	}
+	return nil
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func fetch(url string) (code int, body []byte, errs []error) {
+	resp, err := client.Get(url)
+	code = 0
+	body = nil
+	errs = nil
+	if err == nil {
+		code = resp.StatusCode()
+		body = resp.Body()
+	}
+	if err != nil {
+		errs = []error{err}
+	}
+	return
+}
+
+func fetchTwice(url string) (code int, err error) {
+	var errs []error
+	resp, clientErr := client.Get(url)
+	code = 0
+	errs = nil
+	if clientErr == nil {
+		code = resp.StatusCode()
+	}
+	if clientErr != nil {
+		errs = []error{clientErr}
+	}
+	if len(errs) > 0 {
+		err = errs[0]
+		return
+	}
+	return code, nil
+}
+
+func generic[T any](url string) (T, error) {
+	var out T
+	resp, err := client.Get(url)
+	if err == nil {
+		err = resp.JSON(&out)
+	}
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+type result struct {
+	Code int
+	Body string
+}
+
+func intoMap(url string) (map[string]any, error) {
+	res := map[string]any{}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	code, body := resp.StatusCode(), string(resp.Body())
+	res["code"], res["body"] = code, body
+	return res, nil
+}
+
+func elseIf(url string) error {
+	var out result
+	resp, err := client.Get(url)
+	var code int
+	if err == nil {
+		code = resp.StatusCode()
+		err = resp.JSON(&out)
+	}
+	if err != nil {
+		return err
+	} else if code != 200 {
+		return nil
+	}
+	return nil
+}
+`,
+			},
+		},
+		{
+			name: "real_unmigratable_shapes",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+)
+
+type fetcher struct {
+	agent *fiber.Agent
+}
+
+func passed(url string, use func(*fiber.Agent)) {
+	use(fiber.Get(url))
+}
+
+func returnedTerminal(url string) (int, []byte, []error) {
+	return fiber.Get(url).Bytes()
+}
+
+func hostClient(url string) {
+	a := fiber.AcquireAgent()
+	a.Request().SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return
+	}
+	a.HostClient.MaxConns = 10
+	_, _, _ = a.Bytes()
+}
+
+func newFetcher(url string) fetcher {
+	return fetcher{agent: fiber.Get(url)}
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+type fetcher struct {
+	agent *fiber.Agent
+}
+
+func passed(url string, use func(*client.Request)) {
+	use(fiber.Get(url))
+}
+
+func returnedTerminal(url string) (int, []byte, []error) {
+	return fiber.Get(url).Bytes()
+}
+
+func hostClient(url string) {
+	a := fiber.AcquireAgent()
+	a.Request().SetRequestURI(url)
+	if err := a.Parse(); err != nil {
+		return
+	}
+	a.HostClient.MaxConns = 10
+	_, _, _ = a.Bytes()
+}
+
+func newFetcher(url string) fetcher {
+	return fetcher{agent: fiber.Get(url)}
+}
+`,
+			},
+			notes: []string{
+				"main.go:20: left as Fiber v2 code: `a.HostClient.MaxConns = 10` is not understood by the migration",
+				"main.go:8: `fiber.Agent` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:12: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:16: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
+				"main.go:30: `fiber.Get` does not exist in Fiber v3 and was not migrated; use the client package (client.Get, client.Post, client.New().R(), ...)",
 			},
 		},
 		{
