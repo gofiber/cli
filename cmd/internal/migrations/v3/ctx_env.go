@@ -744,6 +744,18 @@ func (env *ctxEnv) methodCallResults(call *ast.CallExpr, fun *ast.SelectorExpr, 
 		return nil
 	}
 
+	// a method of a type of the file, of an interface, or one that a type embeds: what
+	// it declares comes before what the name of one of Fiber's methods suggests
+	if recv := env.typeOfAt(fun.X, stack, depth+1); recv != nil {
+		if ft, bind := env.methodFuncType(recv, fun.Sel.Name, 0); ft != nil {
+			results := ctxResultTypes(ft)
+			for i, r := range results {
+				results[i] = ctxSubst(r, bind)
+			}
+			return results
+		}
+	}
+
 	switch name := fun.Sel.Name; {
 	case name == "AcquireCtx":
 		return []ast.Expr{ctxFiberRef(ctxTypeCtx)}
@@ -754,17 +766,6 @@ func (env *ctxEnv) methodCallResults(call *ast.CallExpr, fun *ast.SelectorExpr, 
 	case slices.Contains(ctxChainMethods, name):
 		if env.typeIs(env.typeOfAt(fun.X, stack, depth+1), ctxTypeCtx) == ctxYes {
 			return []ast.Expr{ctxFiberRef(ctxTypeCtx)}
-		}
-	}
-
-	// a method of a type of the file, of an interface, or one that a type embeds
-	if recv := env.typeOfAt(fun.X, stack, depth+1); recv != nil {
-		if ft, bind := env.methodFuncType(recv, fun.Sel.Name, 0); ft != nil {
-			results := ctxResultTypes(ft)
-			for i, r := range results {
-				results[i] = ctxSubst(r, bind)
-			}
-			return results
 		}
 	}
 

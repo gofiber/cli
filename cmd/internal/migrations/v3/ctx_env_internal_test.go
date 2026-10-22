@@ -565,6 +565,37 @@ func handler() {
 	assert.NotEqual(t, ctxYes, got[`"group"`])
 }
 
+// A type that declares AcquireCtx or Group itself answers with what it declares, not with
+// the context and the group of Fiber that the names suggest.
+func Test_ctxEnv_declaredMethodBeatsTheName(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type request struct{}
+
+func (*request) probe(string) {}
+
+type engine struct{}
+
+func (engine) AcquireCtx() *request { return nil }
+
+func (engine) Group(string) *request { return nil }
+
+func handler(e engine, app *fiber.App) {
+	e.AcquireCtx().probe("acquired from the engine")
+	e.Group("/x").probe("group of the engine")
+	app.AcquireCtx(nil).probe("acquired from the app")
+}
+`
+	got := ctxKindsOf(t, src)
+	assert.Equal(t, ctxNo, got[`"acquired from the engine"`])
+	assert.Equal(t, ctxNo, got[`"group of the engine"`])
+	assert.Equal(t, ctxYes, got[`"acquired from the app"`])
+}
+
 func Test_ctxIsFiberType(t *testing.T) {
 	t.Parallel()
 
