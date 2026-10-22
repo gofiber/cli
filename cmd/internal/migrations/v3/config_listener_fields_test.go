@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -365,158 +366,6 @@ func main() {
 	}
 }
 
-// The variable is only an option where the config, the assignments and the
-// calls that start its apps are all plain code of one function.
-func Test_MigrateConfigListenerFields_ConditionalAssignmentStays(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		src    string
-		reason string
-		line   int
-	}{
-		{
-			name: "the app is started by another function",
-			src: `package main
-
-import (
-	"log"
-	"os"
-
-	"github.com/gofiber/fiber/v2"
-)
-
-func build() *fiber.App {
-	cfg := fiber.Config{}
-	if os.Getenv("ENV") == "prod" {
-		cfg.Prefork = true
-	}
-	return fiber.New(cfg)
-}
-
-func main() {
-	app := build()
-	log.Fatal(app.Listen(":3000"))
-}
-`,
-			reason: "a fiber.ListenConfig variable cannot stand in for it: the call that starts the app is outside the code that sees the config variable",
-			line:   13,
-		},
-		{
-			name: "the assignment follows fiber.New",
-			src: `package main
-
-import (
-	"log"
-	"os"
-
-	"github.com/gofiber/fiber/v2"
-)
-
-func main() {
-	cfg := fiber.Config{}
-	app := fiber.New(cfg)
-	if os.Getenv("ENV") == "prod" {
-		cfg.Prefork = true
-	}
-	log.Fatal(app.Listen(":3000"))
-}
-`,
-			reason: "a fiber.ListenConfig variable cannot stand in for it: it is assigned after fiber.New",
-			line:   14,
-		},
-		{
-			name: "the assignment is made by a function literal",
-			src: `package main
-
-import (
-	"log"
-
-	"github.com/gofiber/fiber/v2"
-)
-
-func main() {
-	cfg := fiber.Config{}
-	enable := func() { cfg.Prefork = true }
-	enable()
-	app := fiber.New(cfg)
-	log.Fatal(app.Listen(":3000"))
-}
-`,
-			reason: "a fiber.ListenConfig variable cannot stand in for it: it is assigned inside a function literal",
-			line:   11,
-		},
-		{
-			name: "the setting is read from the config",
-			src: `package main
-
-import (
-	"log"
-	"os"
-
-	"github.com/gofiber/fiber/v2"
-)
-
-func main() {
-	cfg := fiber.Config{}
-	if os.Getenv("ENV") == "prod" {
-		cfg.Prefork = true
-	}
-	if cfg.Prefork {
-		log.Println("prefork")
-	}
-	app := fiber.New(cfg)
-	log.Fatal(app.Listen(":3000"))
-}
-`,
-			reason: "a fiber.ListenConfig variable cannot stand in for it: it is read from the config",
-			line:   13,
-		},
-		{
-			name: "the app is started in another function",
-			src: `package main
-
-import (
-	"log"
-	"os"
-
-	"github.com/gofiber/fiber/v2"
-)
-
-func run(app *fiber.App) { log.Fatal(app.Listen(":3000")) }
-
-func main() {
-	cfg := fiber.Config{}
-	if os.Getenv("ENV") == "prod" {
-		cfg.Prefork = true
-	}
-	run(fiber.New(cfg))
-}
-`,
-			reason: "assigned conditionally or outside the function that creates the config",
-			line:   15,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			dir := appSingle(t, tt.src)
-
-			appRun(t, dir, v3.MigrateConfigListenerFields)
-
-			assert.Equal(t, tt.src, appRead(t, dir, "main.go"), "nothing moves")
-			notes := internal.DrainNotes(dir)
-			require.NotEmpty(t, notes)
-			assert.Equal(t, tt.line, notes[0].Line)
-			assert.Contains(t, notes[0].Message, "EnablePrefork")
-			assert.Contains(t, notes[0].Message, tt.reason)
-		})
-	}
-}
-
 func Test_MigrateConfigListenerFields_UnlinkedAppKeepsItsFields(t *testing.T) {
 	t.Parallel()
 
@@ -528,16 +377,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func run(app *fiber.App) error {
-	return app.Listen(":3000")
-}
-
 func main() {
 	app := fiber.New(fiber.Config{
 		Prefork:   true,
 		AppName: "x",
 	})
-	log.Fatal(run(app))
+	log.Println(app.Config().AppName)
 }
 `)
 	before := appRead(t, dir, "main.go")
@@ -548,7 +393,7 @@ func main() {
 	assert.Empty(t, out)
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Equal(t, 15, notes[0].Line)
+	assert.Equal(t, 11, notes[0].Line)
 	assert.Contains(t, notes[0].Message, "EnablePrefork")
 	assert.Contains(t, notes[0].Message, "no Listen call")
 }
@@ -600,7 +445,8 @@ func main() {
 }
 
 // A start call a user already converted by hand takes the settings only when
-// its fiber.ListenConfig is a literal that does not set them.
+// its fiber.ListenConfig is a literal that does not set them. The settings of an
+// app can still go with the app, unless the call says otherwise itself.
 func Test_MigrateConfigListenerFields_ListenCallsThatCannotTakeTheSettings(t *testing.T) {
 	t.Parallel()
 
@@ -609,6 +455,7 @@ func Test_MigrateConfigListenerFields_ListenCallsThatCannotTakeTheSettings(t *te
 		listen  string
 		want    string
 		problem string
+		notes   int
 	}{
 		{
 			name:   "an empty literal",
@@ -616,9 +463,10 @@ func Test_MigrateConfigListenerFields_ListenCallsThatCannotTakeTheSettings(t *te
 			want:   `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: true})`,
 		},
 		{
-			name:    "a config held by a variable",
-			listen:  `app.Listen(":3000", listenCfg)`,
-			problem: "its fiber.ListenConfig is not a literal the settings can be added to",
+			name:   "a config held by a variable",
+			listen: `app.Listen(":3000", listenCfg)`,
+			want:   `app.Listen(":3000", fiberMigrateListenConfig(app, listenCfg))`,
+			notes:  1, // the note about the shim
 		},
 		{
 			name:    "a literal that sets the field already",
@@ -649,17 +497,18 @@ func main() {
 			notes := internal.DrainNotes(dir)
 			if tt.problem == "" {
 				assert.Contains(t, content, tt.want)
-				assert.Contains(t, content, "fiber.New(fiber.Config{})")
-				assert.Empty(t, notes)
+				assert.Len(t, notes, tt.notes)
 				return
 			}
 
 			assert.Contains(t, content, "fiber.New(fiber.Config{Prefork: true})", "the setting stays")
 			assert.Contains(t, content, tt.listen, "the call stays")
+			assert.NoFileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
 			require.Len(t, notes, 1)
 			assert.Equal(t, 8, notes[0].Line)
 			assert.Contains(t, notes[0].Message, "EnablePrefork")
 			assert.Contains(t, notes[0].Message, "cannot take them: "+tt.problem)
+			assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
 		})
 	}
 }
@@ -711,14 +560,19 @@ func second() {
 	assert.Contains(t, main, `app.Listen(":3000", fiber.ListenConfig{EnablePrefork: true})`)
 	assert.Contains(t, main, `app.Listen(":3001", fiber.ListenConfig{EnablePrefork: true})`)
 
-	// a package-level variable assigned in init may be assigned anywhere: it stays
-	assert.Contains(t, appRead(t, dir, "config.go"), "other.DisableStartupMessage = true")
-	assert.Contains(t, main, `app.Listen(":3002")`)
+	// a package-level variable assigned in init may be assigned anywhere: a variable
+	// of the same kind keeps its settings, and the app takes them from the shim
+	config := appRead(t, dir, "config.go")
+	assert.Contains(t, config, "var other fiber.Config\nvar otherListen = fiber.ListenConfig{}\n")
+	assert.Contains(t, config, "otherListen.DisableStartupMessage = true")
+	assert.NotContains(t, config, "other.DisableStartupMessage")
+	assert.Contains(t, main, "app := fiberMigrateNew(other, otherListen)")
+	assert.Contains(t, main, `app.Listen(":3002", fiberMigrateListenConfig(app))`)
+	assert.FileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Equal(t, "config.go", notes[0].File[len(notes[0].File)-len("config.go"):])
-	assert.Equal(t, 10, notes[0].Line)
-	assert.Contains(t, notes[0].Message, "DisableStartupMessage")
+	assert.Equal(t, "main.go", notes[0].File)
+	assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
 }
 
 func Test_MigrateConfigListenerFields_NotesConfigsItDoesNotFollow(t *testing.T) {
@@ -763,7 +617,9 @@ func other(u unrelated) bool { return u.Prefork }
 	assert.Contains(t, notes[0].Message, "is not one the migration follows")
 }
 
-func Test_MigrateConfigListenerFields_LocalValuesStayInTheirFunction(t *testing.T) {
+// A value that is only known inside the function that creates the app cannot go
+// to the call that starts it, so it goes with the app.
+func Test_MigrateConfigListenerFields_LocalValuesGoWithTheApp(t *testing.T) {
 	t.Parallel()
 
 	dir := appProject(t, map[string]string{
@@ -784,16 +640,16 @@ func main() {
 }
 `,
 	})
-	before := appRead(t, dir, "app.go")
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	assert.Equal(t, before, appRead(t, dir, "app.go"))
-	assert.Equal(t, "package main\n\nfunc main() {\n\tapp := newApp(true)\n\tapp.Listen(\":3000\")\n}\n", appRead(t, dir, "main.go"))
+	assert.Contains(t, appRead(t, dir, "app.go"), "return fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: prefork})")
+	assert.Equal(t, "package main\n\nfunc main() {\n\tapp := newApp(true)\n\tapp.Listen(\":3000\", fiberMigrateListenConfig(app))\n}\n", appRead(t, dir, "main.go"))
+	assert.FileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "app.go", notes[0].File)
-	assert.Contains(t, notes[0].Message, "not in scope")
+	assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
 }
 
 func Test_MigrateConfigListenerFields_OtherPackage(t *testing.T) {
@@ -974,7 +830,9 @@ func newApp() *fiber.App {
 	assert.Contains(t, notes[1].Message, "EnablePrefork")
 }
 
-func Test_MigrateConfigListenerFields_ValuesWithSideEffectsStay(t *testing.T) {
+// A value that has side effects is evaluated where it was written, as it was in
+// v2, so it cannot move to the call that starts the app: the app takes it along.
+func Test_MigrateConfigListenerFields_ValuesWithSideEffectsStayWhereTheyRun(t *testing.T) {
 	t.Parallel()
 
 	dir := appSingle(t, `package main
@@ -994,13 +852,9 @@ func main() {
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	// the setting that can move does, the one that would be evaluated later stays
 	content := appRead(t, dir, "main.go")
-	assert.Contains(t, content, `fiber.New(fiber.Config{Prefork: *flag.Bool("prefork", false, "prefork")})`)
-	assert.Contains(t, content, `app.Listen(":3000", fiber.ListenConfig{DisableStartupMessage: true})`)
-	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 1)
-	assert.Contains(t, notes[0].Message, "side effects")
+	assert.Contains(t, content, `app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: *flag.Bool("prefork", false, "prefork"), DisableStartupMessage: true})`)
+	assert.Contains(t, content, `app.Listen(":3000", fiberMigrateListenConfig(app))`)
 }
 
 func Test_MigrateConfigListenerFields_ConfigReturnedByAFunction(t *testing.T) {

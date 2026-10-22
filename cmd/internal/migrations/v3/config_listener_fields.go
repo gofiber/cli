@@ -106,6 +106,7 @@ type appStartInfo struct {
 // appPlanner works out the plan.
 type appPlanner struct {
 	plan    *appListenPlan
+	shims   map[*appPackage]*appShimPkg
 	starts  []*appStartInfo
 	sources []*appListenSource
 }
@@ -116,8 +117,9 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 
 	var files []*appFile
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		// only a file that mentions fiber or starts an app can matter
-		if !strings.Contains(content, "fiber") && !strings.Contains(content, ".Listen") {
+		// only a file that mentions fiber or starts an app can matter, and the
+		// file of an earlier run is not the project's code
+		if !strings.Contains(content, "fiber") && !strings.Contains(content, ".Listen") || isShimFile(fi.Path, content) {
 			return content
 		}
 		if f, ok := ix.openFile(fi, content); ok {
@@ -129,7 +131,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		return nil, fmt.Errorf("read the project: %w", err)
 	}
 
-	pl := &appPlanner{plan: &appListenPlan{files: map[string]*appFilePlan{}}}
+	pl := &appPlanner{plan: &appListenPlan{files: map[string]*appFilePlan{}}, shims: map[*appPackage]*appShimPkg{}}
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
@@ -144,6 +146,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 			reason := pl.move(src)
 			appNoteLeftovers(src, reason)
 		}
+		pl.finishShims()
 	}
 	pl.noteUntracked(files)
 	return pl.plan, nil
@@ -223,11 +226,49 @@ func (ip appInPlace) apply() {
 	}
 }
 
+// hasLeftovers reports whether some setting of the source stays where it is
+// after the plan.
+func (src *appListenSource) hasLeftovers(ip appInPlace) bool {
+	return slices.ContainsFunc(src.fields, func(fld *appSourceField) bool {
+		return len(fld.occs) > 0 && !slices.Contains(ip.dropped, fld) && (fld.problem != "" || ip.reason != "")
+	})
+}
+
 // move plans the move of every setting of the source that can move, and
 // returns why none could when it cannot.
+//
+// A setting moves to the call that starts the app. When that is not possible for
+// all of them, the settings stay with the app they belong to (see carry). Only when
+// that cannot be done either do the settings that can move move, and the others
+// stay with a note.
 func (pl *appPlanner) move(src *appListenSource) string {
 	ip := pl.moveInPlace(src)
+	if !src.hasLeftovers(ip) {
+		ip.apply()
+		return ip.reason
+	}
+
+	commit, refusal := pl.carry(src)
+	if commit != nil {
+		commit()
+		for _, fld := range src.fields {
+			fld.problem = ""
+		}
+		return ""
+	}
+
 	ip.apply()
+	if refusal.tell {
+		suffix := "; " + appShimFile + ", which would keep it with the app, is not an option: " + refusal.why
+		for _, fld := range src.fields {
+			if fld.problem != "" {
+				fld.problem += suffix
+			}
+		}
+		if ip.reason != "" {
+			ip.reason += suffix
+		}
+	}
 	return ip.reason
 }
 
