@@ -128,6 +128,24 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 	return out
 }
 
+// rewriteVar turns the call into its v3 form for a source whose settings live in
+// the fiber.ListenConfig variable called name, which holds the fields of
+// ListenConfig that the names list: Listen and Listener take the variable
+// itself, the other calls take its fields next to their own.
+func (s appStart) rewriteVar(name string, fields []string, imports appImports) appStartRewrite {
+	args := s.call.Args
+	if (s.method == appNameListen || s.method == appNameListener) && len(args) == 1 && !s.call.Ellipsis.IsValid() {
+		at := s.file.g.offset(args[0].End())
+		return appStartRewrite{imports: imports, edits: []textEdit{{start: at, end: at, text: ", " + name}}}
+	}
+
+	extras := make([]appListenField, len(fields))
+	for i, field := range fields {
+		extras[i] = appListenField{name: field, value: name + "." + field}
+	}
+	return s.rewrite(extras, imports)
+}
+
 // noteEmptyPaths records the review hint for TLS files that are not literals:
 // the v2 method refused to start when they were empty, and fiber.ListenConfig
 // quietly does something else.

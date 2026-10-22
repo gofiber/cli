@@ -377,28 +377,118 @@ func (src *appListenSource) decide(fld *appSourceField) {
 	fld.value = last.value
 }
 
+// appProblemConditional is why an assignment to a field of the config cannot
+// move to the call that starts the app. A source whose only problem is this one
+// can keep its settings in a fiber.ListenConfig variable (see variableProblem).
+const appProblemConditional = "it is assigned conditionally or outside the function that creates the config"
+
 // assignProblem says why `cfg.Field = value` cannot move, "" when it can: it
 // has to run unconditionally, before the app is created, and not depend on the
 // config itself.
 func (src *appListenSource) assignProblem(as *ast.AssignStmt) string {
 	if src.scope == nil || src.file.parent[as] != src.scope {
-		return "it is assigned conditionally or outside the function that creates the config"
+		return appProblemConditional
 	}
 	for _, c := range src.creations {
 		if c.file != src.file || as.End() > c.call.Pos() {
 			return "it is assigned after fiber.New, which already copied the config"
 		}
 	}
+	if src.dependsOnConfig(as) {
+		return "its value depends on the config"
+	}
+	return ""
+}
 
-	dependsOnConfig := false
+// dependsOnConfig reports whether the value assigned by as reads the variable
+// that holds the config.
+func (src *appListenSource) dependsOnConfig(as *ast.AssignStmt) bool {
+	found := false
 	ast.Inspect(as.Rhs[0], func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && src.isTheVariable(src.file, id) {
-			dependsOnConfig = true
+			found = true
 		}
-		return !dependsOnConfig
+		return !found
 	})
-	if dependsOnConfig {
-		return "its value depends on the config"
+	return found
+}
+
+// wantsVariable reports whether the settings of the source can only move if they
+// are kept in a fiber.ListenConfig variable: a local variable holds the config
+// and the one thing in the way is an assignment that runs conditionally.
+func (src *appListenSource) wantsVariable() bool {
+	conditional := false
+	for _, fld := range src.fields {
+		switch fld.problem {
+		case "":
+		case appProblemConditional:
+			conditional = true
+		default:
+			return false
+		}
+	}
+	return conditional && src.node != nil && src.scope != nil && src.retFn == nil
+}
+
+// declStatement returns the statement that declares the variable holding the
+// config, nil when another statement cannot follow it.
+func (src *appListenSource) declStatement() ast.Stmt {
+	// src.node is the literal, or the type of `var cfg fiber.Config`
+	f := src.file
+	for p := f.parent[src.node]; p != nil; p = f.parent[p] {
+		if stmt, ok := p.(ast.Stmt); ok {
+			if f.inStatementList(stmt) {
+				return stmt
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// variableProblem says why the settings of the source cannot live in a
+// fiber.ListenConfig variable declared right after the config, "" when they can.
+// Every app made from the config and every call that starts one must sit in the
+// code the variable is visible in, and every assignment to a setting must be
+// plain code of the function that declares the config, run before the app is
+// created, so that the variable has the value the config had.
+func (src *appListenSource) variableProblem(decl ast.Stmt, linked []*appStartInfo) string {
+	f := src.file
+	inScope := func(file *appFile, n ast.Node) bool {
+		return file == f && n.Pos() >= decl.End() && n.End() <= src.scope.End()
+	}
+	for _, c := range src.creations {
+		if !inScope(c.file, c.call) {
+			return "the app is created outside the code that sees the config variable"
+		}
+	}
+	for _, s := range linked {
+		if !inScope(s.file, s.call) {
+			return "the call that starts the app is outside the code that sees the config variable"
+		}
+	}
+
+	fn := f.enclosingFuncOf(decl)
+	for _, fld := range src.fields {
+		for _, occ := range fld.occs {
+			if occ.elt >= 0 {
+				continue
+			}
+			as := occ.assign
+			switch {
+			case as == nil:
+				return "it is read from the config"
+			case f.enclosingFuncOf(as) != fn:
+				return "it is assigned inside a function literal"
+			case src.dependsOnConfig(as):
+				return "its value depends on the config"
+			}
+			for _, c := range src.creations {
+				if as.End() > c.call.Pos() {
+					return "it is assigned after fiber.New, which already copied the config"
+				}
+			}
+		}
 	}
 	return ""
 }

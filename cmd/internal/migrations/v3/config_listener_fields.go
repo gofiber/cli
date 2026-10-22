@@ -2,6 +2,7 @@ package v3
 
 import (
 	"fmt"
+	"go/ast"
 	"slices"
 	"strings"
 
@@ -106,20 +107,49 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
-	if len(pl.sources) == 0 {
-		return pl.plan, nil
+	if len(pl.sources) > 0 {
+		for _, f := range files {
+			for _, s := range f.startsIn() {
+				pl.starts = append(pl.starts, &appStartInfo{appStart: s, origins: f.originsOf(s.sel.X, 0, 0)})
+			}
+		}
+
+		for _, src := range pl.sources {
+			reason := pl.move(src)
+			appNoteLeftovers(src, reason)
+		}
 	}
-	for _, f := range files {
-		for _, s := range f.startsIn() {
-			pl.starts = append(pl.starts, &appStartInfo{appStart: s, origins: f.originsOf(s.sel.X, 0, 0)})
+	pl.noteUntracked(files)
+	return pl.plan, nil
+}
+
+// noteUntracked points at the settings that code reads or assigns through a
+// fiber.Config the migration does not follow, such as a struct field or a
+// parameter: they stay, and v3 does not compile them.
+func (pl *appPlanner) noteUntracked(files []*appFile) {
+	followed := map[ast.Node]bool{}
+	for _, src := range pl.sources {
+		for _, fld := range src.fields {
+			for _, occ := range fld.occs {
+				followed[occ.node] = true
+			}
 		}
 	}
 
-	for _, src := range pl.sources {
-		reason := pl.move(src)
-		appNoteLeftovers(src, reason)
+	for _, f := range files {
+		ast.Inspect(f.g.file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || followed[sel] {
+				return true
+			}
+			if v3 := appListenerFieldV3(sel.Sel.Name); v3 != "" && f.kind(sel.X) == appKindConfig {
+				internal.Notef(f.fi, f.g.line(sel.Pos()),
+					"fiber.Config has no %s field in v3: set %s in the fiber.ListenConfig of the call that starts the app (this fiber.Config is not one the migration follows)",
+					sel.Sel.Name, v3)
+			}
+			return true
+		})
 	}
-	return pl.plan, nil
 }
 
 // appMovePlan is the work that moving the settings of one source takes.
@@ -147,7 +177,7 @@ func (src *appListenSource) movableFields() []*appSourceField {
 // move plans the move of every setting of the source that can move, and
 // returns why none could when it cannot.
 func (pl *appPlanner) move(src *appListenSource) string {
-	if len(src.movableFields()) == 0 {
+	if len(src.movableFields()) == 0 && !src.wantsVariable() {
 		return ""
 	}
 	if len(src.creations) == 0 {
@@ -163,6 +193,19 @@ func (pl *appPlanner) move(src *appListenSource) string {
 			return pl.dropCosmetic(src, src.movableFields(), reason)
 		}
 		return reason
+	}
+
+	// assignments that run conditionally keep working on a variable of their own
+	if src.wantsVariable() {
+		why := pl.moveToVariable(src, linked)
+		if why == "" {
+			return ""
+		}
+		for _, fld := range src.fields {
+			if fld.problem == appProblemConditional {
+				fld.problem += ", and a fiber.ListenConfig variable cannot stand in for it: " + why
+			}
+		}
 	}
 
 	// a setting moves only if its value means the same at every call
@@ -210,6 +253,86 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 
 	pl.commit(src, &work, imports)
+	return ""
+}
+
+// moveToVariable keeps the settings of the source in a fiber.ListenConfig
+// variable declared right after the config: the settings of the literal move
+// into it, the assignments to them are made to it, and the calls that start the
+// apps take it. It returns why that cannot be done, and plans nothing then.
+func (pl *appPlanner) moveToVariable(src *appListenSource, linked []*appStartInfo) string {
+	f := src.file
+	g := f.g
+	decl := src.declStatement()
+	if decl == nil {
+		return "the config is declared in a statement that cannot be followed by another"
+	}
+	if why := src.variableProblem(decl, linked); why != "" {
+		return why
+	}
+	for _, s := range linked {
+		if !s.file.walked {
+			return fmt.Sprintf("the call that starts it, in %s, is not part of the migration", s.file.path)
+		}
+	}
+
+	var work appMovePlan
+	name := f.freshName(decl, "listenCfg", nil)
+	names := make([]string, len(src.fields))
+	byElement := map[int]*appSourceField{}
+	for i, fld := range src.fields {
+		names[i] = fld.v3
+		for _, occ := range fld.occs {
+			if occ.elt >= 0 {
+				byElement[occ.elt] = fld
+			} else {
+				work.removal.replaceNode(g, occ.node, name+"."+fld.v3)
+			}
+		}
+	}
+
+	// the settings the literal holds become the literal of the variable
+	var drop []int
+	var held []string
+	if src.lit != nil {
+		for i, el := range src.lit.Elts {
+			fld := byElement[i]
+			if kv, ok := el.(*ast.KeyValueExpr); ok && fld != nil {
+				drop = append(drop, i)
+				held = append(held, fld.v3+": "+g.text(kv.Value))
+			}
+		}
+	}
+	if len(drop) > 0 && !appRemoveElements(g, &work.removal, src.lit, drop, nil) {
+		return "the fiber.Config literal is laid out in a way that cannot be edited safely"
+	}
+
+	imports := map[*appFile]appImports{}
+	importsOf := func(file *appFile) appImports {
+		if imps, seen := imports[file]; seen {
+			return imps
+		}
+		return appImports{reqs: slices.Clone(pl.plan.fileOf(file).imps.reqs)}
+	}
+	srcImports := importsOf(f)
+	declText := name + " := " + srcImports.fiberQualifier(f) + "ListenConfig{" + strings.Join(held, ", ") + "}"
+	imports[f] = srcImports
+	at := g.offset(decl.End())
+	work.removal.replace(at, at, "\n"+declText)
+
+	for _, s := range linked {
+		rw := s.rewriteVar(name, names, importsOf(s.file))
+		if rw.problem != "" {
+			return fmt.Sprintf("the call that starts the app, at line %d, cannot take them: %s", s.file.g.line(s.call.Pos()), rw.problem)
+		}
+		imports[s.file] = rw.imports
+		work.starts = append(work.starts, appMoveStart{start: s, rewrite: rw})
+	}
+
+	pl.commit(src, &work, imports)
+	for _, fld := range src.fields {
+		fld.problem = ""
+	}
 	return ""
 }
 
