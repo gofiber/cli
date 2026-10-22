@@ -105,10 +105,28 @@ type appStartInfo struct {
 
 // appPlanner works out the plan.
 type appPlanner struct {
-	plan    *appListenPlan
-	shims   map[*appPackage]*appShimPkg
-	starts  []*appStartInfo
-	sources []*appListenSource
+	plan *appListenPlan
+	// shims are the registries of the modules, by the directory of their go.mod.
+	shims map[string]*appShimModule
+	// mods remembers the module of a directory.
+	mods map[string]appModuleOf
+	// unknown remembers the first call on a value of unknown type of a file.
+	unknown map[*appFile]int
+	// reads are the reads of removed settings through the config of an app, by the
+	// directory of the go.mod of their module.
+	reads map[string]*appModuleReads
+	// blocked has the modules whose reads the registry cannot serve, with the reason.
+	blocked map[string]string
+	// returned remembers what became of the configs a function returns.
+	returned map[*ast.FuncDecl]*appReturned
+	// followed are the reads and assignments of settings that the migration handled
+	// where a config it follows is held by a variable or handed on.
+	followed map[*ast.SelectorExpr]bool
+	root     string
+	files    []*appFile
+	starts   []*appStartInfo
+	values   []*appValueInfo
+	sources  []*appListenSource
 }
 
 // appPlanListenerFields reads the project and plans the migration.
@@ -131,7 +149,19 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		return nil, fmt.Errorf("read the project: %w", err)
 	}
 
-	pl := &appPlanner{plan: &appListenPlan{files: map[string]*appFilePlan{}}, shims: map[*appPackage]*appShimPkg{}}
+	pl := &appPlanner{
+		plan:     &appListenPlan{files: map[string]*appFilePlan{}},
+		shims:    map[string]*appShimModule{},
+		mods:     map[string]appModuleOf{},
+		unknown:  map[*appFile]int{},
+		reads:    map[string]*appModuleReads{},
+		blocked:  map[string]string{},
+		returned: map[*ast.FuncDecl]*appReturned{},
+		followed: map[*ast.SelectorExpr]bool{},
+		root:     cwd,
+		files:    files,
+	}
+	pl.collectReads()
 	for _, f := range files {
 		pl.sources = append(pl.sources, f.configSources()...)
 	}
@@ -139,6 +169,10 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		for _, f := range files {
 			for _, s := range f.startsIn() {
 				pl.starts = append(pl.starts, &appStartInfo{appStart: s, origins: f.originsOf(s.sel.X, 0, 0)})
+			}
+			for _, v := range f.startValuesIn() {
+				v.origins = f.originsOf(v.sel.X, 0, 0)
+				pl.values = append(pl.values, v)
 			}
 		}
 
@@ -148,6 +182,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		}
 		pl.finishShims()
 	}
+	pl.finishReads()
 	pl.noteUntracked(files)
 	return pl.plan, nil
 }
@@ -157,12 +192,20 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 // parameter: they stay, and v3 does not compile them.
 func (pl *appPlanner) noteUntracked(files []*appFile) {
 	followed := map[ast.Node]bool{}
+	for _, mr := range pl.reads {
+		for _, r := range mr.reads {
+			followed[r.sel] = true
+		}
+	}
 	for _, src := range pl.sources {
 		for _, fld := range src.fields {
 			for _, occ := range fld.occs {
 				followed[occ.node] = true
 			}
 		}
+	}
+	for sel := range pl.followed {
+		followed[sel] = true
 	}
 
 	for _, f := range files {
@@ -242,6 +285,22 @@ func (src *appListenSource) hasLeftovers(ip appInPlace) bool {
 // removed from an app that is never started (see dropDead). Only when neither can
 // be done do the settings that can move move, and the others stay with a note.
 func (pl *appPlanner) move(src *appListenSource) string {
+	// the code reads the settings of the apps of the module from their configs, which
+	// only the registry can give back
+	if mod, ok := pl.moduleOf(src.file); ok && pl.reads[mod.root] != nil {
+		commit, refusal := pl.carry(src)
+		if commit != nil {
+			commit()
+			for _, fld := range src.fields {
+				fld.problem = ""
+			}
+			return ""
+		}
+		if pl.blocked[mod.root] == "" {
+			pl.blocked[mod.root] = refusal.why
+		}
+	}
+
 	ip := pl.moveInPlace(src)
 	if !src.hasLeftovers(ip) {
 		ip.apply()
@@ -249,9 +308,14 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 
 	if ip.never {
-		if commit, _ := pl.dropDead(src); commit != nil {
+		if commit, dropped := pl.dropDead(src); commit != nil {
 			commit()
-			return ip.reason
+			ip.dropped = append(ip.dropped, dropped...)
+			if !src.hasLeftovers(ip) {
+				return ip.reason
+			}
+			_, refusal := pl.carry(src)
+			return src.explain(ip.reason, refusal)
 		}
 	}
 
@@ -265,18 +329,26 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 
 	ip.apply()
-	if refusal.tell {
-		suffix := "; " + appShimFile + ", which would keep it with the app, is not an option: " + refusal.why
-		for _, fld := range src.fields {
-			if fld.problem != "" {
-				fld.problem += suffix
-			}
-		}
-		if ip.reason != "" {
-			ip.reason += suffix
+	return src.explain(ip.reason, refusal)
+}
+
+// explain adds to the reasons why the settings stay the reason why the registry
+// does not keep them with the app, when that is not obvious from the code.
+func (src *appListenSource) explain(reason string, refusal appShimRefusal) string {
+	if !refusal.tell {
+		return reason
+	}
+
+	suffix := "; the registry in " + moduleShimDir + ", which would keep it with the app, is not an option: " + refusal.why
+	for _, fld := range src.fields {
+		if fld.problem != "" {
+			fld.problem += suffix
 		}
 	}
-	return ip.reason
+	if reason != "" {
+		reason += suffix
+	}
+	return reason
 }
 
 // moveInPlace plans the move of the settings of the source to the calls that
@@ -285,11 +357,20 @@ func (pl *appPlanner) moveInPlace(src *appListenSource) appInPlace {
 	if len(src.movableFields()) == 0 && !src.wantsVariable() {
 		return appInPlace{}
 	}
+	if src.escapes && src.escapeWhy != "" {
+		return appInPlace{reason: src.escapeWhy}
+	}
 	if len(src.creations) == 0 {
 		return appInPlace{reason: "this fiber.Config is not handed straight to fiber.New"}
 	}
 	if src.escapes {
 		return appInPlace{reason: "this fiber.Config is also passed on to code that could create another app with it"}
+	}
+	if src.branches {
+		return appInPlace{reason: "this fiber.Config is one of several that the function returns"}
+	}
+	if src.node != nil && src.retFn != nil {
+		return appInPlace{reason: "this fiber.Config is returned from a function, away from the app it creates"}
 	}
 
 	linked, never, reason := pl.linkedStarts(src)

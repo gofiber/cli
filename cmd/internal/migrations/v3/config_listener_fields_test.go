@@ -465,7 +465,7 @@ func Test_MigrateConfigListenerFields_ListenCallsThatCannotTakeTheSettings(t *te
 		{
 			name:   "a config held by a variable",
 			listen: `app.Listen(":3000", listenCfg)`,
-			want:   `app.Listen(":3000", fiberMigrateListenConfig(app, listenCfg))`,
+			want:   `app.Listen(":3000", fibermigrate.ListenConfig(app, listenCfg))`,
 			notes:  1, // the note about the shim
 		},
 		{
@@ -503,12 +503,12 @@ func main() {
 
 			assert.Contains(t, content, "fiber.New(fiber.Config{Prefork: true})", "the setting stays")
 			assert.Contains(t, content, tt.listen, "the call stays")
-			assert.NoFileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
+			assert.NoFileExists(t, filepath.Join(dir, shimFile))
 			require.Len(t, notes, 1)
 			assert.Equal(t, 8, notes[0].Line)
 			assert.Contains(t, notes[0].Message, "EnablePrefork")
 			assert.Contains(t, notes[0].Message, "cannot take them: "+tt.problem)
-			assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
+			assert.Contains(t, notes[0].Message, shimDir)
 		})
 	}
 }
@@ -566,13 +566,13 @@ func second() {
 	assert.Contains(t, config, "var other fiber.Config\nvar otherListen = fiber.ListenConfig{}\n")
 	assert.Contains(t, config, "otherListen.DisableStartupMessage = true")
 	assert.NotContains(t, config, "other.DisableStartupMessage")
-	assert.Contains(t, main, "app := fiberMigrateNew(other, otherListen)")
-	assert.Contains(t, main, `app.Listen(":3002", fiberMigrateListenConfig(app))`)
-	assert.FileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
+	assert.Contains(t, main, "app := fibermigrate.NewApp(other, otherListen)")
+	assert.Contains(t, main, `app.Listen(":3002", fibermigrate.ListenConfig(app))`)
+	assert.FileExists(t, filepath.Join(dir, shimFile))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "main.go", notes[0].File)
-	assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
+	assert.Contains(t, notes[0].Message, shimFile)
 }
 
 func Test_MigrateConfigListenerFields_NotesConfigsItDoesNotFollow(t *testing.T) {
@@ -594,8 +594,8 @@ func (s *server) tune(quiet bool) {
 	s.cfg.DisableStartupMessage = quiet
 }
 
-func describe(cfg fiber.Config, app *fiber.App) {
-	log.Println(cfg.Prefork, app.Config().Network)
+func describe(cfg fiber.Config) {
+	log.Println(cfg.Prefork)
 }
 
 type unrelated struct{ Prefork bool }
@@ -609,11 +609,10 @@ func other(u unrelated) bool { return u.Prefork }
 	assert.Empty(t, out)
 	assert.Equal(t, before, appRead(t, dir, "main.go"))
 	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 3, "the unrelated struct has a Prefork field of its own")
-	assert.Equal(t, []int{14, 18, 18}, []int{notes[0].Line, notes[1].Line, notes[2].Line})
+	require.Len(t, notes, 2, "the unrelated struct has a Prefork field of its own")
+	assert.Equal(t, []int{14, 18}, []int{notes[0].Line, notes[1].Line})
 	assert.Contains(t, notes[0].Message, "DisableStartupMessage")
 	assert.Contains(t, notes[1].Message, "EnablePrefork")
-	assert.Contains(t, notes[2].Message, "ListenerNetwork")
 	assert.Contains(t, notes[0].Message, "is not one the migration follows")
 }
 
@@ -643,13 +642,15 @@ func main() {
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	assert.Contains(t, appRead(t, dir, "app.go"), "return fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: prefork})")
-	assert.Equal(t, "package main\n\nfunc main() {\n\tapp := newApp(true)\n\tapp.Listen(\":3000\", fiberMigrateListenConfig(app))\n}\n", appRead(t, dir, "main.go"))
-	assert.FileExists(t, filepath.Join(dir, "fiber_migrate_listen.go"))
+	assert.Contains(t, appRead(t, dir, "app.go"), "return fibermigrate.NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrefork: prefork})")
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, `"example.com/demo/internal/fibermigrate"`)
+	assert.Contains(t, main, "func main() {\n\tapp := newApp(true)\n\tapp.Listen(\":3000\", fibermigrate.ListenConfig(app))\n}\n")
+	assert.FileExists(t, filepath.Join(dir, shimFile))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "app.go", notes[0].File)
-	assert.Contains(t, notes[0].Message, "fiber_migrate_listen.go")
+	assert.Contains(t, notes[0].Message, shimFile)
 }
 
 func Test_MigrateConfigListenerFields_OtherPackage(t *testing.T) {
@@ -857,8 +858,8 @@ func main() {
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
 	content := appRead(t, dir, "main.go")
-	assert.Contains(t, content, `app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: *flag.Bool("prefork", false, "prefork"), DisableStartupMessage: true})`)
-	assert.Contains(t, content, `app.Listen(":3000", fiberMigrateListenConfig(app))`)
+	assert.Contains(t, content, `app := fibermigrate.NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrefork: *flag.Bool("prefork", false, "prefork"), DisableStartupMessage: true})`)
+	assert.Contains(t, content, `app.Listen(":3000", fibermigrate.ListenConfig(app))`)
 }
 
 func Test_MigrateConfigListenerFields_ConfigReturnedByAFunction(t *testing.T) {
@@ -930,16 +931,19 @@ func main() {
 	assert.Contains(t, main, `go second.Listen(":3001", fiber.ListenConfig{EnablePrefork: os.Getenv("PREFORK") == "1", DisableStartupMessage: true})`)
 	assert.Contains(t, main, `"os"`)
 
-	// the settings that depend on the arguments of the function cannot move, the others do
-	assert.Contains(t, cfg, `fiber.Config{Prefork: prefork}`)
-	assert.Contains(t, main, `fourth.Listen(":3003", fiber.ListenConfig{ListenerNetwork: "tcp"})`)
-	// a method whose receiver is not in scope where the app starts, either
-	assert.Contains(t, cfg, "EnablePrintRoutes: !s.Quiet")
+	// the settings that depend on the arguments of the function, or on the receiver of
+	// the method, cannot move to the call that starts the app: they travel with the
+	// config, which is the config of v2 now
+	assert.Contains(t, cfg, "func ForServer(prefork bool) fibermigrate.Config {\n\treturn fibermigrate.Config{Network: \"tcp\", Prefork: prefork}\n}")
+	assert.Contains(t, cfg, "func (s Settings) Fiber() fibermigrate.Config {\n\treturn fibermigrate.Config{EnablePrintRoutes: !s.Quiet}\n}")
+	assert.Contains(t, main, "third := fibermigrate.New(s.Fiber())")
+	assert.Contains(t, main, `go third.Listen(":3002", fibermigrate.ListenConfig(third))`)
+	assert.Contains(t, main, "fourth := fibermigrate.New(config.ForServer(true))")
+	assert.Contains(t, main, `log.Fatal(fourth.Listen(":3003", fibermigrate.ListenConfig(fourth)))`)
 	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 2)
-	for _, n := range notes {
-		assert.Equal(t, "config/config.go", n.File)
-	}
+	require.Len(t, notes, 1)
+	assert.Equal(t, "main.go", notes[0].File)
+	assert.Contains(t, notes[0].Message, "config.Settings.Fiber, config.ForServer now return fibermigrate.Config")
 }
 
 func Test_MigrateConfigListenerFields_ConfigThatEscapes(t *testing.T) {
@@ -965,5 +969,60 @@ func main() {
 	assert.Equal(t, before, appRead(t, dir, "main.go"))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Contains(t, notes[0].Message, "passed on")
+	assert.Contains(t, notes[0].Message, "the config is passed to other, at line 11 of main.go")
+}
+
+// A config that is stored in a struct, assigned to a field or handed to a function is
+// not followed: its settings stay, and the note says where the config goes.
+func Test_MigrateConfigListenerFields_NotesWhereTheConfigGoes(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"os"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+type Settings struct {
+	Fiber fiber.Config
+}
+
+type Server struct {
+	cfg fiber.Config
+	app *fiber.App
+}
+
+func load() Settings {
+	return Settings{Fiber: fiber.Config{Prefork: os.Getenv("PREFORK") == "1"}}
+}
+
+func newApp(cfg fiber.Config) *fiber.App { return fiber.New(cfg) }
+
+func newServer(prefork bool) *Server {
+	s := &Server{}
+	s.cfg = fiber.Config{Prefork: prefork}
+	s.app = fiber.New(s.cfg)
+	return s
+}
+
+func main() {
+	st := load()
+	fiber.New(st.Fiber).Listen(":3000")
+	newApp(fiber.Config{DisableStartupMessage: true}).Listen(":3001")
+	newServer(true).app.Listen(":3002")
+}
+`)
+	before := appRead(t, dir, "main.go")
+
+	out := appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	assert.Empty(t, out)
+	assert.Equal(t, before, appRead(t, dir, "main.go"))
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 3)
+	assert.Contains(t, notes[0].Message, "(the config is stored in the field Fiber of a struct, slice or map, at line 19 of main.go)")
+	assert.Contains(t, notes[1].Message, "(the config is assigned to s.cfg, at line 26 of main.go)")
+	assert.Contains(t, notes[2].Message, "(the config is passed to newApp, at line 34 of main.go)")
 }

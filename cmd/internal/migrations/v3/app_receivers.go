@@ -16,6 +16,7 @@ const (
 	appKindRouter         // fiber.Router, *fiber.Group
 	appKindHooks          // *fiber.Hooks
 	appKindConfig         // fiber.Config
+	appKindCtx            // fiber.Ctx, *fiber.Ctx
 )
 
 // isRouter reports whether values of the kind have the routing methods (Get,
@@ -142,6 +143,12 @@ func (f *appFile) kindOf(e ast.Expr, depth int) appKind {
 		return f.callKind(x, 0, depth+1)
 	case *ast.SelectorExpr:
 		return f.selectorKind(x, depth+1)
+	case *ast.IndexExpr:
+		if elem, ef := f.elemOfValue(x.X, depth+1); elem != nil {
+			return ef.typeKind(elem, depth+1)
+		}
+	case *ast.SliceExpr:
+		return f.kindOf(x.X, depth+1)
 	}
 	return appKindNone
 }
@@ -160,6 +167,11 @@ func (f *appFile) receiverKind(call *ast.CallExpr, sel *ast.SelectorExpr) appKin
 // bindingKind returns what the declaration b declares.
 func (f *appFile) bindingKind(b appBinding, depth int) appKind {
 	switch {
+	case b.rangeX != nil || b.caseType != nil:
+		if t, tf := b.file.bindingType(b, depth); t != nil {
+			return tf.typeKind(t, depth+1)
+		}
+		return appKindNone
 	case b.typ != nil:
 		return f.typeKind(b.typ, depth)
 	case b.init == nil:
@@ -196,6 +208,8 @@ func (f *appFile) typeKind(t ast.Expr, depth int) appKind {
 			return appKindHooks
 		case appNameConfig:
 			return appKindConfig
+		case ctxTypeCtx:
+			return appKindCtx
 		}
 		return appKindNone
 	}
@@ -225,7 +239,7 @@ func (f *appFile) typeSpecKind(spec *ast.TypeSpec, depth int) appKind {
 		}
 	case *ast.InterfaceType:
 		for _, m := range t.Methods.List {
-			if len(m.Names) == 0 && f.typeKind(m.Type, depth) != appKindNone {
+			if k := f.typeKind(m.Type, depth); len(m.Names) == 0 && (k == appKindApp || k == appKindRouter) {
 				return appKindRouter
 			}
 		}
@@ -272,6 +286,8 @@ func (f *appFile) callKind(call *ast.CallExpr, idx, depth int) appKind {
 			return appKindHooks
 		case recv == appKindApp && fun.Sel.Name == appNameConfig:
 			return appKindConfig
+		case recv == appKindCtx && fun.Sel.Name == ctxTypeApp:
+			return appKindApp
 		}
 	}
 
@@ -439,6 +455,10 @@ func (f *appFile) valueType(e ast.Expr, depth int) (ast.Expr, *appFile) {
 		return b.file.bindingType(b, depth+1)
 	case *ast.CallExpr:
 		return f.callType(x, 0, depth+1)
+	case *ast.IndexExpr:
+		return f.elemOfValue(x.X, depth+1)
+	case *ast.SliceExpr:
+		return f.valueType(x.X, depth+1)
 	case *ast.SelectorExpr:
 		if b, _, ok := f.packageVar(x); ok {
 			return b.file.bindingType(b, depth+1)
@@ -461,6 +481,13 @@ func (f *appFile) valueType(e ast.Expr, depth int) (ast.Expr, *appFile) {
 // bindingType returns the type of the variable that b declares.
 func (f *appFile) bindingType(b appBinding, depth int) (ast.Expr, *appFile) {
 	switch {
+	case b.caseType != nil:
+		return b.caseType, b.file
+	case b.rangeX != nil:
+		if b.rangeKey {
+			return b.file.keyOfValue(b.rangeX, depth+1)
+		}
+		return b.file.elemOfValue(b.rangeX, depth+1)
 	case b.typ != nil:
 		return b.typ, f
 	case b.init == nil:
@@ -483,9 +510,14 @@ func (f *appFile) callType(call *ast.CallExpr, idx, depth int) (ast.Expr, *appFi
 	if f.isNewCall(call) {
 		return nil, nil
 	}
-	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "new" && len(call.Args) == 1 {
+	if id, ok := call.Fun.(*ast.Ident); ok && len(call.Args) > 0 {
 		if _, bound := f.binding(id); !bound {
-			return call.Args[0], f
+			switch id.Name {
+			case "new", "make": // the type is the first argument
+				return call.Args[0], f
+			case mw3BuiltinAppend: // a slice of the type of its first argument
+				return f.valueType(call.Args[0], depth+1)
+			}
 		}
 	}
 	callee, ok := f.calleeOf(call, depth+1)
@@ -569,11 +601,21 @@ type appBinding struct {
 	// scope is the block or function the declaration is visible in, nil for a
 	// package-level variable.
 	scope ast.Node
-	name  string
+	// rangeX is the expression a range statement ranges over, when the binding is
+	// its key or value variable (see rangeKey).
+	rangeX ast.Expr
+	// caseType is the type of a type switch variable in a clause with one type.
+	caseType ast.Expr
+	name     string
 	// index is the position of the name among count names declared together
 	// from a single call.
 	index int
 	count int
+	// rangeKey is set for the key variable of a range statement.
+	rangeKey bool
+	// loop is set for the variables of range statements and type switches, which
+	// hold a different value each time.
+	loop bool
 }
 
 // binding finds the declaration id refers to: a parameter, a local variable or
@@ -581,6 +623,9 @@ type appBinding struct {
 func (f *appFile) binding(id *ast.Ident) (appBinding, bool) {
 	if d, ok := resolveIdent(id.Name, id.Pos(), f.stack(id)); ok {
 		return f.bindingOf(d, id.Name), true
+	}
+	if b, ok := f.loopBinding(id); ok {
+		return b, true
 	}
 
 	// a package-level variable that another file declares
@@ -593,6 +638,96 @@ func (f *appFile) binding(id *ast.Ident) (appBinding, bool) {
 		return appBinding{}, false
 	}
 	return v.binding(), true
+}
+
+// loopBinding finds the range or type switch variable id refers to, which
+// resolveIdent knows to exist but says nothing about.
+func (f *appFile) loopBinding(id *ast.Ident) (appBinding, bool) {
+	for _, node := range slices.Backward(f.stack(id)) {
+		switch n := node.(type) {
+		case *ast.RangeStmt:
+			if n.Tok != token.DEFINE || id.Pos() < n.Body.Pos() {
+				continue
+			}
+			for i, v := range []ast.Expr{n.Key, n.Value} {
+				if isIdentNamed(v, id.Name) {
+					return appBinding{file: f, name: id.Name, count: 1, node: v, scope: n, rangeX: n.X, rangeKey: i == 0, loop: true}, true
+				}
+			}
+		case *ast.CaseClause:
+			ts, ok := f.parent[f.parent[n]].(*ast.TypeSwitchStmt)
+			if !ok {
+				continue
+			}
+			as, isAssign := ts.Assign.(*ast.AssignStmt)
+			if !isAssign || len(as.Lhs) != 1 || !isIdentNamed(as.Lhs[0], id.Name) {
+				continue
+			}
+			b := appBinding{file: f, name: id.Name, count: 1, node: n, scope: n, loop: true}
+			if len(n.List) == 1 {
+				b.caseType = n.List[0]
+			}
+			return b, true
+		}
+	}
+	return appBinding{}, false
+}
+
+// elemOf returns the type of the values of the slice, array, map or channel type
+// t, and the file it is written in.
+func (f *appFile) elemOf(t ast.Expr, depth int) (ast.Expr, *appFile) {
+	if depth > appMaxDepth {
+		return nil, nil
+	}
+	switch x := appStripType(t).(type) {
+	case *ast.ArrayType:
+		return x.Elt, f
+	case *ast.MapType:
+		return x.Value, f
+	case *ast.ChanType:
+		return x.Value, f
+	case *ast.Ident, *ast.SelectorExpr:
+		if td := f.resolveNamedType(x); td != nil {
+			return td.file.elemOf(td.spec.Type, depth+1)
+		}
+	}
+	return nil, nil
+}
+
+// elemOfValue returns the type of the values e holds when it is a slice, array,
+// map or channel, and the file it is written in.
+func (f *appFile) elemOfValue(e ast.Expr, depth int) (ast.Expr, *appFile) {
+	t, tf := f.valueType(e, depth+1)
+	if t == nil {
+		return nil, nil
+	}
+	return tf.elemOf(t, depth+1)
+}
+
+// keyOfValue returns the type of the first variable of a range statement over e
+// when it is not the index of a slice: the key of a map, and the value of a channel.
+func (f *appFile) keyOfValue(e ast.Expr, depth int) (ast.Expr, *appFile) {
+	t, tf := f.valueType(e, depth+1)
+	for range appMaxDepth {
+		if t == nil {
+			return nil, nil
+		}
+		switch x := appStripType(t).(type) {
+		case *ast.MapType:
+			return x.Key, tf
+		case *ast.ChanType:
+			return x.Value, tf
+		case *ast.Ident, *ast.SelectorExpr:
+			td := tf.resolveNamedType(x)
+			if td == nil {
+				return nil, nil
+			}
+			t, tf = td.spec.Type, td.file
+		default:
+			return nil, nil
+		}
+	}
+	return nil, nil
 }
 
 // binding describes the package-level variable.
@@ -790,7 +925,7 @@ func (c appCallee) returnOrigins(idx, depth int) appOrigins {
 // it later.
 func (f *appFile) identOrigins(id *ast.Ident, depth int) appOrigins {
 	b, ok := f.binding(id)
-	if !ok || b.isParam() {
+	if !ok || b.isParam() || b.loop {
 		return appOrigins{}
 	}
 

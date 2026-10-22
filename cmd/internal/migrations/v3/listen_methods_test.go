@@ -197,14 +197,18 @@ func Test_MigrateListenMethods_NotesReceiversItCannotIdentify(t *testing.T) {
 	dir := appProject(t, map[string]string{
 		"main.go": `package main
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"github.com/acme/ext"
+	"github.com/gofiber/fiber/v2"
+)
 
 func main() {
-	apps := []*fiber.App{fiber.New(), fiber.New()}
+	apps := ext.Apps()
 	for _, a := range apps {
 		a.ListenTLS(":443", "cert.pem", "key.pem")
 	}
 	apps[0].ListenTLS(":8443", "cert.pem", "key.pem")
+	_ = fiber.New
 }
 `,
 		// ListenTLS is the name of some other method, and of a function of another package
@@ -235,20 +239,73 @@ func ListenTLS(addr, cert, key string) {}
 	appRun(t, dir, v3.MigrateListenMethods)
 
 	main := appRead(t, dir, "main.go")
-	assert.Contains(t, main, `a.ListenTLS(":443", "cert.pem", "key.pem")`, "the receiver is a range variable: left alone")
-	assert.Contains(t, main, `apps[0].ListenTLS(":8443", "cert.pem", "key.pem")`, "an element of a slice is not followed either")
+	assert.Contains(t, main, `a.ListenTLS(":443", "cert.pem", "key.pem")`, "the receiver is a range variable over a value of a package the module does not have")
+	assert.Contains(t, main, `apps[0].ListenTLS(":8443", "cert.pem", "key.pem")`, "and so is an element of it")
 	other := appRead(t, dir, "other.go")
 	assert.Contains(t, other, `s.ListenTLS(":1", "c", "k")`)
 	assert.Contains(t, other, `tlsutil.ListenTLS(":2", "c", "k")`)
 
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 2)
-	assert.Equal(t, 8, notes[0].Line)
-	assert.Equal(t, 10, notes[1].Line)
+	assert.Equal(t, 11, notes[0].Line)
+	assert.Equal(t, 13, notes[1].Line)
 	for _, n := range notes {
 		assert.Contains(t, n.Message, "ListenTLS was removed in v3")
 		assert.Contains(t, n.Message, "receiver could not be determined")
 	}
+}
+
+// The variables of a range statement and of a type switch, and the elements of
+// slices, arrays and maps, are apps when the type of what they come from says so.
+func Test_MigrateListenMethods_ReceiversInLoopsAndCollections(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Pool []*fiber.App
+
+type Fleet struct {
+	byName map[string]*fiber.App
+	apps   [2]*fiber.App
+}
+
+func (f *Fleet) start() {
+	for name, app := range f.byName {
+		_ = name
+		app.ListenTLS(":1", "c", "k")
+	}
+	f.apps[0].ListenTLS(":2", "c", "k")
+	f.byName["api"].ListenTLS(":3", "c", "k")
+}
+
+func run(pool Pool, v any) {
+	for _, app := range pool {
+		app.ListenTLS(":4", "c", "k")
+	}
+	for i := range pool {
+		pool[i].ListenTLS(":5", "c", "k")
+	}
+	switch app := v.(type) {
+	case *fiber.App:
+		app.ListenTLS(":6", "c", "k")
+	}
+	all := append([]*fiber.App{}, pool...)
+	all[0].ListenTLS(":7", "c", "k")
+	made := make([]*fiber.App, 2)
+	made[1].ListenTLS(":8", "c", "k")
+}
+`)
+
+	appRun(t, dir, v3.MigrateListenMethods)
+
+	content := appRead(t, dir, "main.go")
+	for port := 1; port <= 8; port++ {
+		assert.Contains(t, content, `.Listen(":`+string(rune('0'+port))+`", fiber.ListenConfig{CertFile: "c", CertKeyFile: "k"})`, "the call on port %d", port)
+	}
+	assert.NotContains(t, content, "ListenTLS")
+	assert.Empty(t, internal.DrainNotes(dir))
 }
 
 func Test_MigrateListenMethods_BrokenFile(t *testing.T) {

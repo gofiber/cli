@@ -2,6 +2,7 @@ package listenshim
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -19,7 +20,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-func Test_fiberMigrateListenConfig(t *testing.T) {
+func Test_ListenConfig(t *testing.T) {
 	t.Parallel()
 
 	all := fiber.ListenConfig{
@@ -83,32 +84,33 @@ func Test_fiberMigrateListenConfig(t *testing.T) {
 
 			var app *fiber.App
 			if tt.recorded != nil {
-				app = fiberMigrateNew(fiber.Config{}, *tt.recorded)
+				app = NewApp(fiber.Config{}, *tt.recorded)
 			} else {
 				app = fiber.New()
 			}
 
-			assert.Equal(t, tt.want, fiberMigrateListenConfig(app, tt.explicit...))
+			assert.Equal(t, tt.want, ListenConfig(app, tt.explicit...))
+			runtime.KeepAlive(app)
 		})
 	}
 
 	t.Run("no app", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Equal(t, fiber.ListenConfig{CertFile: "a.pem"}, fiberMigrateListenConfig(nil, fiber.ListenConfig{CertFile: "a.pem"}))
-		assert.Equal(t, fiber.ListenConfig{}, fiberMigrateListenConfig(nil))
+		assert.Equal(t, fiber.ListenConfig{CertFile: "a.pem"}, ListenConfig(nil, fiber.ListenConfig{CertFile: "a.pem"}))
+		assert.Equal(t, fiber.ListenConfig{}, ListenConfig(nil))
 	})
 
 	t.Run("the apps keep their own settings", func(t *testing.T) {
 		t.Parallel()
 
-		first := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: true})
-		second := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{DisableStartupMessage: true})
+		first := NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrefork: true})
+		second := NewApp(fiber.Config{}, fiber.ListenConfig{DisableStartupMessage: true})
 		plain := fiber.New()
 
-		assert.Equal(t, fiber.ListenConfig{EnablePrefork: true}, fiberMigrateListenConfig(first))
-		assert.Equal(t, fiber.ListenConfig{DisableStartupMessage: true}, fiberMigrateListenConfig(second))
-		assert.Equal(t, fiber.ListenConfig{}, fiberMigrateListenConfig(plain))
+		assert.Equal(t, fiber.ListenConfig{EnablePrefork: true}, ListenConfig(first))
+		assert.Equal(t, fiber.ListenConfig{DisableStartupMessage: true}, ListenConfig(second))
+		assert.Equal(t, fiber.ListenConfig{}, ListenConfig(plain))
 		runtime.KeepAlive(first)
 		runtime.KeepAlive(second)
 	})
@@ -117,35 +119,120 @@ func Test_fiberMigrateListenConfig(t *testing.T) {
 		t.Parallel()
 
 		lc := fiber.ListenConfig{EnablePrintRoutes: true}
-		app := fiberMigrateNew(fiber.Config{}, lc)
+		app := NewApp(fiber.Config{}, lc)
 		lc.EnablePrintRoutes = false
 		lc.EnablePrefork = true
 
-		assert.Equal(t, fiber.ListenConfig{EnablePrintRoutes: true}, fiberMigrateListenConfig(app))
+		assert.Equal(t, fiber.ListenConfig{EnablePrintRoutes: true}, ListenConfig(app))
+		runtime.KeepAlive(app)
 	})
 }
 
-func Test_fiberMigrateNew_ConfigIsFibers(t *testing.T) {
+func Test_NewApp_ConfigIsFibers(t *testing.T) {
 	t.Parallel()
 
-	app := fiberMigrateNew(fiber.Config{AppName: "demo", ServerHeader: "x"}, fiber.ListenConfig{})
+	app := NewApp(fiber.Config{AppName: "demo", ServerHeader: "x"}, fiber.ListenConfig{})
 
 	assert.Equal(t, "demo", app.Config().AppName)
 	assert.Equal(t, "x", app.Config().ServerHeader)
 }
 
+// The settings of the config of v2: the same fields, the same meaning, and the
+// other fields of the config are those of v3.
+func Test_Config(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Config:                fiber.Config{AppName: "demo"},
+		Network:               fiber.NetworkTCP4,
+		Prefork:               true,
+		DisableStartupMessage: true,
+		EnablePrintRoutes:     true,
+	}
+
+	t.Run("the settings", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, fiber.ListenConfig{
+			ListenerNetwork:       fiber.NetworkTCP4,
+			EnablePrefork:         true,
+			DisableStartupMessage: true,
+			EnablePrintRoutes:     true,
+		}, cfg.Settings())
+		assert.Equal(t, fiber.ListenConfig{}, Config{}.Settings())
+	})
+
+	t.Run("the fields of fiber.Config are promoted", func(t *testing.T) {
+		t.Parallel()
+
+		c := cfg
+		c.AppName = "other"
+		c.Prefork = false
+
+		assert.Equal(t, "other", c.AppName)
+		assert.Equal(t, fiber.ListenConfig{
+			ListenerNetwork:       fiber.NetworkTCP4,
+			DisableStartupMessage: true,
+			EnablePrintRoutes:     true,
+		}, c.Settings())
+	})
+
+	t.Run("New", func(t *testing.T) {
+		t.Parallel()
+
+		app := New(cfg, Config{Config: fiber.Config{AppName: "second"}, Prefork: false})
+
+		assert.Equal(t, "demo", app.Config().AppName, "only the first config counts, as in v2")
+		assert.Equal(t, cfg.Settings(), ListenConfig(app))
+		runtime.KeepAlive(app)
+	})
+
+	t.Run("New without a config", func(t *testing.T) {
+		t.Parallel()
+
+		app := New()
+
+		assert.Equal(t, fiber.ListenConfig{}, ListenConfig(app))
+		assert.Empty(t, app.Config().AppName)
+	})
+
+	t.Run("ConfigOf gives back what the app was made with", func(t *testing.T) {
+		t.Parallel()
+
+		app := New(cfg)
+		got := ConfigOf(app)
+
+		assert.Equal(t, cfg.Network, got.Network)
+		assert.Equal(t, cfg.Prefork, got.Prefork)
+		assert.Equal(t, cfg.DisableStartupMessage, got.DisableStartupMessage)
+		assert.Equal(t, cfg.EnablePrintRoutes, got.EnablePrintRoutes)
+		assert.Equal(t, "demo", got.AppName)
+		runtime.KeepAlive(app)
+	})
+
+	t.Run("ConfigOf an app that is not recorded", func(t *testing.T) {
+		t.Parallel()
+
+		got := ConfigOf(fiber.New(fiber.Config{AppName: "plain"}))
+
+		assert.Equal(t, "plain", got.AppName)
+		assert.Equal(t, fiber.NetworkTCP4, got.Network, "the network v2 filled in")
+		assert.Equal(t, fiber.ListenConfig{ListenerNetwork: fiber.NetworkTCP4}, got.Settings())
+	})
+}
+
 // The registry must not keep an app alive: it is keyed by weak pointers and
 // forgets an app that was collected.
-func Test_fiberMigrateNew_DoesNotKeepAppsAlive(t *testing.T) {
+func Test_NewApp_DoesNotKeepAppsAlive(t *testing.T) {
 	t.Parallel()
 
 	const apps = 50
 	keys := func() []weak.Pointer[fiber.App] {
 		keys := make([]weak.Pointer[fiber.App], 0, apps)
 		for range apps {
-			app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrefork: true})
+			app := NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrefork: true})
 			key := weak.Make(app)
-			_, found := fiberMigrateListenApps.Load(key)
+			_, found := listenApps.Load(key)
 			require.True(t, found, "the app is recorded while it lives")
 			keys = append(keys, key)
 		}
@@ -155,7 +242,7 @@ func Test_fiberMigrateNew_DoesNotKeepAppsAlive(t *testing.T) {
 	require.Eventually(t, func() bool {
 		runtime.GC()
 		for _, key := range keys {
-			if _, found := fiberMigrateListenApps.Load(key); found {
+			if _, found := listenApps.Load(key); found {
 				return false
 			}
 		}
@@ -166,15 +253,26 @@ func Test_fiberMigrateNew_DoesNotKeepAppsAlive(t *testing.T) {
 	}
 }
 
-func Test_fiberMigrateNew_Concurrent(t *testing.T) {
+// An app without settings costs the registry nothing.
+func Test_NewApp_RecordsSettingsOnly(t *testing.T) {
+	t.Parallel()
+
+	app := NewApp(fiber.Config{}, fiber.ListenConfig{CertFile: "cert.pem"})
+	_, found := listenApps.Load(weak.Make(app))
+
+	assert.False(t, found, "a setting of ListenConfig that is not one of the four is not the registry's")
+	runtime.KeepAlive(app)
+}
+
+func Test_NewApp_Concurrent(t *testing.T) {
 	t.Parallel()
 
 	var wg sync.WaitGroup
 	for i := range 16 {
 		wg.Go(func() {
 			for range 50 {
-				app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrintRoutes: i%2 == 0})
-				got := fiberMigrateListenConfig(app)
+				app := NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrintRoutes: i%2 == 0})
+				got := ListenConfig(app)
 				assert.Equal(t, i%2 == 0, got.EnablePrintRoutes)
 			}
 		})
@@ -244,7 +342,7 @@ func capture(t *testing.T, fn func()) string {
 	return <-out
 }
 
-func listener(t *testing.T) net.Listener {
+func newListener(t *testing.T) net.Listener {
 	t.Helper()
 
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -252,7 +350,7 @@ func listener(t *testing.T) net.Listener {
 	return ln
 }
 
-func Test_fiberMigrateListenConfig_StartupOutput(t *testing.T) { //nolint:paralleltest // the startup message goes to the standard output, which the test redirects
+func Test_ListenConfig_StartupOutput(t *testing.T) { //nolint:paralleltest // the startup message goes to the standard output, which the test redirects
 	tests := []struct {
 		name      string
 		recorded  fiber.ListenConfig
@@ -267,12 +365,12 @@ func Test_fiberMigrateListenConfig_StartupOutput(t *testing.T) { //nolint:parall
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := fiberMigrateNew(fiber.Config{}, tt.recorded)
+			app := NewApp(fiber.Config{}, tt.recorded)
 			app.Get("/shim-route", func(c fiber.Ctx) error { return c.SendString("ok") })
-			ln := listener(t)
+			ln := newListener(t)
 
 			out := capture(t, func() {
-				serve(t, app, func() error { return app.Listener(ln, fiberMigrateListenConfig(app)) })
+				serve(t, app, func() error { return app.Listener(ln, ListenConfig(app)) })
 			})
 
 			assert.Equal(t, tt.banner, strings.Contains(out, "Server started on"), out)
@@ -281,24 +379,24 @@ func Test_fiberMigrateListenConfig_StartupOutput(t *testing.T) { //nolint:parall
 	}
 }
 
-func Test_fiberMigrateListen_Helpers(t *testing.T) { //nolint:paralleltest // the startup message goes to the standard output, which the test redirects
+func Test_Listen_Helpers(t *testing.T) { //nolint:paralleltest // the startup message goes to the standard output, which the test redirects
 	t.Run("listen", func(t *testing.T) {
-		app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{DisableStartupMessage: true})
+		app := NewApp(fiber.Config{}, fiber.ListenConfig{DisableStartupMessage: true})
 
 		out := capture(t, func() {
-			serve(t, app, func() error { return fiberMigrateListen(app, "127.0.0.1:0") })
+			serve(t, app, func() error { return Listen(app, "127.0.0.1:0") })
 		})
 
 		assert.Empty(t, out)
 	})
 
 	t.Run("listen with a config", func(t *testing.T) {
-		app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{EnablePrintRoutes: true})
+		app := NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrintRoutes: true})
 		app.Get("/shim-route", func(c fiber.Ctx) error { return c.SendString("ok") })
 
 		out := capture(t, func() {
 			serve(t, app, func() error {
-				return fiberMigrateListen(app, "127.0.0.1:0", fiber.ListenConfig{DisableStartupMessage: true})
+				return Listen(app, "127.0.0.1:0", fiber.ListenConfig{DisableStartupMessage: true})
 			})
 		})
 
@@ -307,13 +405,51 @@ func Test_fiberMigrateListen_Helpers(t *testing.T) { //nolint:paralleltest // th
 	})
 
 	t.Run("listener", func(t *testing.T) {
-		app := fiberMigrateNew(fiber.Config{}, fiber.ListenConfig{DisableStartupMessage: true})
-		ln := listener(t)
+		app := NewApp(fiber.Config{}, fiber.ListenConfig{DisableStartupMessage: true})
+		ln := newListener(t)
 
 		out := capture(t, func() {
-			serve(t, app, func() error { return fiberMigrateListener(app, ln) })
+			serve(t, app, func() error { return Listener(app, ln) })
 		})
 
 		assert.Empty(t, out)
 	})
+
+	t.Run("the method value of Listen", func(t *testing.T) {
+		app := New(Config{DisableStartupMessage: true})
+		start := ListenFunc(app)
+
+		out := capture(t, func() {
+			serve(t, app, func() error { return start("127.0.0.1:0") })
+		})
+
+		assert.Empty(t, out)
+	})
+
+	t.Run("the method value of Listener", func(t *testing.T) {
+		app := New(Config{DisableStartupMessage: true})
+		start := ListenerFunc(app)
+		ln := newListener(t)
+
+		out := capture(t, func() {
+			serve(t, app, func() error { return start(ln) })
+		})
+
+		assert.Empty(t, out)
+	})
+}
+
+// The config reads JSON the way the config of Fiber v2 did, for code that loads it from a
+// file.
+func Test_Config_JSON(t *testing.T) {
+	t.Parallel()
+
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"prefork": true, "disable_startup_message": true, "enable_print_routes": true, "network": "tcp6", "app_name": "demo"}`), &cfg))
+
+	assert.True(t, cfg.Prefork)
+	assert.True(t, cfg.DisableStartupMessage)
+	assert.True(t, cfg.EnablePrintRoutes)
+	assert.Equal(t, "tcp6", cfg.Network)
+	assert.Equal(t, "demo", cfg.AppName)
 }
