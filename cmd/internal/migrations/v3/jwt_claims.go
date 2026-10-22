@@ -430,11 +430,28 @@ func (p *jwtClaimsPass) selector(sel *ast.SelectorExpr, libs map[string]jwtLib, 
 		p.notefOncef("fields", sel.Pos(), "%s: in v5 the times of the claims (ExpiresAt, IssuedAt, NotBefore) are *jwt.NumericDate, nil for none, "+
 			"with the time in .Time and Unix() on it (v4: int64 seconds, 0 for none), Audience is a jwt.ClaimStrings and Id is called ID", p.g.text(sel))
 	case name == jwtValidMethod && len(libs) > 0 && p.tokenClaimsValid(sel, libs, stack):
+	case name == jwtValidMethod && len(libs) > 0 && jwtIsCalled(sel, stack) && strings.Contains(strings.ToLower(p.g.text(sel.X)), "claim"):
+		p.notefOncef("claims-valid", sel.Pos(), "%s: v5 has no Valid() on MapClaims and RegisteredClaims, and the claims types of this module that had "+
+			"one call it Validate() now: use claims.Validate() for a type that has it, or jwt.NewValidator(jwt.WithIssuedAt()).Validate(claims)", p.g.text(sel))
 	case slices.Contains(jwtVerifyMethods, name) && jwtIsCalled(sel, stack) && len(libs) > 0:
 		p.notefOncef("verify", sel.Pos(), "%s: v5 took the Verify methods of the claims away; the parser checks exp, nbf and (with "+
 			"jwt.WithIssuedAt()) iat, jwt.WithAudience(aud) and jwt.WithIssuer(iss) check the other two, and the claim of a time "+
 			"is read with GetExpirationTime(), GetIssuedAt() or GetNotBefore()", p.g.text(sel))
+	case (name == "Sign" || name == "Verify") && jwtIsCalled(sel, stack) && signingMethodOf(sel.X, libs, stack):
+		p.notefOncef("signing", sel.Pos(), "%s: in v5 a signing method returns the signature as a []byte and verifies one (v4: the base64url "+
+			"string, like Token.Signature, which is a []byte too): encode with base64.RawURLEncoding where the string is needed", p.g.text(sel))
 	}
+}
+
+// signingMethodOf reports whether the expression is a signing method of one of
+// the libraries, jwt.SigningMethodHS256.
+func signingMethodOf(x ast.Expr, libs map[string]jwtLib, stack []ast.Node) bool {
+	inner, ok := x.(*ast.SelectorExpr)
+	if !ok || !strings.HasPrefix(inner.Sel.Name, "SigningMethod") {
+		return false
+	}
+	_, _, pkg := libOf(inner, libs, stack)
+	return pkg
 }
 
 // tokenClaimsValid rewrites token.Claims.Valid(), which v5 took away from the

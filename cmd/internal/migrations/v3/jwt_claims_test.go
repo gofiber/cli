@@ -504,6 +504,42 @@ func valid(token *jwt.Token) error { return token.Claims.Valid() }
 	assert.Equal(t, 1, countOf(messages, "took the Verify methods"), "once per file")
 }
 
+// The signing methods return and verify the signature as bytes in v5, and the claims
+// have no Valid() any more: no rewrite, a note each.
+func Test_MigrateJWTClaims_SigningMethodsAndClaimsValid(t *testing.T) {
+	dir := jwtModule(t, map[string]string{
+		"main.go": jwtMainFile,
+		"helper/helper.go": `package helper
+
+import "github.com/golang-jwt/jwt/v4"
+
+const Issuer = "app"
+
+func sign(signingString string, key []byte) (string, error) {
+	return jwt.SigningMethodHS256.Sign(signingString, key)
+}
+
+func verify(signingString, signature string, key []byte) error {
+	return jwt.SigningMethodHS256.Verify(signingString, signature, key)
+}
+
+func check(token *jwt.Token) error {
+	claims := token.Claims.(jwt.MapClaims)
+	return claims.Valid()
+}
+`,
+	})
+
+	helper := readFile(t, filepath.Join(dir, "helper", "helper.go"))
+	assert.Contains(t, helper, "return jwt.SigningMethodHS256.Sign(signingString, key)")
+	assert.Contains(t, helper, "return claims.Valid()")
+
+	messages := jwtAllNotes(dir)
+	assert.Equal(t, 1, countOf(messages, "a signing method returns the signature as a []byte"), "once per file")
+	assert.Contains(t, messages, "jwt.SigningMethodHS256.Sign: in v5 a signing method returns the signature as a []byte")
+	assert.Contains(t, messages, "claims.Valid: v5 has no Valid() on MapClaims and RegisteredClaims")
+}
+
 // A claims type with a Valid() of its own that embeds no standard claims has no
 // rewrite: v5 asks the type for the getters of the registered claims.
 func Test_MigrateJWTClaims_ClaimsWithoutStandardClaims(t *testing.T) {

@@ -78,7 +78,7 @@ func v2CallbacksContent(ix *appIndex, content string, fi internal.FileInfo, curr
 
 	c := &v2Callbacks{f: f}
 	if stack {
-		c.recover = v2RecoverNames(f)
+		c.recoverNames = v2RecoverNames(f)
 	}
 	ast.Inspect(f.g.file, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -101,9 +101,9 @@ type v2Callbacks struct {
 	f       *appFile
 	edits   editSet
 	imports appImports
-	// recover are the names the file has for the recover middleware, when the
+	// recoverNames are the names the file has for the recover middleware, when the
 	// release asks for the rewrite of its StackTraceHandler.
-	recover []string
+	recoverNames []string
 }
 
 // v2RecoverNames returns the identifiers the file binds the recover middleware to.
@@ -163,7 +163,7 @@ func (c *v2Callbacks) listenHandler(arg ast.Expr) {
 
 // stackTrace adapts the StackTraceHandler of a recover.Config literal.
 func (c *v2Callbacks) stackTrace(lit *ast.CompositeLit) {
-	if len(c.recover) == 0 || !c.isRecoverConfig(lit) {
+	if len(c.recoverNames) == 0 || !c.isRecoverConfig(lit) {
 		return
 	}
 	for _, elt := range lit.Elts {
@@ -182,7 +182,7 @@ func (c *v2Callbacks) isRecoverConfig(lit *ast.CompositeLit) bool {
 		return false
 	}
 	id, ok := sel.X.(*ast.Ident)
-	return ok && slices.Contains(c.recover, id.Name)
+	return ok && slices.Contains(c.recoverNames, id.Name)
 }
 
 // stackTraceHandler adapts one StackTraceHandler, a func(e any), to the
@@ -216,7 +216,7 @@ func (c *v2Callbacks) stackTraceHandler(value ast.Expr) {
 // stackTraceAssigned reports the assignments to a StackTraceHandler field, which
 // this migration cannot follow to the value.
 func (c *v2Callbacks) stackTraceAssigned(assign *ast.AssignStmt) {
-	if len(c.recover) == 0 {
+	if len(c.recoverNames) == 0 {
 		return
 	}
 	for _, lhs := range assign.Lhs {
