@@ -243,27 +243,250 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, buf.String(), "Migrating context methods")
 }
 
-func Test_MigrateContextMethods_RequestCtxNested(t *testing.T) {
+func Test_MigrateContextMethods_Shapes(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "mcmtestnested")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+	ctxRunCases(t, v3.MigrateContextMethods, []ctxCase{
+		{
+			name: "the three accessors",
+			in: `package main
 
-	file := writeTempFile(t, dir, `package main
+import (
+	"context"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func handler(c *fiber.Ctx) error {
+	rc := c.Context()
+	uc := c.UserContext()
+	c.SetUserContext(context.WithValue(uc, "k", "v"))
+	rc.SetUserValue("k", "v")
+	return c.Next()
+}
+`,
+			want: `package main
+
+import (
+	"context"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func handler(c *fiber.Ctx) error {
+	rc := c.RequestCtx()
+	uc := c.Context()
+	c.SetContext(context.WithValue(uc, "k", "v"))
+	rc.SetUserValue("k", "v")
+	return c.Next()
+}
+
+// fiber:context-methods migrated
+`,
+			msg: "Migrating context methods",
+		},
+		{
+			name: "chains, fields and acquired contexts",
+			in: `package main
+
+import (
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
+)
+
+type req struct{ c *fiber.Ctx }
+
+func (r *req) host() string {
+	return string(r.c.Status(fiber.StatusOK).Type("json").Context().Request.Host())
+}
+
+func (r *req) uc() any { return r.c.UserContext().Value("k") }
+
+func TestAcquire(t *testing.T) {
+	app := fiber.New()
+	ctx := app.AcquireCtx(&fasthttp.RequestCtx{})
+	_ = ctx.Context().Request.Header.Method()
+	_ = ctx.UserContext()
+}
+`,
+			want: `package main
+
+import (
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
+)
+
+type req struct{ c *fiber.Ctx }
+
+func (r *req) host() string {
+	return string(r.c.Status(fiber.StatusOK).Type("json").RequestCtx().Request.Host())
+}
+
+func (r *req) uc() any { return r.c.Context().Value("k") }
+
+func TestAcquire(t *testing.T) {
+	app := fiber.New()
+	ctx := app.AcquireCtx(&fasthttp.RequestCtx{})
+	_ = ctx.RequestCtx().Request.Header.Method()
+	_ = ctx.Context()
+}
+
+// fiber:context-methods migrated
+`,
+			msg: "Migrating context methods",
+		},
+		{
+			name: "arguments with parentheses",
+			in: `package main
+
 import "github.com/gofiber/fiber/v2"
+
+func status(s string) int { return 200 }
+
+func handler(c *fiber.Ctx) error {
+	c.Status(status("a)b")).Type("json").Context().SetBodyStreamWriter(nil)
+	c.Status(status(")")).Context().SetStatusCode(200)
+	return nil
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func status(s string) int { return 200 }
+
+func handler(c *fiber.Ctx) error {
+	c.Status(status("a)b")).Type("json").RequestCtx().SetBodyStreamWriter(nil)
+	c.Status(status(")")).RequestCtx().SetStatusCode(200)
+	return nil
+}
+
+// fiber:context-methods migrated
+`,
+			msg: "Migrating context methods",
+		},
+		{
+			name: "aliased import",
+			in: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+func handler(c *f.Ctx) error {
+	_ = c.Context()
+	return c.UserContext().Err()
+}
+`,
+			want: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+func handler(c *f.Ctx) error {
+	_ = c.RequestCtx()
+	return c.Context().Err()
+}
+
+// fiber:context-methods migrated
+`,
+			msg: "Migrating context methods",
+		},
+		{
+			name: "other receivers stay",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type scope struct{}
+
+func (scope) SetContext(k, v string) {}
+func (scope) Context() string         { return "" }
+
+func handler(c *fiber.Ctx) error {
+	var sc scope
+	sc.SetContext("path", c.Path())
+	_ = sc.Context()
+	rc := c.Context()
+	_ = rc
+	return nil
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type scope struct{}
+
+func (scope) SetContext(k, v string) {}
+func (scope) Context() string        { return "" }
+
+func handler(c *fiber.Ctx) error {
+	var sc scope
+	sc.SetContext("path", c.Path())
+	_ = sc.Context()
+	rc := c.RequestCtx()
+	_ = rc
+	return nil
+}
+
+// fiber:context-methods migrated
+`,
+			msg: "Migrating context methods",
+		},
+		{
+			name: "a context that has SetContext already is the v3 one",
+			in: `package main
+
+import (
+	"context"
+
+	"github.com/gofiber/fiber/v3"
+)
+
 func handler(c fiber.Ctx) error {
-    c.Foo(bar(1)).Context()
-    c.Foo("a)b").Context()
-    return nil
-}`)
+	c.SetContext(context.Background())
+	_ = c.Context()
+	return nil
+}
+`,
+			notes: []string{"main.go:11: this file calls SetContext on a fiber context"},
+		},
+		{
+			name: "unknown receiver is reported",
+			in: `package main
 
-	var buf bytes.Buffer
-	cmd := newCmd(&buf)
-	require.NoError(t, v3.MigrateContextMethods(cmd, dir, nil, nil))
+import (
+	"example.com/web"
 
-	content := readFile(t, file)
-	assert.Equal(t, 2, strings.Count(content, ".RequestCtx()"))
-	assert.NotContains(t, content, ".Context()")
-	assert.Contains(t, buf.String(), "Migrating context methods")
+	"github.com/gofiber/fiber/v2"
+)
+
+func handler(c *fiber.Ctx) error {
+	ctx := web.Current(c)
+	_ = ctx.Context()
+	_ = ctx.UserContext()
+	return nil
+}
+`,
+			notes: []string{"main.go:12: ctx.UserContext was renamed Context in Fiber v3"},
+		},
+		{
+			name: "no fiber import",
+			in: `package main
+
+type ctx struct{}
+
+func (ctx) UserContext()           {}
+func (ctx) SetUserContext(any)     {}
+func (ctx) Context()               {}
+func handler(c ctx) {
+	c.UserContext()
+	c.SetUserContext(nil)
+	c.Context()
+}
+`,
+		},
+	})
 }

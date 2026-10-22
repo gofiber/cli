@@ -526,48 +526,78 @@ func replaceCall(src, name string, repl func(call string, args []string) string)
 	return b.String()
 }
 
-// identHasType reports whether the identifier appears with the given type in the
-// source. The type comparison ignores whether the identifier is a pointer.
+// identHasType reports whether the identifier is declared with the given type
+// somewhere in the source: as a parameter, result, struct field or variable. The
+// type comparison ignores whether the identifier is a pointer. A type of the
+// fiber package ("fiber.Ctx") matches under whatever name the source imports the
+// package by.
 func identHasType(src, ident, typ string) bool {
-	re := regexp.MustCompile(fmt.Sprintf(`\b%[1]s\s*\*?%[2]s\b`, regexp.QuoteMeta(ident), regexp.QuoteMeta(typ)))
-	return re.MatchString(src)
+	env := ctxEnvFor(src)
+	if env == nil {
+		return false
+	}
+
+	wanted := ctxSpellings(env, typ)
+	typs, _ := env.declsNamed(ident)
+	return slices.ContainsFunc(typs, func(t ast.Expr) bool {
+		return slices.Contains(wanted, ctxTypeString(t))
+	})
 }
 
-// identAssignedFrom reports whether the identifier is assigned from a function
-// matching the provided pattern.
+// identAssignedFrom reports whether the identifier is assigned, or declared with,
+// a value that starts with a call matching the provided pattern. A "fiber\."
+// in the pattern matches the name the source imports the fiber package by.
 func identAssignedFrom(src, ident, fnPattern string) bool {
-	re := regexp.MustCompile(fmt.Sprintf(`\b%[1]s\s*:?[=]\s*%[2]s`, regexp.QuoteMeta(ident), fnPattern))
-	return re.MatchString(src)
+	env := ctxEnvFor(src)
+	if env == nil {
+		return false
+	}
+
+	var names []string
+	for _, name := range env.names {
+		if name != "." {
+			names = append(names, regexp.QuoteMeta(name))
+		}
+	}
+	if len(names) > 0 {
+		fnPattern = strings.ReplaceAll(fnPattern, `fiber\.`, "(?:"+strings.Join(names, "|")+`)\.`)
+	}
+	re, err := regexp.Compile(`^\s*(?:` + fnPattern + `)`)
+	if err != nil {
+		return false
+	}
+
+	_, inits := env.declsNamed(ident)
+	return slices.ContainsFunc(inits, func(init ast.Expr) bool {
+		return re.MatchString(env.g.text(init))
+	})
 }
 
 // isFiberApp reports whether ident references a Fiber application instance.
 func isFiberApp(src, ident string) bool {
-	if identHasType(src, ident, "fiber.App") {
-		return true
-	}
-	return identAssignedFrom(src, ident, "fiber\\.New\\(")
+	return identHasType(src, ident, "fiber.App") ||
+		identAssignedFrom(src, ident, `fiber\.New\(`) ||
+		ctxFileDeclares(src, ident, ctxTypeApp)
 }
 
 // isFiberGroup reports whether ident references a Fiber route group.
 func isFiberGroup(src, ident string) bool {
-	if identHasType(src, ident, "fiber.Group") {
-		return true
-	}
-	return identAssignedFrom(src, ident, "\\w+\\.Group\\(")
+	return identHasType(src, ident, "fiber.Group") ||
+		identAssignedFrom(src, ident, `\w+\.Group\(`) ||
+		ctxFileDeclares(src, ident, ctxTypeGroup)
 }
 
 // isFiberRouter reports whether ident implements a Fiber routing interface or
 // is a concrete router such as an App or Group.
 func isFiberRouter(src, ident string) bool {
-	if identHasType(src, ident, "fiber.Router") || identHasType(src, ident, "fiber.Registering") {
-		return true
-	}
-	return isFiberApp(src, ident) || isFiberGroup(src, ident)
+	return identHasType(src, ident, "fiber.Router") || identHasType(src, ident, "fiber.Registering") ||
+		ctxFileDeclares(src, ident, "Router", "Registering") ||
+		isFiberApp(src, ident) || isFiberGroup(src, ident)
 }
 
 // isFiberCtx reports whether ident references a Fiber request context.
 func isFiberCtx(src, ident string) bool {
-	return identHasType(src, ident, "fiber.Ctx")
+	return identHasType(src, ident, "fiber.Ctx") || ctxFileDeclares(src, ident, ctxTypeCtx)
 }
 
 func addImport(content, path string) string {

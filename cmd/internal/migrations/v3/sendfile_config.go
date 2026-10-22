@@ -12,12 +12,20 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// ctxDownload is the Ctx method that sends a file as an attachment.
+const ctxDownload = "Download"
+
 // MigrateSendFileConfig turns the optional compress flag of Ctx.SendFile into
 // the SendFile config struct. v2 always served byte ranges, v3 only does with
 // ByteRange set, so the migrated calls set it to keep range requests (media
-// seeking, resumed downloads) working.
+// seeking, resumed downloads) working. Download has no config in v3 and so no
+// byte ranges either: it is reported.
 func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateSendFileContent)
+	run := newCtxRun()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateSendFileContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate SendFile calls: %w", err)
 	}
@@ -29,8 +37,8 @@ func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateSendFileContent(content string, fi internal.FileInfo) string {
-	if !strings.Contains(content, "SendFile") {
+func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) string {
+	if !strings.Contains(content, "SendFile") && !strings.Contains(content, ctxDownload) {
 		return content
 	}
 	names := fiberNames(content)
@@ -42,6 +50,8 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
+	env := newCtxEnv(g, names, run.siblings(fi, g)...)
+	noter := newCtxNoter(fi, g, run)
 	var edits editSet
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -49,16 +59,29 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "SendFile" {
+		if !ok {
 			return true
 		}
 
-		if isFiberCtxExpr(sel.X, names, stack) {
-			rewriteSendFileCall(g, &edits, fi, call, names, stack)
-		} else if len(call.Args) == 2 && isBoolLiteral(call.Args[1]) {
-			internal.Notef(fi, g.line(call.Pos()),
-				"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s.SendFile{Compress: %s, ByteRange: true}",
-				g.text(call.Args[1]), names[0], g.text(call.Args[1]))
+		switch sel.Sel.Name {
+		case "SendFile":
+			switch env.receiverKind(sel, stack) {
+			case ctxYes:
+				rewriteSendFileCall(g, &edits, fi, call, names, stack)
+			case ctxUnknown:
+				if len(call.Args) == 2 && isBoolLiteral(call.Args[1]) {
+					internal.Notef(fi, g.line(call.Pos()),
+						"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s{Compress: %s, ByteRange: true}",
+						g.text(call.Args[1]), ctxQualifier(names)+"SendFile", g.text(call.Args[1]))
+				}
+			case ctxNo:
+			}
+		case ctxDownload:
+			if env.receiverKind(sel, stack) == ctxYes {
+				noter.oncef("download", sel.Pos(),
+					"%s no longer serves byte ranges (resumable downloads) in Fiber v3. Where that matters, call %s.Attachment(name), then %s.SendFile(path, %sSendFile{ByteRange: true})",
+					g.text(sel), g.text(sel.X), g.text(sel.X), env.qual(""))
+			}
 		}
 		return true
 	})
@@ -69,7 +92,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 // rewriteSendFileCall schedules the edits that move the arguments of a
 // Ctx.SendFile call to the config struct.
 func rewriteSendFileCall(g *goSource, edits *editSet, fi internal.FileInfo, call *ast.CallExpr, names []string, stack []ast.Node) {
-	cfgType := names[0] + ".SendFile"
+	cfgType := ctxQualifier(names) + "SendFile"
 
 	switch {
 	case len(call.Args) == 0:
@@ -106,14 +129,14 @@ func isSendFileConfig(e ast.Expr, names []string, stack []ast.Node, depth int) b
 	case *ast.UnaryExpr:
 		return x.Op == token.AND && isSendFileConfig(x.X, names, stack, depth+1)
 	case *ast.CompositeLit:
-		return x.Type != nil && isFiberType(x.Type, names, "SendFile")
+		return x.Type != nil && ctxIsFiberType(x.Type, names, "SendFile")
 	case *ast.Ident:
 		d, ok := resolveIdent(x.Name, x.Pos(), stack)
 		if !ok {
 			return false
 		}
 		if d.typ != nil {
-			return isFiberType(d.typ, names, "SendFile")
+			return ctxIsFiberType(d.typ, names, "SendFile")
 		}
 		return d.init != nil && isSendFileConfig(d.init, names, stack, depth+1)
 	}

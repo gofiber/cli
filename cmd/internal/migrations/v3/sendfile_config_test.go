@@ -305,3 +305,113 @@ func handler(c *fiber.Ctx) error {
 	require.Len(t, notes, 1)
 	assert.Contains(t, notes[0].Message, "does not parse")
 }
+
+func Test_MigrateSendFileConfig_Receivers(t *testing.T) {
+	t.Parallel()
+
+	ctxRunCases(t, v3.MigrateSendFileConfig, []ctxCase{
+		{
+			name: "contexts held in fields and acquired",
+			in: `package main
+
+import (
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
+)
+
+type files struct{ c *fiber.Ctx }
+
+func (f files) index() error { return f.c.SendFile("./index.html", true) }
+
+func (f files) movie() error { return f.c.SendFile("./movie.mp4") }
+
+func TestSend(t *testing.T) {
+	app := fiber.New()
+	ctx := app.AcquireCtx(&fasthttp.RequestCtx{})
+	_ = ctx.SendFile("./a.txt", false)
+}
+`,
+			want: `package main
+
+import (
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
+)
+
+type files struct{ c *fiber.Ctx }
+
+func (f files) index() error {
+	return f.c.SendFile("./index.html", fiber.SendFile{Compress: true, ByteRange: true})
+}
+
+func (f files) movie() error { return f.c.SendFile("./movie.mp4", fiber.SendFile{ByteRange: true}) }
+
+func TestSend(t *testing.T) {
+	app := fiber.New()
+	ctx := app.AcquireCtx(&fasthttp.RequestCtx{})
+	_ = ctx.SendFile("./a.txt", fiber.SendFile{ByteRange: true})
+}
+`,
+			msg: "Migrating SendFile compress flag",
+		},
+		{
+			name: "Download is reported once per file",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func report(c *fiber.Ctx) error {
+	return c.Download("./report.pdf")
+}
+
+func export(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusOK).Download("./export.csv", "data.csv")
+}
+`,
+			notes: []string{"main.go:6: c.Download no longer serves byte ranges"},
+		},
+		{
+			name: "Download of another receiver is not reported",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type store struct{}
+
+func (store) Download(name string) error { return nil }
+
+func fetch(c *fiber.Ctx) error {
+	var s store
+	return s.Download("x")
+}
+`,
+		},
+		{
+			name: "aliased import",
+			in: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+func report(c *f.Ctx) error {
+	_ = c.Download("./report.pdf")
+	return c.SendFile("./report.pdf", true)
+}
+`,
+			want: `package main
+
+import f "github.com/gofiber/fiber/v2"
+
+func report(c *f.Ctx) error {
+	_ = c.Download("./report.pdf")
+	return c.SendFile("./report.pdf", f.SendFile{Compress: true, ByteRange: true})
+}
+`,
+			msg:   "Migrating SendFile compress flag",
+			notes: []string{"main.go:6: c.Download no longer serves byte ranges"},
+		},
+	})
+}
