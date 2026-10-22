@@ -69,6 +69,37 @@ func handler(c *Ctx) error {
 `,
 			msg: "Migrating generic helpers",
 		},
+		{
+			name: "a dropped error, and a variable that has the name of the helper",
+			in: `package main
+
+import . "github.com/gofiber/fiber/v2"
+
+func handler(c *Ctx) error {
+	id, _ := c.ParamsInt("id")
+	Query := id
+	page := c.QueryInt("page", 1)
+	_, _ = Query, page
+	return nil
+}
+`,
+			want: `package main
+
+import (
+	. "github.com/gofiber/fiber/v2"
+	fiberv3 "github.com/gofiber/fiber/v2"
+)
+
+func handler(c *Ctx) error {
+	id := Params[int](c, "id")
+	Query := id
+	page := fiberv3.Query[int](c, "page", 1)
+	_, _ = Query, page
+	return nil
+}
+`,
+			msg: "Migrating generic helpers",
+		},
 	})
 }
 
