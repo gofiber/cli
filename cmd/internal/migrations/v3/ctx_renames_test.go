@@ -44,7 +44,8 @@ func handler(c *fiber.Ctx) error {
 	return c.AutoFormat(fiber.Map{"message": "hello"})
 }
 `,
-			msg: "Migrating context method renames",
+			msg:   "Migrating context method renames",
+			notes: []string{"main.go:9: AutoFormat negotiates the same formats as Format did"},
 		},
 		{
 			name: "Protocol and Hostname",
@@ -149,7 +150,8 @@ func (r req) url() string { return r.c.Scheme() + "://" + r.c.Host() }
 
 func (r req) body() error { return r.c.AutoFormat("x") }
 `,
-			msg: "Migrating context method renames",
+			msg:   "Migrating context method renames",
+			notes: []string{"main.go:9: AutoFormat negotiates the same formats as Format did"},
 		},
 		{
 			name: "other receivers stay",

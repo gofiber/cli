@@ -27,7 +27,11 @@ const (
 //
 // Only methods of a fiber context are rewritten.
 func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateRedirectContent)
+	run := newCtxRunNotes()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateRedirectContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate redirect methods: %w", err)
 	}
@@ -39,7 +43,7 @@ func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-func migrateRedirectContent(content string, fi internal.FileInfo) string {
+func migrateRedirectContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
 	if !strings.Contains(content, ctxRedirect) {
 		return content
 	}
@@ -53,7 +57,7 @@ func migrateRedirectContent(content string, fi internal.FileInfo) string {
 	}
 
 	env := newCtxEnv(g, names)
-	noter := newCtxNoter(fi, g)
+	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
@@ -92,7 +96,6 @@ func migrateRedirectContent(content string, fi internal.FileInfo) string {
 		return true
 	})
 
-	noter.flush()
 	return plan.apply(content)
 }
 
@@ -128,8 +131,8 @@ func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.Cal
 	hasStatus := len(call.Args) > statusAt
 	if !hasStatus {
 		noter.oncef("redirect-status", sel.Pos(),
-			"Redirect().%s answers 303 See Other unless a status is set; Fiber v2 answered 302 Found: add .Status(%s) where 302 matters",
-			target.method, env.qual("StatusFound"))
+			"A redirect without a status answers 303 See Other in Fiber v3, where v2 answered 302 Found: add .Status(%s) to the ones where 302 matters",
+			env.qual("StatusFound"))
 	}
 
 	// Only the name changes while the arguments stay where they are.

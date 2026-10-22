@@ -50,25 +50,47 @@ func ctxCommentsIn(g *goSource, from, to token.Pos) []string {
 	return out
 }
 
-// ctxNoter collects the notes of one file. A behavior change that applies to
-// every use of an API is reported once, at the first use; the notes of
-// constructs that need a look by hand are reported at each of them.
-type ctxNoter struct {
-	g     *goSource
-	fi    internal.FileInfo
+// ctxRunNotes collects what a migration has to say once for the whole project
+// rather than at each place: a behavior change that applies to every use of an
+// API is reported at its first use, with the number of the others.
+type ctxRunNotes struct {
 	kinds map[string]*ctxKindNote
 	order []string
 }
 
-// ctxKindNote is the first use of a kind of note, and how often it was hit.
+// ctxKindNote is the first place of a kind of note, and how many places there are.
 type ctxKindNote struct {
+	file    string
 	message string
 	line    int
-	count   int
+	places  int
 }
 
-func newCtxNoter(fi internal.FileInfo, g *goSource) *ctxNoter {
-	return &ctxNoter{fi: fi, g: g, kinds: map[string]*ctxKindNote{}}
+func newCtxRunNotes() *ctxRunNotes {
+	return &ctxRunNotes{kinds: map[string]*ctxKindNote{}}
+}
+
+// report records the collected notes for the project in root.
+func (r *ctxRunNotes) report(root string) {
+	for _, kind := range r.order {
+		k := r.kinds[kind]
+		msg := k.message
+		if k.places > 1 {
+			msg += fmt.Sprintf(" (%d more in this project)", k.places-1)
+		}
+		internal.AddNote(root, internal.Note{File: k.file, Line: k.line, Message: msg})
+	}
+}
+
+// ctxNoter hands the notes of one file to the internal package.
+type ctxNoter struct {
+	g   *goSource
+	run *ctxRunNotes
+	fi  internal.FileInfo
+}
+
+func newCtxNoter(fi internal.FileInfo, g *goSource, run *ctxRunNotes) *ctxNoter {
+	return &ctxNoter{fi: fi, g: g, run: run}
 }
 
 // notef records a note for the construct at pos.
@@ -76,27 +98,15 @@ func (n *ctxNoter) notef(pos token.Pos, format string, args ...any) {
 	internal.Notef(n.fi, n.g.line(pos), format, args...)
 }
 
-// oncef records a note of the given kind for the construct at pos. Only the
-// first one of a file is reported, with the number of others.
+// oncef records a note of the given kind for the construct at pos. Only the first
+// place of a kind in the project is reported, with the number of the others.
 func (n *ctxNoter) oncef(kind string, pos token.Pos, format string, args ...any) {
-	if k, seen := n.kinds[kind]; seen {
-		k.count++
+	if k, seen := n.run.kinds[kind]; seen {
+		k.places++
 		return
 	}
-	n.kinds[kind] = &ctxKindNote{line: n.g.line(pos), message: fmt.Sprintf(format, args...), count: 1}
-	n.order = append(n.order, kind)
-}
-
-// flush reports the notes recorded with once.
-func (n *ctxNoter) flush() {
-	for _, kind := range n.order {
-		k := n.kinds[kind]
-		msg := k.message
-		if k.count > 1 {
-			msg += fmt.Sprintf(" (%d more in this file)", k.count-1)
-		}
-		internal.Notef(n.fi, k.line, "%s", msg)
-	}
+	n.run.kinds[kind] = &ctxKindNote{file: n.fi.Rel, line: n.g.line(pos), message: fmt.Sprintf(format, args...), places: 1}
+	n.run.order = append(n.run.order, kind)
 }
 
 // ctxImportName returns the name under which src imports path: the alias, or

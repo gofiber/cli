@@ -69,7 +69,7 @@ func handler(c *fiber.Ctx) error {
 }
 `,
 			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:14: Redirect().To answers 303 See Other unless a status is set"},
+			notes: []string{"main.go:14: A redirect without a status answers 303 See Other"},
 		},
 		{
 			name: "RedirectBack",
@@ -104,7 +104,7 @@ func handler(c *fiber.Ctx) error {
 }
 `,
 			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:7: Redirect().Back answers 303 See Other unless a status is set"},
+			notes: []string{"main.go:7: A redirect without a status answers 303 See Other"},
 		},
 		{
 			name: "RedirectToRoute",
@@ -151,7 +151,7 @@ func handler(c *fiber.Ctx) error {
 }
 `,
 			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:8: Redirect().Route answers 303 See Other unless a status is set"},
+			notes: []string{"main.go:8: A redirect without a status answers 303 See Other"},
 		},
 		{
 			name: "params that are not a literal may hold queries",
@@ -172,7 +172,7 @@ func handler(c *fiber.Ctx, params fiber.Map) error {
 }
 `,
 			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:6: RedirectToRoute took a \"queries\" entry", "main.go:6: Redirect().Route answers 303"},
+			notes: []string{"main.go:6: RedirectToRoute took a \"queries\" entry", "main.go:6: A redirect without a status answers 303"},
 		},
 		{
 			name: "aliased import",

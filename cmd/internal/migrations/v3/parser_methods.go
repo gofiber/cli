@@ -30,9 +30,11 @@ const ctxAllParams = "AllParams"
 // Only methods of a fiber context are rewritten.
 func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	methods := []string{"BodyParser", "CookieParser", "ParamsParser", "QueryParser", ctxAllParams}
+	run := newCtxRunNotes()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return ctxMigrateParserCalls(content, fi, methods)
+		return ctxMigrateParserCalls(content, fi, run, methods)
 	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate parser methods: %w", err)
 	}
@@ -46,7 +48,7 @@ func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 
 // ctxMigrateParserCalls rewrites the calls of the given parser methods of the
 // request context, and reports those whose receiver it cannot tell.
-func ctxMigrateParserCalls(content string, fi internal.FileInfo, methods []string) string {
+func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRunNotes, methods []string) string {
 	if !ctxContainsAny(content, methods...) {
 		return content
 	}
@@ -60,7 +62,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, methods []strin
 	}
 
 	env := newCtxEnv(g, names)
-	noter := newCtxNoter(fi, g)
+	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {

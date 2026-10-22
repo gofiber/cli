@@ -21,7 +21,11 @@ const ctxDownload = "Download"
 // seeking, resumed downloads) working. Download has no config in v3 and so no
 // byte ranges either: it is reported.
 func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateSendFileContent)
+	run := newCtxRunNotes()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateSendFileContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate SendFile calls: %w", err)
 	}
@@ -33,7 +37,7 @@ func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateSendFileContent(content string, fi internal.FileInfo) string {
+func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
 	if !strings.Contains(content, "SendFile") && !strings.Contains(content, ctxDownload) {
 		return content
 	}
@@ -47,7 +51,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 	}
 
 	env := newCtxEnv(g, names)
-	noter := newCtxNoter(fi, g)
+	noter := newCtxNoter(fi, g, run)
 	var edits editSet
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -82,7 +86,6 @@ func migrateSendFileContent(content string, fi internal.FileInfo) string {
 		return true
 	})
 
-	noter.flush()
 	return edits.apply(content)
 }
 

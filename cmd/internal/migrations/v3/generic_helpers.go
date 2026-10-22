@@ -38,7 +38,11 @@ const ctxParamsInt = "ParamsInt"
 // fiber.Params[int](c, key, default), error(nil), because v2 never returned an
 // error then. Only methods of a fiber context are rewritten.
 func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateGenericHelpersContent)
+	run := newCtxRunNotes()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateGenericHelpersContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate generic helpers: %w", err)
 	}
@@ -50,7 +54,7 @@ func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateGenericHelpersContent(content string, fi internal.FileInfo) string {
+func migrateGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
 	if !ctxContainsAny(content, ctxParamsInt, "QueryInt", "QueryFloat", "QueryBool") {
 		return content
 	}
@@ -64,7 +68,7 @@ func migrateGenericHelpersContent(content string, fi internal.FileInfo) string {
 	}
 
 	env := newCtxEnv(g, names)
-	noter := newCtxNoter(fi, g)
+	noter := newCtxNoter(fi, g, run)
 	strconvName := ctxImportName(content, "strconv", "strconv")
 	if strconvName == "" {
 		strconvName = "strconv"
@@ -109,7 +113,6 @@ func migrateGenericHelpersContent(content string, fi internal.FileInfo) string {
 		return true
 	})
 
-	noter.flush()
 	out := plan.apply(content)
 	if needStrconv {
 		out = ctxAddImport(out, "strconv", "strconv")

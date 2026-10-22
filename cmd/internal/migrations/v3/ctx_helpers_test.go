@@ -2,6 +2,8 @@ package v3_test
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +22,8 @@ type ctxMigrateFn = func(cmd *cobra.Command, cwd string, curr, target *semver.Ve
 // ctxCase is one migration run on a single file.
 type ctxCase struct {
 	name string
+	// file is the name of the file, main.go when empty.
+	file string
 	// in is the v2 source. § stands for a backquote, which a raw string literal
 	// can not hold.
 	in string
@@ -36,13 +40,18 @@ func ctxSrc(s string) string {
 	return strings.ReplaceAll(s, "§", "`")
 }
 
-// ctxRun runs the migration on a project that has one file, main.go, and
-// returns the file afterwards, what the migration printed and its notes.
-func ctxRun(t *testing.T, migrate ctxMigrateFn, in string) (out, printed string, notes []internal.Note) {
+// ctxRun runs the migration on a project that has one file, main.go unless a
+// name is given, and returns the file afterwards, what the migration printed and
+// its notes.
+func ctxRun(t *testing.T, migrate ctxMigrateFn, name, in string) (out, printed string, notes []internal.Note) {
 	t.Helper()
 
+	if name == "" {
+		name = "main.go"
+	}
 	dir := t.TempDir()
-	file := writeTempFile(t, dir, in)
+	file := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(file, []byte(in), 0o600))
 
 	var buf bytes.Buffer
 	require.NoError(t, migrate(newCmd(&buf), dir, nil, nil))
@@ -60,7 +69,7 @@ func ctxRunCases(t *testing.T, migrate ctxMigrateFn, cases []ctxCase) {
 			t.Parallel()
 
 			in := ctxSrc(tc.in)
-			out, printed, notes := ctxRun(t, migrate, in)
+			out, printed, notes := ctxRun(t, migrate, tc.file, in)
 
 			want := in
 			if tc.want != "" {
@@ -81,7 +90,7 @@ func ctxRunCases(t *testing.T, migrate ctxMigrateFn, cases []ctxCase) {
 				}
 			}
 
-			again, printedAgain, _ := ctxRun(t, migrate, out)
+			again, printedAgain, _ := ctxRun(t, migrate, tc.file, out)
 			assert.Equal(t, out, again, "the second run changed the file")
 			assert.Empty(t, printedAgain, "the second run printed")
 		})

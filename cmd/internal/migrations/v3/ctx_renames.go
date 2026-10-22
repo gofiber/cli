@@ -28,7 +28,11 @@ const (
 //
 // Only methods of a fiber context are rewritten.
 func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateCtxRenamesContent)
+	run := newCtxRunNotes()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateCtxRenamesContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate context method renames: %w", err)
 	}
@@ -40,7 +44,7 @@ func MigrateCtxRenames(cmd *cobra.Command, cwd string, _, _ *semver.Version) err
 	return nil
 }
 
-func migrateCtxRenamesContent(content string, fi internal.FileInfo) string {
+func migrateCtxRenamesContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
 	if !ctxContainsAny(content, ".Format(", ".Protocol(", ".Hostname(", ".Range(") {
 		return content
 	}
@@ -54,7 +58,7 @@ func migrateCtxRenamesContent(content string, fi internal.FileInfo) string {
 	}
 
 	env := newCtxEnv(g, names)
-	noter := newCtxNoter(fi, g)
+	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
@@ -86,6 +90,10 @@ func migrateCtxRenamesContent(content string, fi internal.FileInfo) string {
 
 		if rename != "" {
 			plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, rename) })
+			if rename == "AutoFormat" {
+				noter.oncef("format", sel.Pos(),
+					"AutoFormat negotiates the same formats as Format did, but answers a request without an Accept header in plain text where Format answered with an HTML paragraph")
+			}
 			return true
 		}
 
@@ -99,7 +107,6 @@ func migrateCtxRenamesContent(content string, fi internal.FileInfo) string {
 		return true
 	})
 
-	noter.flush()
 	return plan.apply(content)
 }
 

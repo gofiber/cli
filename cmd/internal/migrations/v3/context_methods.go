@@ -35,7 +35,11 @@ const (
 //
 // Only methods of a fiber context are rewritten.
 func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateContextMethodsContent)
+	run := newCtxRunNotes()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateContextMethodsContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate context methods: %w", err)
 	}
@@ -47,7 +51,7 @@ func MigrateContextMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func migrateContextMethodsContent(content string, fi internal.FileInfo) string {
+func migrateContextMethodsContent(content string, fi internal.FileInfo, run *ctxRunNotes) string {
 	if strings.Contains(content, ctxContextMarker) ||
 		!ctxContainsAny(content, ctxContextCallName, ctxUserContext, ctxSetUserContext) {
 		return content
@@ -62,7 +66,7 @@ func migrateContextMethodsContent(content string, fi internal.FileInfo) string {
 	}
 
 	env := newCtxEnv(g, names)
-	noter := newCtxNoter(fi, g)
+	noter := newCtxNoter(fi, g, run)
 
 	// A context that already has SetContext, the v3 name, was migrated by hand
 	// at least in part, and its Context() is the v3 one.

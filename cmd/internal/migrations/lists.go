@@ -65,6 +65,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateListenMethods,
 			v3migrations.MigrateContextMethods,
 			v3migrations.MigrateCtxRenames,
+			v3migrations.MigrateCtxBehaviorNotes,
 			v3migrations.MigrateSendFileConfig,
 			v3migrations.MigrateCORSConfig,
 			v3migrations.MigrateCSRFConfig,
