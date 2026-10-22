@@ -280,7 +280,7 @@ func handler(c *fiber.Ctx) int {
 			msg: "Migrating generic helpers",
 		},
 		{
-			name: "default values from a slice: the getters of one value take them as they are, ParamsInt is reported",
+			name: "default values from a slice: the getters of one value take them as they are, ParamsInt becomes a literal",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -293,16 +293,28 @@ func handler(c *fiber.Ctx, defaults []int, fs []float64) {
 `,
 			want: `package main
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
 
 func handler(c *fiber.Ctx, defaults []int, fs []float64) {
 	_ = fiber.Query[int](c, "id", defaults...)
 	_ = fiber.Query[float64](c, "ratio", fs...)
-	_, _ = c.ParamsInt("id", defaults...)
+	_, _ = func() (int, error) {
+		value, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			if len(defaults) > 0 {
+				return defaults[0], nil
+			}
+			return 0, err
+		}
+		return value, nil
+	}()
 }
 `,
-			msg:   "Migrating generic helpers",
-			notes: []string{"main.go:8: c.ParamsInt was removed in Fiber v3"},
+			msg: "Migrating generic helpers",
 		},
 		{
 			name: "other receivers stay",
