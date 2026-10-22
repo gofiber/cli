@@ -100,9 +100,11 @@ type ctxSibling struct {
 // fiberNames).
 func newCtxEnv(g *goSource, names []string, siblings ...ctxSibling) *ctxEnv {
 	env := &ctxEnv{
-		g:        g,
-		names:    names,
-		pkgNames: slices.Clone(names),
+		g:     g,
+		names: names,
+		// the types the environment makes up are spelled with the qualifier that
+		// stands for the fiber package in every file (see ctxFiberRef)
+		pkgNames: append(slices.Clone(names), ctxFiberQualifier),
 		typeDecl: map[string]*ast.TypeSpec{},
 		funcDecl: map[string]*ast.FuncDecl{},
 		methods:  map[string]*ast.FuncDecl{},
@@ -307,16 +309,6 @@ func (env *ctxEnv) prefix() string {
 		return env.alias + "."
 	}
 	return ctxQualifier(env.names)
-}
-
-// fiberType returns the AST of the fiber type name, as the file spells it.
-func (env *ctxEnv) fiberType(name string) ast.Expr {
-	env.usedFiber = true
-	prefix := env.prefix()
-	if prefix == "" {
-		return ast.NewIdent(name)
-	}
-	return &ast.SelectorExpr{X: ast.NewIdent(prefix[:len(prefix)-1]), Sel: ast.NewIdent(name)}
 }
 
 // dotImported reports whether the file dot-imports fiber.
@@ -739,14 +731,14 @@ func (env *ctxEnv) methodCallResults(call *ast.CallExpr, fun *ast.SelectorExpr, 
 
 	switch name := fun.Sel.Name; {
 	case name == "AcquireCtx":
-		return []ast.Expr{env.fiberType(ctxTypeCtx)}
+		return []ast.Expr{ctxFiberRef(ctxTypeCtx)}
 	case name == appMethodGroup && len(call.Args) > 0:
-		return []ast.Expr{env.fiberType(ctxTypeGroup)}
+		return []ast.Expr{ctxFiberRef(ctxTypeGroup)}
 	case name == mw2New && env.isFiberPackage(fun.X):
-		return []ast.Expr{env.fiberType(ctxTypeApp)}
+		return []ast.Expr{ctxFiberRef(ctxTypeApp)}
 	case slices.Contains(ctxChainMethods, name):
 		if env.typeIs(env.typeOfAt(fun.X, stack, depth+1), ctxTypeCtx) == ctxYes {
-			return []ast.Expr{env.fiberType(ctxTypeCtx)}
+			return []ast.Expr{ctxFiberRef(ctxTypeCtx)}
 		}
 	}
 

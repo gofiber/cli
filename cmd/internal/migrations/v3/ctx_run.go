@@ -116,19 +116,17 @@ func ctxImportsOf(content string) *ast.File {
 
 // reachesContexts reports whether a file that does not import the fiber package
 // can still hold a value of a type that embeds the context or an alias of it: it
-// imports a package of the module, or the package of the file imports fiber in one
-// of its other files. file holds at least its package clause and imports.
+// imports a package of the module that can hold a context, or the package of the
+// file has another file that imports fiber or such a package. file holds at least
+// its package clause and imports.
 func (r *ctxRun) reachesContexts(fi internal.FileInfo, file *ast.File) bool {
 	if file == nil {
 		return false
 	}
 
-	if mod := r.module(fi); mod != nil {
-		for _, spec := range file.Imports {
-			if importPath, err := strconv.Unquote(spec.Path.Value); err == nil && mod.inModule(importPath) {
-				return true
-			}
-		}
+	mod := r.module(fi)
+	if mod.importsCarrier(file) {
+		return true
 	}
 
 	dir := filepath.Dir(fi.Path)
@@ -138,7 +136,7 @@ func (r *ctxRun) reachesContexts(fi internal.FileInfo, file *ast.File) bool {
 		r.pkgs[dir] = files
 	}
 	return slices.ContainsFunc(files, func(f ctxPackageFile) bool {
-		return f.path != fi.Path && f.file.Name.Name == file.Name.Name && len(f.names) > 0
+		return f.path != fi.Path && f.file.Name.Name == file.Name.Name && (len(f.names) > 0 || mod.importsCarrier(f.file))
 	})
 }
 

@@ -18,7 +18,6 @@ func (env *ctxEnv) attach(mod *ctxModule) {
 	}
 	env.mod = mod
 	env.imports = mod.importsOf(env.g.file)
-	env.pkgNames = append(env.pkgNames, ctxFiberQualifier)
 }
 
 // typeKey returns the key of the declaration of the type that t names, looking
@@ -348,11 +347,18 @@ func (env *ctxEnv) elsewhereCallType(call *ast.CallExpr, idx int, file *ast.File
 	var results []ast.Expr
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
-		if fn := env.funcDeclOf(fun.Name); fn != nil {
+		switch fn := env.funcDeclOf(fun.Name); {
+		case fn != nil:
 			results = ctxResultTypes(fn.Type)
-		} else if env.typeDecl[fun.Name] != nil && idx == 0 {
+		case env.typeDecl[fun.Name] != nil && idx == 0:
 			// a conversion to a type of the package
 			return fun
+		case (fun.Name == mw3BuiltinNew && len(call.Args) == 1 || fun.Name == mw3BuiltinMake && len(call.Args) > 0) &&
+			env.typeDecl[fun.Name] == nil && env.pkgVars[fun.Name].spec == nil:
+			// new(T) and make(T, ...) make a value of the type of their first argument
+			if idx == 0 {
+				return env.mod.translatedType(call.Args[0], file, "", false)
+			}
 		}
 	case *ast.SelectorExpr:
 		mem := env.fileMember(fun, file)

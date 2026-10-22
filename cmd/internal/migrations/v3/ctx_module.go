@@ -110,6 +110,8 @@ type ctxModule struct {
 	funcs   map[*ast.FuncDecl]*ast.FuncDecl
 	types   map[ast.Expr]ast.Expr
 	members map[string]*ctxMember
+	// carrying says, for the packages looked at, whether they can hold a context.
+	carrying map[string]bool
 	// fiberPath is the import path of the core fiber package the module uses.
 	fiberPath  string
 	fiberKnown bool
@@ -120,12 +122,13 @@ func newCtxModule(ix *moduleIndex) *ctxModule {
 		return nil
 	}
 	return &ctxModule{
-		ix:      ix,
-		imports: map[*ast.File]*ctxImports{},
-		specs:   map[*ast.TypeSpec]*ast.TypeSpec{},
-		funcs:   map[*ast.FuncDecl]*ast.FuncDecl{},
-		types:   map[ast.Expr]ast.Expr{},
-		members: map[string]*ctxMember{},
+		ix:       ix,
+		imports:  map[*ast.File]*ctxImports{},
+		specs:    map[*ast.TypeSpec]*ast.TypeSpec{},
+		funcs:    map[*ast.FuncDecl]*ast.FuncDecl{},
+		types:    map[ast.Expr]ast.Expr{},
+		members:  map[string]*ctxMember{},
+		carrying: map[string]bool{},
 	}
 }
 
@@ -144,6 +147,46 @@ func (m *ctxModule) pkg(importPath string) *modPackage {
 		return nil
 	}
 	return m.ix.packageAt(importPath)
+}
+
+// carries reports whether the package of the module can hold a fiber context: it
+// imports the fiber package, or a package of the module that can, however far. A
+// file that imports a package that carries none cannot get a context from it.
+func (m *ctxModule) carries(importPath string) bool {
+	if m == nil {
+		return false
+	}
+	if carries, seen := m.carrying[importPath]; seen {
+		return carries
+	}
+	// a package that imports itself, however it came to that, settles on no
+	m.carrying[importPath] = false
+
+	if pkg := m.pkg(importPath); pkg != nil {
+		for _, f := range pkg.files {
+			for _, imp := range f.imps {
+				if reFiberCorePath.MatchString(imp.path) || (m.inModule(imp.path) && m.carries(imp.path)) {
+					m.carrying[importPath] = true
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// importsCarrier reports whether the file imports a package of the module that can
+// hold a fiber context (see carries).
+func (m *ctxModule) importsCarrier(file *ast.File) bool {
+	if m == nil || file == nil {
+		return false
+	}
+	for _, spec := range file.Imports {
+		if importPath, err := strconv.Unquote(spec.Path.Value); err == nil && m.inModule(importPath) && m.carries(importPath) {
+			return true
+		}
+	}
+	return false
 }
 
 // importsOf returns the imports of the file.
@@ -533,7 +576,8 @@ func (m *ctxModule) callType(f *modFile, call *ast.CallExpr, idx int, importPath
 		}
 		return nil
 	case *ast.Ident:
-		if x.Name == modBuiltinNew && len(call.Args) == 1 && f.declOf(x) == nil {
+		// new(T) and make(T, ...) make a value of the type of their first argument
+		if (x.Name == modBuiltinNew && len(call.Args) == 1 || x.Name == mw3BuiltinMake && len(call.Args) > 0) && f.declOf(x) == nil {
 			if idx == 0 {
 				return m.translatedType(call.Args[0], f.g.file, importPath, true)
 			}

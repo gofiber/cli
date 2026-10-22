@@ -348,6 +348,35 @@ func a(c *web.Context) int { return fiberv3.Query[int](c.Ctx, "a") }
 			msg: "Migrating generic",
 		},
 		{
+			name:    "the package that returns the context imports a package of the module that declares it",
+			migrate: v3.MigrateGenericHelpers,
+			files: map[string]string{
+				"internal/mid/mid.go": `package mid
+
+import "example.com/app/internal/web"
+
+// Make returns a context.
+func Make() *web.Context { return nil }
+`,
+				xpkgHandlers: `package handlers
+
+import "example.com/app/internal/mid"
+
+func a() int { return mid.Make().QueryInt("a") }
+`,
+			},
+			want: map[string]string{xpkgHandlers: `package handlers
+
+import (
+	"example.com/app/internal/mid"
+	"github.com/gofiber/fiber/v2"
+)
+
+func a() int { return fiber.Query[int](mid.Make().Ctx, "a") }
+`},
+			msg: "Migrating generic",
+		},
+		{
 			name:    "a type with the methods of the context that is none",
 			migrate: v3.MigrateGenericHelpers,
 			files: map[string]string{xpkgHandlers: `package handlers

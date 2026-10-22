@@ -105,6 +105,17 @@ type impl struct{ c *fiber.Ctx }
 func (i impl) Ctx() *fiber.Ctx { return i.c }
 
 func Impl() impl { return impl{} }
+
+// App builds the app.
+func App() *fiber.App { return fiber.New() }
+
+var Default2 = fiber.New()
+
+// Queue holds contexts.
+var Queue = make(chan *fiber.Ctx, 1)
+
+// Fresh makes a context holder.
+var Fresh = new(Holder)
 `
 
 func Test_ctxEnv_typesOfAnotherPackage(t *testing.T) {
@@ -169,6 +180,13 @@ func handlers(c *web.Ctx, c2 web.Ctx2, c3 util.Ctx3, w *web.Context, d *web.Deep
 	web.Counter.probe("package variable made by a call that returns an int")
 	plain.Make().probe("function result without a context")
 	th.probe("method of a struct without a context")
+	app := web.App()
+	acquired := app.AcquireCtx(nil)
+	acquired.probe("context acquired from an app of another package")
+	web.Default2.AcquireCtx(nil).probe("context acquired from an app variable of another package")
+	received := <-web.Queue
+	received.probe("received from a channel of another package")
+	web.Fresh.Ctx.probe("field of a variable made by new")
 	pr.Ctx().probe("method of an interface")
 	pr2.Ctx().probe("method of an embedded interface")
 	web.NewProvider().Ctx().probe("method of an interface returned by a function")
@@ -201,45 +219,49 @@ func handlers(c *web.Ctx, c2 web.Ctx2, c3 util.Ctx3, w *web.Context, d *web.Deep
 
 	got := ctxModuleKinds(t, files, "cmd/api/main.go")
 	want := map[string]ctxKind{
-		`"alias"`:                                               ctxYes,
-		`"alias of an alias"`:                                   ctxYes,
-		`"alias of an alias of another package"`:                ctxYes,
-		`"wrapper"`:                                             ctxYes,
-		`"deep wrapper"`:                                        ctxYes,
-		`"wrapper that declares the method"`:                    ctxNo,
-		`"wrapper that embeds the alias"`:                       ctxYes,
-		`"struct without a context"`:                            ctxNo,
-		`"field"`:                                               ctxYes,
-		`"field of an alias type"`:                              ctxYes,
-		`"field of a wrapper type"`:                             ctxYes,
-		`"field of another type"`:                               ctxNo,
-		`"method result"`:                                       ctxYes,
-		`"field of a type of the third package"`:                ctxYes,
-		`"method result of a generic type"`:                     ctxYes,
-		`"field of a generic type"`:                             ctxYes,
-		`"function result"`:                                     ctxYes,
-		`"wrapper result"`:                                      ctxYes,
-		`"result of a function that takes the wrapper"`:         ctxYes,
-		`"result of an alias type"`:                             ctxYes,
-		`"package variable"`:                                    ctxYes,
-		`"package variable made by a literal"`:                  ctxYes,
-		`"element of a package variable"`:                       ctxYes,
-		`"generic function"`:                                    ctxYes,
-		`"slice of structs without a context"`:                  ctxNo,
-		`"package variable made by a call that returns an int"`: ctxNo,
-		`"function result without a context"`:                   ctxNo,
-		`"method of a struct without a context"`:                ctxNo,
-		`"undeclared"`:                                          ctxUnknown,
-		`"name the package does not declare"`:                   ctxUnknown,
-		`"second result"`:                                       ctxYes,
-		`"parameter of a generic func type"`:                    ctxYes,
-		`"local variable"`:                                      ctxYes,
-		`"range variable"`:                                      ctxYes,
-		`"a local called like the package"`:                     ctxNo,
-		`"method of an interface"`:                              ctxYes,
-		`"method of an embedded interface"`:                     ctxYes,
-		`"method of an interface returned by a function"`:       ctxYes,
-		`"method of a type that is not exported"`:               ctxYes,
+		`"alias"`:                                                    ctxYes,
+		`"alias of an alias"`:                                        ctxYes,
+		`"alias of an alias of another package"`:                     ctxYes,
+		`"wrapper"`:                                                  ctxYes,
+		`"deep wrapper"`:                                             ctxYes,
+		`"wrapper that declares the method"`:                         ctxNo,
+		`"wrapper that embeds the alias"`:                            ctxYes,
+		`"struct without a context"`:                                 ctxNo,
+		`"field"`:                                                    ctxYes,
+		`"field of an alias type"`:                                   ctxYes,
+		`"field of a wrapper type"`:                                  ctxYes,
+		`"field of another type"`:                                    ctxNo,
+		`"method result"`:                                            ctxYes,
+		`"field of a type of the third package"`:                     ctxYes,
+		`"method result of a generic type"`:                          ctxYes,
+		`"field of a generic type"`:                                  ctxYes,
+		`"function result"`:                                          ctxYes,
+		`"wrapper result"`:                                           ctxYes,
+		`"result of a function that takes the wrapper"`:              ctxYes,
+		`"result of an alias type"`:                                  ctxYes,
+		`"package variable"`:                                         ctxYes,
+		`"package variable made by a literal"`:                       ctxYes,
+		`"element of a package variable"`:                            ctxYes,
+		`"generic function"`:                                         ctxYes,
+		`"slice of structs without a context"`:                       ctxNo,
+		`"package variable made by a call that returns an int"`:      ctxNo,
+		`"function result without a context"`:                        ctxNo,
+		`"method of a struct without a context"`:                     ctxNo,
+		`"undeclared"`:                                               ctxUnknown,
+		`"name the package does not declare"`:                        ctxUnknown,
+		`"second result"`:                                            ctxYes,
+		`"parameter of a generic func type"`:                         ctxYes,
+		`"local variable"`:                                           ctxYes,
+		`"range variable"`:                                           ctxYes,
+		`"a local called like the package"`:                          ctxNo,
+		`"received from a channel of another package"`:               ctxYes,
+		`"field of a variable made by new"`:                          ctxYes,
+		`"context acquired from an app of another package"`:          ctxYes,
+		`"context acquired from an app variable of another package"`: ctxYes,
+		`"method of an interface"`:                                   ctxYes,
+		`"method of an embedded interface"`:                          ctxYes,
+		`"method of an interface returned by a function"`:            ctxYes,
+		`"method of a type that is not exported"`:                    ctxYes,
 	}
 	assert.Equal(t, want, got)
 }
@@ -364,6 +386,10 @@ var global *f.Ctx
 var wrapped = &Wrapped{}
 
 var made = current()
+
+var queue = make(chan *f.Ctx, 1)
+
+var holders = new(Hold)
 `,
 		"cmd/api/main.go": `package main
 
@@ -380,6 +406,9 @@ func handlers(c *Ctx, x *Context, wr *Wrapped, h *Holder) {
 	made.probe("package variable made by a call")
 	_, second := pair()
 	second.ctx.probe("second result")
+	received := <-queue
+	received.probe("received from a channel made by make")
+	holders.ctx.probe("field of a variable made by new")
 }
 `,
 	}
@@ -397,6 +426,8 @@ func handlers(c *Ctx, x *Context, wr *Wrapped, h *Holder) {
 		`"package variable made by a literal"`:        ctxYes,
 		`"package variable made by a call"`:           ctxYes,
 		`"second result"`:                             ctxYes,
+		`"received from a channel made by make"`:      ctxYes,
+		`"field of a variable made by new"`:           ctxYes,
 	}
 	assert.Equal(t, want, got)
 }
@@ -477,6 +508,8 @@ func broken( {
 import "strings"
 
 var _ = strings.ToUpper
+
+type Thing int
 `,
 		"internal/plain/other.go": `package plain
 
@@ -487,6 +520,24 @@ func other() {}
 import "example.org/lib"
 
 var _ = lib.Make
+`,
+		"internal/far/far.go": `package far
+
+import "example.com/app/internal/mid"
+
+var _ = mid.Make
+`,
+		"internal/mid/mid.go": `package mid
+
+import "example.com/app/internal/web"
+
+func Make() *web.Context { return nil }
+`,
+		"internal/unrelated/unrelated.go": `package unrelated
+
+import "example.com/app/internal/plain"
+
+var _ = plain.Thing
 `,
 	}
 	dir := modTestFiles(t, files)
@@ -504,6 +555,11 @@ var _ = lib.Make
 		{path: "internal/plain/plain.go"},
 		{path: "internal/plain/other.go"},
 		{path: "internal/external/external.go"},
+		// it reaches fiber through a package that reaches it through another
+		{path: "internal/far/far.go", ok: true},
+		{path: "internal/mid/mid.go", ok: true},
+		// the packages it imports have nothing to do with fiber
+		{path: "internal/unrelated/unrelated.go"},
 		// it imports a package of the module, but does not parse
 		{path: "internal/handlers/broken.go"},
 	}
