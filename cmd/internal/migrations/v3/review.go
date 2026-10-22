@@ -40,6 +40,7 @@ func Review(cwd string) {
 	if err != nil {
 		internal.AddNote(cwd, internal.Note{Message: "the project could not be scanned for leftovers: " + err.Error()})
 	}
+	r.trust.report(cwd)
 }
 
 type reviewer struct {
@@ -48,6 +49,8 @@ type reviewer struct {
 	behaviorSeen map[int]bool
 	// run reads the files next to the one scanned, which declare the types it uses.
 	run *ctxRun
+	// trust collects what the note about the trusted proxy settings needs (see review_trust.go).
+	trust reviewTrust
 	// fileNameSeen is set once the SendFile file name note was given.
 	fileNameSeen bool
 }
@@ -158,6 +161,7 @@ func (rf *reviewFile) checkBehavior(content string) {
 // checkUses reports uses of API that v2 had and v3 does not.
 func (rf *reviewFile) checkUses() {
 	rf.g.walk(func(n ast.Node, stack []ast.Node) bool {
+		rf.collectTrust(n, stack)
 		switch x := n.(type) {
 		case *ast.SelectorExpr:
 			rf.checkSelector(x)
