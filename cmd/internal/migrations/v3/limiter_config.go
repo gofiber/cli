@@ -79,7 +79,7 @@ func (r *mw2LimiterRewriter) visit(n ast.Node, stack []ast.Node) bool {
 
 // literal renames the deprecated keys of a limiter.Config literal.
 func (r *mw2LimiterRewriter) literal(n *ast.CompositeLit) {
-	lit, ok := mw2ConfigLit(n, r.names, "Config")
+	lit, ok := mw2ConfigLit(n, r.names)
 	if !ok || !mw2IsKeyed(lit) {
 		return
 	}

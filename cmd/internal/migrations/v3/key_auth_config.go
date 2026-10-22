@@ -120,7 +120,7 @@ type mw2KeyAuthField struct {
 }
 
 func (r *mw2KeyAuthRewriter) visit(n ast.Node, stack []ast.Node) bool {
-	if lit, ok := mw2ConfigLit(n, r.names, "Config"); ok {
+	if lit, ok := mw2ConfigLit(n, r.names); ok {
 		r.literal(lit)
 		return true
 	}

@@ -2,7 +2,8 @@ package v3
 
 import (
 	"fmt"
-	"regexp"
+	"go/ast"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -10,27 +11,13 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-var (
-	reLoggerImport      = regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([\w.]+)\s+)?"github\.com/gofiber/fiber/(?:v2|v3)/middleware/logger"`)
-	reLoggerOutputField = regexp.MustCompile(`((?:^|[{\n])\s*)Output(\s*:)`)
-)
-
+// MigrateLoggerConfig moves the logger middleware to its v3 config: Config.Output
+// is called Stream, and Data.Timestamp, an atomic.Value in v2, is a plain string,
+// so data.Timestamp.Load().(string) is data.Timestamp. Config literals and
+// variables, and the Data parameters of custom tags, are found through the import
+// path and the declared types.
 func MigrateLoggerConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContent(cwd, func(content string) string {
-		aliases := collectAliases(content, reLoggerImport, []string{"logger"})
-		if len(aliases) == 0 {
-			return content
-		}
-
-		for _, alias := range aliases {
-			reConfig := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config\s*\{`)
-			content = IterateConfigBlocks(content, reConfig, func(s string) string {
-				return reLoggerOutputField.ReplaceAllString(s, "${1}Stream${2}")
-			})
-		}
-
-		return content
-	})
+	changed, err := internal.ChangeFileContentInfo(cwd, migrateLoggerConfigContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate logger configs: %w", err)
 	}
@@ -40,4 +27,80 @@ func MigrateLoggerConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 
 	cmd.Println("Migrating logger middleware configs")
 	return nil
+}
+
+func migrateLoggerConfigContent(content string, fi internal.FileInfo) string {
+	if !strings.Contains(content, "Output") && !strings.Contains(content, "Timestamp") {
+		return content
+	}
+	names := importNames(content, mw2Logger, "logger")
+	if len(names) == 0 {
+		return content
+	}
+	g, ok := parseFile(fi, content)
+	if !ok {
+		return content
+	}
+
+	var edits editSet
+	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CompositeLit:
+			migrateLoggerLiteral(g, &edits, fi, x, names)
+		case *ast.SelectorExpr:
+			if x.Sel.Name == "Output" && mw2IsTyped(x.X, names, "Config", stack, 0) {
+				edits.replaceNode(g, x.Sel, "Stream")
+			}
+		case *ast.TypeAssertExpr:
+			migrateLoggerTimestamp(g, &edits, x, names, stack)
+		}
+		return true
+	})
+	return edits.apply(content)
+}
+
+// migrateLoggerLiteral renames the Output key of a logger.Config literal.
+func migrateLoggerLiteral(g *goSource, edits *editSet, fi internal.FileInfo, n *ast.CompositeLit, names []string) {
+	lit, ok := mw2ConfigLit(n, names)
+	if !ok || !mw2IsKeyed(lit) {
+		return
+	}
+	_, output := mw2Field(lit, "Output")
+	if output == nil {
+		return
+	}
+	if _, stream := mw2Field(lit, "Stream"); stream != nil {
+		internal.Notef(fi, g.line(output.Pos()), "logger.Config sets both Output and Stream; Output no longer exists, merge it into Stream by hand")
+		return
+	}
+	edits.replaceNode(g, output.Key, "Stream")
+}
+
+// migrateLoggerTimestamp turns data.Timestamp.Load().(string) on a *logger.Data
+// into data.Timestamp.
+func migrateLoggerTimestamp(g *goSource, edits *editSet, assert *ast.TypeAssertExpr, names []string, stack []ast.Node) {
+	if !isIdentNamed(assert.Type, "string") {
+		return
+	}
+	load, ok := assert.X.(*ast.CallExpr)
+	if !ok || len(load.Args) != 0 {
+		return
+	}
+	loadSel, ok := load.Fun.(*ast.SelectorExpr)
+	if !ok || loadSel.Sel.Name != "Load" {
+		return
+	}
+	field, ok := loadSel.X.(*ast.SelectorExpr)
+	if !ok || field.Sel.Name != "Timestamp" {
+		return
+	}
+	data, ok := field.X.(*ast.Ident)
+	if !ok {
+		return
+	}
+	d, ok := resolveIdent(data.Name, data.Pos(), stack)
+	if !ok || d.typ == nil || !isFiberType(d.typ, names, "Data") {
+		return
+	}
+	edits.replaceNode(g, assert, g.text(field))
 }

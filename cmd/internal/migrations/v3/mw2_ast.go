@@ -20,7 +20,9 @@ import (
 var (
 	mw2KeyAuth    = mw2Middleware("keyauth")
 	mw2Limiter    = mw2Middleware("limiter")
+	mw2Logger     = mw2Middleware("logger")
 	mw2Proxy      = mw2Middleware("proxy")
+	mw2Log        = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/log$`)
 	mw2Timeout    = mw2Middleware("timeout")
 	mw2Extractors = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/extractors$`)
 	mw2Fasthttp   = regexp.MustCompile(`^github\.com/valyala/fasthttp$`)
@@ -45,11 +47,11 @@ func mw2IsSelector(e ast.Expr, names []string, sel string) bool {
 	return ok && slices.Contains(names, id.Name)
 }
 
-// mw2ConfigLit returns n as a composite literal of the type typeName of a package
+// mw2ConfigLit returns n as a composite literal of the Config type of a package
 // bound to names, for example keyauth.Config{...}.
-func mw2ConfigLit(n ast.Node, names []string, typeName string) (*ast.CompositeLit, bool) {
+func mw2ConfigLit(n ast.Node, names []string) (*ast.CompositeLit, bool) {
 	lit, ok := n.(*ast.CompositeLit)
-	if !ok || lit.Type == nil || !isFiberType(lit.Type, names, typeName) {
+	if !ok || lit.Type == nil || !isFiberType(lit.Type, names, "Config") {
 		return nil, false
 	}
 	return lit, true
@@ -320,6 +322,17 @@ func (p *mw2Package) addGen(decl *ast.GenDecl) {
 func (p *mw2Package) constValue(name string) (ast.Expr, bool) {
 	c, ok := p.consts[name]
 	return c.value, ok && c.value != nil
+}
+
+// mw2ModuleRoot returns the directory of the go.mod that governs dir, looking up
+// to root; it is root when there is none. Both are cleaned paths.
+func mw2ModuleRoot(root, dir string) string {
+	for d := dir; len(d) > len(root); d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
+	}
+	return root
 }
 
 // mw2Import is an import declaration to add to a file.

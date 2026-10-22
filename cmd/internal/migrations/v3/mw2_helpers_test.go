@@ -80,3 +80,8 @@ func mw2Single(t *testing.T, migrate mw2Migration, src string) (content string, 
 func countImports(src, path string) int {
 	return strings.Count(src, `"`+path+`"`)
 }
+
+// countOf counts the non-overlapping occurrences of sub in s.
+func countOf(s, sub string) int {
+	return strings.Count(s, sub)
+}

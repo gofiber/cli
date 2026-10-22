@@ -56,7 +56,7 @@ func migrateProxyContent(content string, fi internal.FileInfo) string {
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CompositeLit:
-			if lit, ok := mw2ConfigLit(x, names, "Config"); ok && mw2IsKeyed(lit) {
+			if lit, ok := mw2ConfigLit(x, names); ok && mw2IsKeyed(lit) {
 				if _, kv := mw2Field(lit, "TlsConfig"); kv != nil {
 					edits.replaceNode(g, kv.Key, "TLSConfig")
 				}
