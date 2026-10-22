@@ -105,12 +105,17 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: "opa: the v3 module evaluates policies as Rego v1; policies written for Rego v0 (for example `allow { ... }` without `if`) fail at startup. Convert them with `opa fmt --v0-v1`.",
 	},
 	{
-		pkg:     reviewContribPath("otel|otelfiber"),
-		message: "otel: the metric names changed (http.server.duration is now http.server.request.duration, measured in seconds, and the size metrics gained .body); update the dashboards and alerts that use the old names.",
+		pkg: reviewContribPath("otel|otelfiber"),
+		message: "otel: the metric names changed (http.server.duration is now http.server.request.duration, measured in seconds, and the size metrics gained .body) " +
+			"and the spans are named after the method and the route (GET /orders/:id, where it was /orders/:id). From otelfiber 1.x the attributes change too, " +
+			"to the stable HTTP conventions (http.method is http.request.method, http.status_code is http.response.status_code, http.target and http.url are " +
+			"url.path and url.query, net.host.name is server.address, http.user_agent is user_agent.original, http.client_ip is client.address), " +
+			"and the metrics no longer carry the host. Update the dashboards, alerts and sampling rules that use the old names.",
 	},
 	{
 		pkg: reviewContribPath("sentry|fibersentry"),
-		message: "sentry: the v3 module requires sentry-go v0.50 or newer. What it removed is rewritten or reported where the code uses it (Scope.SetExtra, Event.Extra, sentry.Logger, the logs and metrics options); " +
+		message: "sentry: the v3 module requires sentry-go v0.50 or newer. What it removed is rewritten or reported where the code uses it (Scope.SetExtra, Event.Extra, sentry.Logger, the logs and metrics options, " +
+			"the span options that lost their names such as sentry.TransactionName, Scope.SetTransaction); " +
 			"what it changed without a compile error is that transactions are grouped by their parameterized path (0.47) and that captured panics no longer have the frames of sentry.Recover (0.49), so issues and transactions may regroup after the upgrade.",
 	},
 }

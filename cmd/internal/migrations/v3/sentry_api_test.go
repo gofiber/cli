@@ -593,3 +593,262 @@ func extras(scope *sentry.Scope) {
 	assert.Equal(t, unix.file(), strings.ReplaceAll(windows.file(), "\r", ""))
 	assert.Equal(t, unix.notes, windows.notes)
 }
+
+// sentrySpanSource uses the span options and the constant that sentry-go renamed
+// and then removed (0.21 to 0.26, 0.24 to 0.25).
+const sentrySpanSource = `func trace(c fiber.Ctx, r *http.Request) {
+	span := sentry.StartSpan(c.Context(), "backend", sentry.ContinueFromRequest(r),
+		sentry.TransactionName(c.Method()+" "+c.Path()), sentry.OpName("http.server"),
+		sentry.TransctionSource(sentry.SourceURL), sentry.SpanSampled(sentry.SampledTrue))
+	defer span.Finish()
+	fmt.Println(sentry.Version)
+	opts := []sentry.SpanOption{sentry.TransactionName("x")}
+	_ = opts
+}
+`
+
+func Test_MigrateSentryAPI_RenamedSpanOptions(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"fmt"
+	"net/http"
+
+	sg "github.com/getsentry/sentry-go"
+	"github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v3"
+)
+
+var _ = sentry.New
+
+` + strings.ReplaceAll(sentrySpanSource, "sentry.", "sg.")
+
+	res := mw1Run(t, v3.MigrateSentryAPI, src)
+
+	file := res.file()
+	assert.Contains(t, file, `sg.WithTransactionName(c.Method()+" "+c.Path())`)
+	assert.Contains(t, file, `sg.WithOpName("http.server")`)
+	assert.Contains(t, file, `sg.WithTransactionSource(sg.SourceURL)`)
+	assert.Contains(t, file, `sg.WithSpanSampled(sg.SampledTrue)`)
+	assert.Contains(t, file, `fmt.Println(sg.SDKVersion)`)
+	assert.Contains(t, file, `[]sg.SpanOption{sg.WithTransactionName("x")}`)
+	assert.Contains(t, file, `sg.ContinueFromRequest(r)`)
+	for _, gone := range []string{"sg.TransactionName", "sg.OpName", "sg.TransctionSource", "sg.SpanSampled", "sg.Version"} {
+		assert.NotContains(t, file, gone)
+	}
+	assert.Contains(t, res.stdout, "Migrating the sentry-go API")
+	assert.Empty(t, res.notes)
+
+	// a second run has nothing left to do
+	again := mw1Run(t, v3.MigrateSentryAPI, file)
+	assert.Equal(t, file, again.file())
+	assert.Empty(t, again.stdout)
+	assert.Empty(t, again.notes)
+}
+
+// The rename needs the sentry-go that the middleware of Fiber v3 requires. A
+// project that does not use the middleware keeps its version, and an old one has
+// no WithTransactionName.
+func Test_MigrateSentryAPI_RenamesFollowTheMiddleware(t *testing.T) {
+	t.Parallel()
+
+	const fileWithoutMiddleware = `package obs
+
+import (
+	"github.com/getsentry/sentry-go"
+)
+
+func trace(name string) *sentry.Span {
+	return sentry.StartSpan(nil, "backend", sentry.TransactionName(name))
+}
+`
+
+	t.Run("no middleware in the module", func(t *testing.T) {
+		t.Parallel()
+
+		res := mw1RunModule(t, v3.MigrateSentryAPI, map[string]string{
+			"obs/obs.go": fileWithoutMiddleware,
+			"main.go":    "package main\n\nimport \"github.com/gofiber/fiber/v3\"\n\nvar app = fiber.New()\n",
+		})
+
+		assert.Equal(t, fileWithoutMiddleware, res.files["obs/obs.go"])
+		assert.Empty(t, res.stdout)
+		assert.Empty(t, res.notes)
+	})
+
+	t.Run("the middleware is in another package of the module", func(t *testing.T) {
+		t.Parallel()
+
+		res := mw1RunModule(t, v3.MigrateSentryAPI, map[string]string{
+			"obs/obs.go": fileWithoutMiddleware,
+			"main.go": `package main
+
+import (
+	sentryfiber "github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v3"
+)
+
+var app = fiber.New()
+
+func init() { app.Use(sentryfiber.New()) }
+`,
+		})
+
+		assert.Contains(t, res.files["obs/obs.go"], "sentry.WithTransactionName(name)")
+		assert.NotContains(t, res.files["obs/obs.go"], "sentry.TransactionName")
+		assert.Contains(t, res.stdout, "Migrating the sentry-go API")
+	})
+
+	t.Run("the middleware is in another module of the project", func(t *testing.T) {
+		t.Parallel()
+
+		res := mw1RunFiles(t, v3.MigrateSentryAPI, map[string]string{
+			"svc/go.mod":     "module example.com/svc\n\ngo 1.25\n",
+			"svc/obs/obs.go": fileWithoutMiddleware,
+			"web/go.mod":     "module example.com/web\n\ngo 1.25\n",
+			"web/main.go": `package main
+
+import (
+	sentryfiber "github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v3"
+)
+
+var app = fiber.New()
+
+func init() { app.Use(sentryfiber.New()) }
+`,
+		})
+
+		// each module has its own sentry-go
+		assert.Equal(t, fileWithoutMiddleware, res.files["svc/obs/obs.go"])
+	})
+
+	t.Run("the middleware of Fiber v2 that was not moved", func(t *testing.T) {
+		t.Parallel()
+
+		res := mw1RunModule(t, v3.MigrateSentryAPI, map[string]string{
+			"obs/obs.go": fileWithoutMiddleware,
+			"main.go": `package main
+
+import (
+	"github.com/gofiber/contrib/fibersentry"
+	"github.com/gofiber/fiber/v2"
+)
+
+var app = fiber.New()
+
+func init() { app.Use(fibersentry.New(fibersentry.Config{})) }
+`,
+		})
+
+		// the module is still on the sentry-go it asked for
+		assert.Equal(t, fileWithoutMiddleware, res.files["obs/obs.go"])
+	})
+}
+
+func Test_MigrateSentryAPI_RenamesLeaveOtherNamesAlone(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateSentryAPI, `package main
+
+import (
+	"github.com/getsentry/sentry-go"
+	sentryfiber "github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v3"
+)
+
+var _ = sentryfiber.New
+
+type version struct{ Version, OpName string }
+
+func other(c fiber.Ctx, v version) {
+	_ = v.Version
+	_ = v.OpName
+	_ = sentry.WithTransactionName("already")
+	_ = sentry.SDKVersion
+}
+
+func shadowed() {
+	sentry := version{}
+	_ = sentry.Version
+	_ = sentry.OpName
+}
+
+// sentry.TransactionName is in a comment and in "sentry.OpName" a string
+func comments() string { return "sentry.OpName" }
+`)
+
+	assert.Empty(t, res.stdout)
+	assert.Empty(t, res.notes)
+	assert.Contains(t, res.file(), "_ = sentry.Version\n\t_ = sentry.OpName\n}")
+	assert.Contains(t, res.file(), `"sentry.OpName"`)
+	assert.Contains(t, res.file(), "// sentry.TransactionName is in a comment")
+}
+
+func Test_MigrateSentryAPI_ScopeTransactionIsReported(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateSentryAPI, `package main
+
+import (
+	"fmt"
+
+	"github.com/getsentry/sentry-go"
+	sentryfiber "github.com/gofiber/contrib/v3/sentry"
+	"github.com/gofiber/fiber/v3"
+)
+
+type recorder struct{}
+
+func (recorder) SetTransaction(string) {}
+
+func handler(c fiber.Ctx, r recorder, thing interface{ SetTransaction(string) }) {
+	hub := sentryfiber.GetHubFromContext(c)
+	hub.Scope().SetTransaction(c.Path())
+	hub.ConfigureScope(func(scope *sentry.Scope) {
+		fmt.Println(scope.Transaction())
+	})
+	r.SetTransaction("x")
+	thing.SetTransaction("y")
+	unknownScope().SetTransaction("z")
+	fmt.Println(sentry.SDKIdentifier)
+}
+`)
+
+	file := res.file()
+	// nothing can be written for the user: the code stays and the project is told
+	assert.Contains(t, file, "hub.Scope().SetTransaction(c.Path())")
+	assert.Contains(t, file, "scope.Transaction()")
+	assert.Empty(t, res.stdout)
+	if assert.Len(t, res.notes, 4) {
+		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: Scope.SetTransaction was removed in sentry-go 0.20", mw1LineOf(t, file, "hub.Scope().SetTransaction")))
+		assert.NotContains(t, res.notes[0], "ignore this")
+		assert.Contains(t, res.notes[0], "sentry.WithTransactionName(name)")
+		assert.Contains(t, res.notes[1], fmt.Sprintf("main.go:%d: Scope.Transaction was removed in sentry-go 0.20", mw1LineOf(t, file, "scope.Transaction()")))
+		// a receiver that the file does not tell is a maybe; one declared as another type is no scope
+		assert.Contains(t, res.notes[2], fmt.Sprintf("main.go:%d: Scope.SetTransaction was removed", mw1LineOf(t, file, "unknownScope()")))
+		assert.Contains(t, res.notes[2], "if unknownScope() is not a *sentry.Scope, ignore this")
+		assert.Contains(t, res.notes[3], fmt.Sprintf("main.go:%d: sentry.SDKIdentifier was removed in sentry-go 0.25", mw1LineOf(t, file, "sentry.SDKIdentifier")))
+		assert.Contains(t, res.notes[3], "Client.GetSDKIdentifier()")
+	}
+}
+
+func Test_MigrateSentryAPI_ScopeTransactionOfAModuleWithoutTheMiddleware(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateSentryAPI, `package main
+
+import "github.com/getsentry/sentry-go"
+
+func handler(scope *sentry.Scope) {
+	scope.SetTransaction("x")
+	_ = sentry.SDKIdentifier
+}
+`)
+
+	// the project keeps the sentry-go it has, which still has them
+	assert.Empty(t, res.notes)
+	assert.Empty(t, res.stdout)
+}
