@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -361,5 +362,50 @@ func main() {
 	appRun(t, dir, olderV2On("2.40.1"))
 
 	assert.Equal(t, source, appRead(t, dir, "main.go"))
+	assert.Empty(t, internal.DrainNotes(dir))
+}
+
+// The app can be a field, a parameter, the embedded app of a struct or the result of
+// a function.
+func Test_MigrateOlderV2Callbacks_OnListenOfAnApp(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type service struct {
+	app *fiber.App
+}
+
+type wrapper struct {
+	*fiber.App
+}
+
+func build() *fiber.App { return fiber.New() }
+
+func register(app *fiber.App) {
+	app.Hooks().OnListen(func() error { return nil })
+}
+
+func (s *service) hooks() {
+	s.app.Hooks().OnListen(func() error { return nil })
+}
+
+func (w wrapper) hooks() {
+	w.Hooks().OnListen(func() error { return nil })
+}
+
+func main() {
+	build().Hooks().OnListen(func() error { return nil })
+	register(build())
+}
+`)
+
+	appRun(t, dir, olderV2On("2.45.0"))
+
+	content := appRead(t, dir, "main.go")
+	assert.Equal(t, 4, strings.Count(content, "OnListen(func(fiber.ListenData) error { return nil })"), content)
+	assert.NotContains(t, content, "func() error")
 	assert.Empty(t, internal.DrainNotes(dir))
 }
