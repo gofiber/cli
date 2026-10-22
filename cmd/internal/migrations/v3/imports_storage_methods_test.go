@@ -647,6 +647,7 @@ func (s *Store) Close() error                                        { return ni
 		"taken.go":   "package b\n\nimport (\n\t\"time\"\n\n\t\"example.com/context\"\n)\n" + storage + "\nvar _ = context.Background\n",
 		"single.go":  "package c\n\nimport \"time\"\n" + storage,
 		"none.go":    "package d\n\nimport \"time\"\n" + storage,
+		"groups.go":  "package e\n\nimport (\n\t\"sync\"\n\t\"time\"\n\n\t\"example.com/other\"\n)\n" + storage + "\nvar _ sync.Mutex\nvar _ other.Thing\n",
 	})
 
 	require.NoError(t, v3.MigrateStorageInterface(newCmd(&bytes.Buffer{}), dir, nil, nil))
@@ -662,6 +663,11 @@ func (s *Store) Close() error                                        { return ni
 	single := importsRead(t, dir, "single.go")
 	assert.Contains(t, single, "import (\n\t\"context\"\n\t\"time\"\n)")
 	assert.Contains(t, single, "func (s *Store) GetWithContext(_ context.Context, key string)")
+
+	// The package of the standard library joins the group of the standard library.
+	groups := importsRead(t, dir, "groups.go")
+	assert.Contains(t, groups, "import (\n\t\"context\"\n\t\"sync\"\n\t\"time\"\n\n\t\"example.com/other\"\n)")
+	assert.Contains(t, groups, "func (s *Store) GetWithContext(_ context.Context, key string)")
 }
 
 func Test_MigrateStorageInterface_TestFilesAndExternalTestPackages(t *testing.T) {

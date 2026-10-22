@@ -543,13 +543,8 @@ func (p importsStoragePackages) addMethods(content string, fi internal.FileInfo,
 	if !addImport {
 		return out
 	}
-	g2, ok := parseSource(out)
-	if !ok {
-		return content
-	}
-	var imp editSet
-	importsAdd(g2, &imp, importAs, importsContextPath)
-	return imp.apply(out)
+	// A package of the standard library goes with the others at the top of the block.
+	return ctxAddImportAs(out, importsContextPath, "context", importAs)
 }
 
 // importsOldMethods are the methods of Fiber v2's Storage that v3 gave a twin that
