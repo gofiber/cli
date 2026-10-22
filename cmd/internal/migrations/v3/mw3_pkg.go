@@ -31,10 +31,21 @@ type mw3Pkgs struct {
 	// indexes give the view of the whole module, for the facts that reach into
 	// other packages of it.
 	indexes moduleIndexes
+	// ctx tells which types are the request context of Fiber, made when first asked.
+	ctx *ctxRun
 }
 
 func newMw3Pkgs() *mw3Pkgs {
 	return &mw3Pkgs{pkgs: map[string]*mw3Pkg{}}
+}
+
+// contexts returns what the migrations of the request context know of the run: the
+// environments of the files, which say what is a context.
+func (p *mw3Pkgs) contexts() *ctxRun {
+	if p.ctx == nil {
+		p.ctx = newCtxRun()
+	}
+	return p.ctx
 }
 
 // mw3Pkg holds the facts about the files of one package, which a single file
