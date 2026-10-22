@@ -2,7 +2,6 @@ package v3
 
 import (
 	"bytes"
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -21,12 +20,16 @@ type generatedFile struct {
 	// marker is a sentence that is part of the source and tells that the file was
 	// added by an earlier run, so that a second run leaves it alone.
 	marker string
-	// source is the text of the file, with a %s for the name of the package.
+	// source is the text of the file, with {{pkg}} where the name of the package
+	// goes. (It is no format string: the code in it may hold % signs.)
 	source string
 	// idents are the top level names the file declares. A package that declares
 	// one of them already cannot have the file.
 	idents []string
 }
+
+// generatedPkgPlaceholder stands for the package name in the source of a generated file.
+const generatedPkgPlaceholder = "{{pkg}}"
 
 // ensureGeneratedFile makes sure the package of the file fi has the generated
 // file, adding it on first use. It reports false when the package cannot have it:
@@ -54,7 +57,7 @@ func ensureGeneratedFile(fi internal.FileInfo, pkgName string, gf generatedFile)
 		}
 	}
 
-	source := fmt.Sprintf(gf.source, pkgName)
+	source := strings.ReplaceAll(gf.source, generatedPkgPlaceholder, pkgName)
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil { //nolint:gosec // a source file of the project, not a secret
 		return false
 	}

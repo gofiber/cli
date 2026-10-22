@@ -17,7 +17,7 @@ func Test_ensureGeneratedFile(t *testing.T) {
 	gf := generatedFile{
 		name:   "fiber_migrate_test_shim.go",
 		marker: `added by "fiber migrate" (test)`,
-		source: "// This file was " + `added by "fiber migrate" (test)` + "\n\npackage %s\n\ntype fiberMigrateShim struct{}\n",
+		source: "// This file was " + `added by "fiber migrate" (test)` + "\n\npackage {{pkg}}\n\ntype fiberMigrateShim struct{}\n\nvar fiberMigrateFormat = \"%d %s\"\n",
 		idents: []string{"fiberMigrateShim"},
 	}
 
