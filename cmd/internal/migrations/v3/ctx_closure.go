@@ -125,6 +125,14 @@ func (n ctxNamer) fresh(base string) string {
 	return name
 }
 
+// The types and names that the parameters of a function literal are given.
+const (
+	ctxLitString = "string"
+	ctxLitInt    = "int"
+	ctxLitInts   = "...int"
+	ctxLitKey    = "key"
+)
+
 // ctxOperand is a value that the call being rewritten evaluates before it runs.
 type ctxOperand struct {
 	// expr is the operand as it was written, which tells whether it is pure.
@@ -179,9 +187,5 @@ func (l *ctxLiteral) bind(op ctxOperand) string {
 
 // text returns the literal with the results and the body, and the call of it.
 func (l *ctxLiteral) text(results, body string) string {
-	var b strings.Builder
-	b.WriteString("func(" + strings.Join(l.params, ", ") + ") " + results + " {\n")
-	b.WriteString(body)
-	b.WriteString("\n}(" + strings.Join(l.args, ", ") + ")")
-	return b.String()
+	return "func(" + strings.Join(l.params, ", ") + ") " + results + " {\n" + body + "\n}(" + strings.Join(l.args, ", ") + ")"
 }

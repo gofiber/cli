@@ -250,19 +250,18 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 				}
 				continue
 			}
-			args = append(args, lit.bind(ctxOperand{expr: arg, text: ctxRenderNode(e, g, arg), typ: "string", name: target.param}))
+			args = append(args, lit.bind(ctxOperand{expr: arg, text: ctxRenderNode(e, g, arg), typ: ctxLitString, name: target.param}))
 		}
 
 		// The first status is the one v2 uses; the other ones are not used, but
 		// evaluating them may do something.
-		first := ctxOperand{expr: statuses[0], text: ctxRenderNode(e, g, statuses[0]), typ: "int", name: "status"}
-		var body strings.Builder
-		var status string
+		first := ctxOperand{expr: statuses[0], text: ctxRenderNode(e, g, statuses[0]), typ: ctxLitInt, name: "status"}
+		var body, status string
 		if call.Ellipsis.IsValid() {
-			first.typ, first.name, first.spread = "...int", "codes", true
+			first.typ, first.name, first.spread = ctxLitInts, "codes", true
 			codes := lit.bind(first)
 			status = lit.namer.fresh("status")
-			fmt.Fprintf(&body, "%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n", status, env.qual(ctxStatusFound), codes)
+			body = fmt.Sprintf("%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n", status, env.qual(ctxStatusFound), codes)
 		} else {
 			status = lit.bind(first)
 			if extras := statuses[1:]; slices.ContainsFunc(extras, func(x ast.Expr) bool { return !ctxIsPure(x) }) {
@@ -270,12 +269,12 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 				for i, extra := range extras {
 					texts[i] = ctxRenderNode(e, g, extra)
 				}
-				lit.bind(ctxOperand{text: strings.Join(texts, ", "), typ: "...int", unused: true})
+				lit.bind(ctxOperand{text: strings.Join(texts, ", "), typ: ctxLitInts, unused: true})
 			}
 		}
-		body.WriteString("return " + recv + ".Redirect().Status(" + status + ")." + target.method + "(" + strings.Join(args, ", ") + ")")
+		body += "return " + recv + ".Redirect().Status(" + status + ")." + target.method + "(" + strings.Join(args, ", ") + ")"
 
-		text := lit.text("error", body.String())
+		text := lit.text("error", body)
 		if comments := ctxStrayComments(g, call, append(slices.Clone(before), statuses[0])); len(comments) > 0 {
 			text += " " + strings.Join(comments, " ")
 		}

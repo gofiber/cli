@@ -184,11 +184,11 @@ type ctxSite struct {
 // function body declares it, which is the case for the names of the package,
 // the imports and the predeclared ones.
 func ctxResolveSite(name string, pos token.Pos, stack []ast.Node) (site ctxSite, ok bool) {
-	for i := len(stack) - 1; i >= 0; i-- {
+	for i, node := range slices.Backward(stack) {
 		scope := stack[:i+1]
 		var stmts []ast.Stmt
 
-		switch n := stack[i].(type) {
+		switch n := node.(type) {
 		case *ast.BlockStmt:
 			stmts = n.List
 		case *ast.CaseClause:

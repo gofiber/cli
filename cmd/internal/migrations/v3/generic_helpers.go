@@ -182,8 +182,8 @@ func ctxQueueParamsIntLiteral(plan *ctxPlan, env *ctxEnv, call *ast.CallExpr, se
 		key, defaults := call.Args[0], call.Args[1]
 		lit := &ctxLiteral{namer: newCtxNamer([]ast.Expr{sel.X, key, defaults}, append(ctxFiberNames(env), strconvName)...)}
 		recv := lit.bind(ctxOperand{expr: sel.X, text: ctxRenderNode(e, g, sel.X), typ: env.qual(ctxTypeCtx), name: "c"})
-		keyRef := lit.bind(ctxOperand{expr: key, text: ctxRenderNode(e, g, key), typ: "string", name: "key"})
-		defaultsRef := lit.bind(ctxOperand{expr: defaults, text: ctxRenderNode(e, g, defaults), typ: "...int", name: "defaults", spread: true})
+		keyRef := lit.bind(ctxOperand{expr: key, text: ctxRenderNode(e, g, key), typ: ctxLitString, name: ctxLitKey})
+		defaultsRef := lit.bind(ctxOperand{expr: defaults, text: ctxRenderNode(e, g, defaults), typ: ctxLitInts, name: "defaults", spread: true})
 
 		value, errName := lit.namer.fresh("value"), lit.namer.fresh("err")
 		body := fmt.Sprintf(`%[1]s, %[2]s := %[3]s.Atoi(%[4]s.Params(%[5]s))
