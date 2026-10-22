@@ -125,8 +125,7 @@ func handler(c *fiber.Ctx) error {
 	return err
 }
 `,
-			msg:   "Migrating context method renames",
-			notes: []string{"main.go:10: c.Range takes an int64 size in Fiber v3"},
+			msg: "Migrating context method renames",
 		},
 		{
 			name: "aliased import and fields",

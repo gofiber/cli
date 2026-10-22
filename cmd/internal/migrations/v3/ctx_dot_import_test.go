@@ -95,13 +95,12 @@ import . "github.com/gofiber/fiber/v2"
 
 func handler(c *Ctx) error {
 	if c.Query("a") == "1" {
-		return c.Redirect().Route("home", RedirectConfig{Params: Map{"id": 1}})
+		return c.Redirect().Status(StatusFound).Route("home", RedirectConfig{Params: Map{"id": 1}})
 	}
 	return c.Redirect().Status(StatusFound).To("/x")
 }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:7: A redirect without a status answers 303 See Other in Fiber v3, where v2 answered 302 Found: add .Status(StatusFound)"},
+			msg: "Migrating redirect methods",
 		},
 	})
 }

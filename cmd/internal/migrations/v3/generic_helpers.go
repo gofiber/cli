@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"slices"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -36,7 +37,10 @@ const ctxParamsInt = "ParamsInt"
 // ParamsInt returned an error as well: without a default it becomes
 // strconv.Atoi(c.Params(key)), which keeps the error, and with a default
 // fiber.Params[int](c, key, default), error(nil), because v2 never returned an
-// error then. Only methods of a fiber context are rewritten.
+// error then. With a spread of defaults it depends on how many there are when
+// the call runs, so it becomes a function literal that is called at once and
+// returns the first default, or the error when there is none. Only methods of a
+// fiber context are rewritten.
 func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -77,6 +81,10 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if sel, isSel := n.(*ast.SelectorExpr); isSel {
+			ctxNoteHelperValue(noter, env, sel, stack)
+			return true
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -96,6 +104,12 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			// The getters that return one value take the same default values in v3, a
 			// slice spread included. ParamsInt does not: whether it returns an error
 			// depends on the number of defaults, which is only known when it runs.
+			if call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt && len(call.Args) == 2 &&
+				!importsShadowed(strconvName, call.Pos(), stack) {
+				needStrconv = true
+				ctxQueueParamsIntLiteral(&plan, env, call, sel, strconvName)
+				return true
+			}
 			if len(call.Args) == 0 || (call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt) {
 				noter.notef(sel.Pos(),
 					"%s was removed in Fiber v3 and takes its default values from a slice here: use %s(c, key, ...) by hand",
@@ -123,6 +137,23 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 	return out
 }
 
+// ctxNoteHelperValue reports a typed getter of the context that is used as a
+// value, without being called, which the generic helper can not stand in for.
+func ctxNoteHelperValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+	helper, ok := ctxGenericHelpers[sel.Sel.Name]
+	if !ok {
+		return
+	}
+	if _, isCall := ctxParentCall(sel, stack); isCall {
+		return
+	}
+	if env.receiverKind(sel, stack, "Params") == ctxYes {
+		noter.notef(sel.Pos(),
+			"%s is used as a value and was removed in Fiber v3: call %s[%s](c, key, ...) from a function literal instead",
+			env.g.text(sel), env.qual(helper.fn), helper.typ)
+	}
+}
+
 // ctxQueueHelper queues the rewrite of one call of a typed getter. The
 // arguments keep their text, only what comes before and after them changes:
 //
@@ -147,6 +178,49 @@ func ctxQueueHelper(plan *ctxPlan, g *goSource, call *ast.CallExpr, sel *ast.Sel
 			end := g.offset(call.End())
 			e.replace(end, end, tail)
 		}
+	})
+}
+
+// ctxQueueParamsIntLiteral queues the rewrite of c.ParamsInt(key, defaults...),
+// whose defaults are a slice: v2 returned the first default, and no error, when
+// the parameter is no integer and there is a default, and the error when there is
+// none. A function literal that is called at once has the same two results
+// wherever the call was used:
+//
+//	func() (int, error) {
+//	    value, err := strconv.Atoi(c.Params(key))
+//	    if err != nil {
+//	        if len(defaults) > 0 {
+//	            return defaults[0], nil
+//	        }
+//	        return 0, err
+//	    }
+//	    return value, nil
+//	}()
+func ctxQueueParamsIntLiteral(plan *ctxPlan, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr, strconvName string) {
+	g := env.g
+	plan.add(func(e *editSet) {
+		key, defaults := call.Args[0], call.Args[1]
+		lit := &ctxLiteral{namer: newCtxNamer([]ast.Expr{sel.X, key, defaults}, append(ctxFiberNames(env), strconvName)...)}
+		recv := lit.bind(ctxOperand{expr: sel.X, text: ctxRenderNode(e, g, sel.X), typ: env.qual(ctxTypeCtx), name: "c"})
+		keyRef := lit.bind(ctxOperand{expr: key, text: ctxRenderNode(e, g, key), typ: ctxLitString, name: ctxLitKey})
+		defaultsRef := lit.bind(ctxOperand{expr: defaults, text: ctxRenderNode(e, g, defaults), typ: ctxLitInts, name: "defaults", spread: true})
+
+		value, errName := lit.namer.fresh("value"), lit.namer.fresh("err")
+		body := fmt.Sprintf(`%[1]s, %[2]s := %[3]s.Atoi(%[4]s.Params(%[5]s))
+if %[2]s != nil {
+if len(%[6]s) > 0 {
+return %[6]s[0], nil
+}
+return 0, %[2]s
+}
+return %[1]s, nil`, value, errName, strconvName, recv, keyRef, defaultsRef)
+
+		text := lit.text("(int, error)", body)
+		if comments := ctxStrayComments(g, call, call.Args); len(comments) > 0 {
+			text += " " + strings.Join(comments, " ")
+		}
+		e.replaceNode(g, call, text)
 	})
 }
 

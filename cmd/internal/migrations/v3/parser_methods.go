@@ -26,8 +26,10 @@ const ctxAllParams = "AllParams"
 
 // MigrateParserMethods turns the parsers of the request context into the
 // binders of v3 (c.BodyParser(&v) becomes c.Bind().Body(&v)) and replaces
-// AllParams, which v3 does not have, with the code that builds the same map.
-// Only methods of a fiber context are rewritten.
+// AllParams, which v3 does not have, with the code that builds the same map: a
+// function literal that is called at once, or, where the method is used as a
+// value, the func() map[string]string itself. Only methods of a fiber context
+// are rewritten.
 func MigrateParserMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	methods := []string{"BodyParser", "CookieParser", "ParamsParser", "QueryParser", ctxAllParams}
 	run := newCtxRun()
@@ -75,7 +77,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 		switch kind {
 		case ctxYes:
 			if sel.Sel.Name == ctxAllParams {
-				ctxQueueAllParams(&plan, noter, env, sel, stack)
+				ctxQueueAllParams(&plan, noter, env, sel, stack, via)
 				return true
 			}
 			plan.qualify(g, sel, via)
@@ -102,23 +104,57 @@ func ctxParserHint(sel *ast.SelectorExpr) string {
 	return "a loop over Route().Params that calls Params"
 }
 
-// ctxQueueAllParams queues the replacement of the call c.AllParams(), which v3
-// removed, with a function literal that builds the same map.
-func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+// ctxQueueAllParams queues the replacement of c.AllParams(), which v3 removed,
+// with a function literal that builds the same map. via is the field to go
+// through when the receiver is a wrapper that hides a method of the context.
+//
+// A call becomes a literal that is called at once with the context. The method
+// value c.AllParams, which is not called, becomes the literal itself, a
+// func() map[string]string: a context that is a plain variable is used by the
+// literal as it is, any other receiver is evaluated where the method value was,
+// as Go does, and handed to the literal that returns the function. A type that
+// embeds the context hands the embedded context over, as AllParams of v2 used
+// that one and not what the type declares.
+func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node, via string) {
 	call, isCall := ctxParentCall(sel, stack)
-	if !isCall || len(call.Args) != 0 {
+	if isCall && len(call.Args) != 0 {
 		noter.notef(sel.Pos(), "AllParams does not exist in Fiber v3: build the map with a loop over c.Route().Params that calls c.Params(name)")
 		return
 	}
 
+	// The method belongs to the context, whatever the type that embeds it does
+	// with the names of its methods: the literal gets the context itself.
+	if via == "" {
+		via = env.embeddedCtxOf(sel.X, stack)
+	}
+
 	plan.add(func(e *editSet) {
 		recv := ctxRenderNode(e, env.g, sel.X)
-		e.replaceNode(env.g, call, fmt.Sprintf(`func(c %s) map[string]string {
-	params := make(map[string]string, len(c.Route().Params))
-	for _, name := range c.Route().Params {
-		params[name] = c.Params(name)
-	}
-	return params
-}(%s)`, env.qual(ctxTypeCtx), recv))
+		if via != "" {
+			recv += "." + via
+		}
+		ctxType := env.qual(ctxTypeCtx)
+
+		switch id, isIdent := sel.X.(*ast.Ident); {
+		case isCall:
+			e.replaceNode(env.g, call, "func(c "+ctxType+") map[string]string {\n"+ctxAllParamsBody("c", "params", "name")+"\n}("+recv+")")
+		case isIdent && via == "":
+			namer := newCtxNamer([]ast.Expr{id})
+			params, name := namer.fresh("params"), namer.fresh("name")
+			e.replaceNode(env.g, sel, "func() map[string]string {\n"+ctxAllParamsBody(id.Name, params, name)+"\n}")
+		default:
+			e.replaceNode(env.g, sel, "func(c "+ctxType+") func() map[string]string {\nreturn func() map[string]string {\n"+
+				ctxAllParamsBody("c", "params", "name")+"\n}\n}("+recv+")")
+		}
 	})
+}
+
+// ctxAllParamsBody returns the statements that build the map AllParams
+// returned from the route parameters of the context ctx.
+func ctxAllParamsBody(ctx, params, name string) string {
+	return fmt.Sprintf(`%[1]s := make(map[string]string, len(%[3]s.Route().Params))
+for _, %[2]s := range %[3]s.Route().Params {
+%[1]s[%[2]s] = %[3]s.Params(%[2]s)
+}
+return %[1]s`, params, name, ctx)
 }

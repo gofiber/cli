@@ -22,11 +22,15 @@ const (
 // MigrateRedirectMethods turns the redirect methods of the request context into
 // the Redirect() builder of v3:
 //
-//	c.Redirect(to[, status])                 c.Redirect().[Status(status).]To(to)
-//	c.RedirectBack(fallback[, status])       c.Redirect().[Status(status).]Back(fallback)
-//	c.RedirectToRoute(name, params[, status]) c.Redirect().[Status(status).]Route(name, fiber.RedirectConfig{Params: params})
+//	c.Redirect(to[, status])                  c.Redirect().Status(status).To(to)
+//	c.RedirectBack(fallback[, status])        c.Redirect().Status(status).Back(fallback)
+//	c.RedirectToRoute(name, params[, status]) c.Redirect().Status(status).Route(name, fiber.RedirectConfig{Params: params})
 //
-// Only methods of a fiber context are rewritten.
+// v2 answers 302 Found when there is no status where the builder of v3 answers
+// 303 See Other, so the status is spelled out: fiber.StatusFound. Only the first
+// status counts in v2; a spread of statuses becomes a function literal that
+// picks the first one, or the default. Only methods of a fiber context are
+// rewritten.
 func MigrateRedirectMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -62,6 +66,10 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if sel, isSel := n.(*ast.SelectorExpr); isSel {
+			ctxNoteRedirectValue(noter, env, sel, stack)
+			return true
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -101,15 +109,33 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	return plan.apply(content)
 }
 
-// ctxRedirectTarget is the method of the v3 builder that ends the chain, and the
-// number of arguments before the status the v2 method takes.
+// ctxNoteRedirectValue reports a redirect method of the context that is used as a
+// value, without being called, which no call of the builder can stand in for.
+func ctxNoteRedirectValue(noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+	if _, isCall := ctxParentCall(sel, stack); isCall {
+		return
+	}
+	if _, ok := ctxRedirectTarget[sel.Sel.Name]; !ok {
+		return
+	}
+	if kind, _ := env.receiverKindVia(sel, stack, ctxRedirect); kind == ctxYes {
+		noter.notef(sel.Pos(),
+			"%s is used as a value, which does not exist in Fiber v3: call the Redirect() builder (Status(code).To, Back or Route) from a function literal instead",
+			env.g.text(sel))
+	}
+}
+
+// ctxRedirectTarget is the method of the v3 builder that ends the chain, the
+// number of arguments before the status the v2 method takes and the name its
+// first argument gets as the parameter of a function literal.
 var ctxRedirectTarget = map[string]struct {
 	method string
+	param  string
 	args   int
 }{
-	ctxRedirect:        {method: "To", args: 1},
-	ctxRedirectBack:    {method: "Back", args: 1},
-	ctxRedirectToRoute: {method: "Route", args: 2},
+	ctxRedirect:        {method: "To", param: "to", args: 1},
+	ctxRedirectBack:    {method: "Back", param: "fallback", args: 1},
+	ctxRedirectToRoute: {method: "Route", param: "name", args: 2},
 }
 
 // ctxQueueRedirect queues the rewrite of one call of a v2 redirect method. The
@@ -117,6 +143,12 @@ var ctxRedirectTarget = map[string]struct {
 // counterpart, except for the params of RedirectToRoute, which move into the
 // RedirectConfig, so it is the position that tells the status, not its type. via
 // is the field to go through when the receiver is a wrapper that hides Redirect.
+//
+// v2 answers 302 Found unless it is told otherwise where the builder of v3
+// answers 303 See Other, so a call without a status gets Status(StatusFound).
+// v2 uses the first status only and ignores the others: the ones after it are
+// left out, and a call that has a spread of statuses becomes a function literal
+// that picks the first one.
 func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr, via string) {
 	g := env.g
 	name := sel.Sel.Name
@@ -124,33 +156,41 @@ func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.Cal
 
 	// The status comes after the target and, for a route, the params.
 	statusAt := target.args
-	if call.Ellipsis.IsValid() || len(call.Args) > statusAt+1 {
+	var statuses []ast.Expr
+	if len(call.Args) > statusAt {
+		statuses = call.Args[statusAt:]
+	}
+	spread := call.Ellipsis.IsValid()
+	if spread && len(statuses) != 1 {
 		noter.notef(sel.Pos(),
-			"%s was called with more arguments than Redirect().%s takes: rewrite this call by hand as Redirect().Status(code).%s(...)",
+			"%s was called with a spread of arguments that Redirect().%s does not take: rewrite this call by hand as Redirect().Status(code).%s(...)",
 			g.text(sel), target.method, target.method)
 		return
 	}
 
-	hasStatus := len(call.Args) > statusAt
-	if !hasStatus {
-		noter.oncef("redirect-status", sel.Pos(),
-			"A redirect without a status answers 303 See Other in Fiber v3, where v2 answered 302 Found: add .Status(%s) to the ones where 302 matters",
-			env.qual("StatusFound"))
+	if spread || ctxRedirectNeedsLiteral(call.Args[:min(len(call.Args), statusAt)], statuses) {
+		ctxQueueRedirectLiteral(plan, noter, env, call, sel, via)
+		return
 	}
 
 	// Only the name changes while the arguments stay where they are.
 	hasParams := name == ctxRedirectToRoute && len(call.Args) > 1
 	plan.qualify(g, sel, via)
-	if !hasStatus && !hasParams {
-		plan.add(func(e *editSet) { e.replaceNode(g, sel.Sel, "Redirect()."+target.method) })
+	if len(statuses) == 0 && !hasParams {
+		plan.add(func(e *editSet) {
+			e.replaceNode(g, sel.Sel, "Redirect().Status("+env.qual(ctxStatusFound)+")."+target.method)
+		})
 		return
 	}
 
 	plan.add(func(e *editSet) {
-		text := "Redirect()"
-		if hasStatus {
-			text += ".Status(" + ctxRenderNode(e, g, call.Args[statusAt]) + ")"
+		status := env.qual(ctxStatusFound)
+		kept := call.Args[:min(len(call.Args), statusAt)]
+		if len(statuses) > 0 {
+			status = ctxRenderNode(e, g, statuses[0])
+			kept = append(slices.Clone(kept), statuses[0])
 		}
+		text := "Redirect().Status(" + status + ")"
 
 		var args []string
 		for i, arg := range call.Args[:min(len(call.Args), statusAt)] {
@@ -164,11 +204,108 @@ func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.Cal
 		}
 		text += "." + target.method + "(" + strings.Join(args, ", ") + ")"
 
-		if comments := ctxStrayComments(g, call); len(comments) > 0 {
+		if comments := ctxStrayComments(g, call, kept); len(comments) > 0 {
 			text += " " + strings.Join(comments, " ")
 		}
 		e.replace(g.offset(sel.Sel.Pos()), g.offset(call.End()), text)
 	})
+}
+
+// ctxStatusFound is the status v2 answers a redirect with when it is not told
+// another one.
+const ctxStatusFound = "StatusFound"
+
+// ctxRedirectNeedsLiteral reports whether a call without a spread of statuses
+// can not simply be rewritten as the chain of the builder: a status after the
+// first is only left out when evaluating it does nothing, and the first one
+// moves in front of the arguments that precede it, which is only the same when
+// not both of them have effects.
+func ctxRedirectNeedsLiteral(before, statuses []ast.Expr) bool {
+	if len(statuses) == 0 {
+		return false
+	}
+	if slices.ContainsFunc(statuses[1:], func(e ast.Expr) bool { return !ctxIsPure(e) }) {
+		return true
+	}
+	return !ctxIsPure(statuses[0]) && slices.ContainsFunc(before, func(e ast.Expr) bool { return !ctxIsPure(e) })
+}
+
+// ctxQueueRedirectLiteral queues the rewrite of a call whose statuses have to
+// be evaluated or picked at run time as a function literal that is called at
+// once:
+//
+//	c.Redirect(to, codes...)    func() error {
+//	                                status := fiber.StatusFound
+//	                                if len(codes) > 0 { status = codes[0] }
+//	                                return c.Redirect().Status(status).To(to)
+//	                            }()
+//
+// The operands that do something when they are evaluated are handed to the
+// literal as arguments, in the order the call evaluated them.
+func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.CallExpr, sel *ast.SelectorExpr, via string) {
+	g := env.g
+	name := sel.Sel.Name
+	target := ctxRedirectTarget[name]
+	statusAt := target.args
+
+	plan.add(func(e *editSet) {
+		before := call.Args[:min(len(call.Args), statusAt)]
+		var statuses []ast.Expr
+		if len(call.Args) > statusAt {
+			statuses = call.Args[statusAt:]
+		}
+
+		lit := &ctxLiteral{namer: newCtxNamer(append([]ast.Expr{sel.X}, call.Args...), ctxFiberNames(env)...)}
+		recvText := ctxRenderNode(e, g, sel.X)
+		if via != "" {
+			recvText += "." + via
+		}
+		recv := lit.bind(ctxOperand{expr: sel.X, text: recvText, typ: env.qual(ctxTypeCtx), name: "c"})
+
+		var args []string
+		for i, arg := range before {
+			if name == ctxRedirectToRoute && i == 1 {
+				if cfg := ctxRouteConfig(e, noter, env, arg); cfg != "" {
+					args = append(args, lit.bind(ctxOperand{expr: arg, text: cfg, typ: env.qual("RedirectConfig"), name: "cfg"}))
+				}
+				continue
+			}
+			args = append(args, lit.bind(ctxOperand{expr: arg, text: ctxRenderNode(e, g, arg), typ: ctxLitString, name: target.param}))
+		}
+
+		// The first status is the one v2 uses; the other ones are not used, but
+		// evaluating them may do something.
+		first := ctxOperand{expr: statuses[0], text: ctxRenderNode(e, g, statuses[0]), typ: ctxLitInt, name: "status"}
+		var body, status string
+		if call.Ellipsis.IsValid() {
+			first.typ, first.name, first.spread = ctxLitInts, "codes", true
+			codes := lit.bind(first)
+			status = lit.namer.fresh("status")
+			body = fmt.Sprintf("%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n", status, env.qual(ctxStatusFound), codes)
+		} else {
+			status = lit.bind(first)
+			if extras := statuses[1:]; slices.ContainsFunc(extras, func(x ast.Expr) bool { return !ctxIsPure(x) }) {
+				texts := make([]string, len(extras))
+				for i, extra := range extras {
+					texts[i] = ctxRenderNode(e, g, extra)
+				}
+				lit.bind(ctxOperand{text: strings.Join(texts, ", "), typ: ctxLitInts, unused: true})
+			}
+		}
+		body += "return " + recv + ".Redirect().Status(" + status + ")." + target.method + "(" + strings.Join(args, ", ") + ")"
+
+		text := lit.text("error", body)
+		if comments := ctxStrayComments(g, call, append(slices.Clone(before), statuses[0])); len(comments) > 0 {
+			text += " " + strings.Join(comments, " ")
+		}
+		e.replaceNode(g, call, text)
+	})
+}
+
+// ctxFiberNames returns the names the file binds to the fiber package, which
+// the body of a function literal refers to.
+func ctxFiberNames(env *ctxEnv) []string {
+	return slices.DeleteFunc(slices.Clone(env.names), func(name string) bool { return name == "." })
 }
 
 // ctxRouteConfig returns the RedirectConfig that carries the params of a v2

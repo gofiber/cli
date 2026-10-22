@@ -44,7 +44,7 @@ type Context struct{ *fiber.Ctx }
 // Redirect hides the one of the embedded context.
 func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().Status(301).To(to) }
 
-func (c *Context) Back() error { return c.Ctx.Redirect().Back("/") }
+func (c *Context) Back() error { return c.Ctx.Redirect().Status(fiber.StatusFound).Back("/") }
 
 func (c *Context) Home() error {
 	return c.Ctx.Redirect().Status(301).Route("home", fiber.RedirectConfig{Params: fiber.Map{"id": 1}})
@@ -54,8 +54,7 @@ func handler(c *Context) error {
 	return c.Redirect("/x")
 }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"302"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "a wrapper without the hiding method needs no detour",
@@ -73,10 +72,9 @@ import "github.com/gofiber/fiber/v2"
 
 type Context struct{ *fiber.Ctx }
 
-func (c *Context) Back() error { return c.Redirect().Back("/") }
+func (c *Context) Back() error { return c.Redirect().Status(fiber.StatusFound).Back("/") }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"303"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "a wrapper of a wrapper goes down to the context",
@@ -104,12 +102,11 @@ func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().Status(301
 
 type Page struct{ *Context }
 
-func (p *Page) Back() error { return p.Context.Ctx.Redirect().Back("/") }
+func (p *Page) Back() error { return p.Context.Ctx.Redirect().Status(fiber.StatusFound).Back("/") }
 
 func (p *Page) Own() error { return p.Redirect("/own") }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"303 See Other"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "a wrapper that holds the context in a named field is no wrapper",

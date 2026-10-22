@@ -53,7 +53,7 @@ const permanent = 301
 
 func handler(c *fiber.Ctx) error {
 	if c.Query("a") == "1" {
-		return c.Redirect().To("/a")
+		return c.Redirect().Status(fiber.StatusFound).To("/a")
 	}
 	if c.Query("a") == "2" {
 		return c.Redirect().Status(fiber.StatusMovedPermanently).To("/b")
@@ -68,8 +68,7 @@ func handler(c *fiber.Ctx) error {
 	return c.Redirect().Status(permanent).To("/d")
 }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:14: A redirect without a status answers 303 See Other"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "RedirectBack",
@@ -94,7 +93,7 @@ import "github.com/gofiber/fiber/v2"
 
 func handler(c *fiber.Ctx) error {
 	if c.Query("a") == "1" {
-		return c.Redirect().Back("/")
+		return c.Redirect().Status(fiber.StatusFound).Back("/")
 	}
 	code := 307
 	if c.Query("a") == "2" {
@@ -103,8 +102,7 @@ func handler(c *fiber.Ctx) error {
 	return c.Redirect().Status(fiber.StatusFound).Back("/")
 }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:7: A redirect without a status answers 303 See Other"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "RedirectToRoute",
@@ -136,22 +134,21 @@ import "github.com/gofiber/fiber/v2"
 func handler(c *fiber.Ctx) error {
 	switch c.Query("a") {
 	case "1":
-		return c.Redirect().Route("home", fiber.RedirectConfig{Params: fiber.Map{"id": 1}})
+		return c.Redirect().Status(fiber.StatusFound).Route("home", fiber.RedirectConfig{Params: fiber.Map{"id": 1}})
 	case "2":
 		return c.Redirect().Status(fiber.StatusSeeOther).Route("home", fiber.RedirectConfig{Params: fiber.Map{"id": 1}})
 	case "3":
 		code := 307
 		return c.Redirect().Status(code).Route("home", fiber.RedirectConfig{Params: fiber.Map{}})
 	case "4":
-		return c.Redirect().Route("home")
+		return c.Redirect().Status(fiber.StatusFound).Route("home")
 	case "5":
 		return c.Redirect().Status(301).Route("home", fiber.RedirectConfig{Params: map[string]interface{}{"id": 1, "x": "y"}})
 	}
-	return c.Redirect().Route("home", fiber.RedirectConfig{Params: fiber.Map{"id": 1}, Queries: map[string]string{"a": "b"}})
+	return c.Redirect().Status(fiber.StatusFound).Route("home", fiber.RedirectConfig{Params: fiber.Map{"id": 1}, Queries: map[string]string{"a": "b"}})
 }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:8: A redirect without a status answers 303 See Other"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "the queries entry moves and the rest of the params stays as written",
@@ -201,11 +198,11 @@ func handler(c *fiber.Ctx, params fiber.Map) error {
 import "github.com/gofiber/fiber/v2"
 
 func handler(c *fiber.Ctx, params fiber.Map) error {
-	return c.Redirect().Route("home", fiber.RedirectConfig{Params: params})
+	return c.Redirect().Status(fiber.StatusFound).Route("home", fiber.RedirectConfig{Params: params})
 }
 `,
 			msg:   "Migrating redirect methods",
-			notes: []string{"main.go:6: RedirectToRoute took a \"queries\" entry", "main.go:6: A redirect without a status answers 303"},
+			notes: []string{"main.go:6: RedirectToRoute took a \"queries\" entry"},
 		},
 		{
 			name: "aliased import",
@@ -320,14 +317,13 @@ type Context struct{ *fiber.Ctx }
 // Redirect hides the one of the embedded context.
 func (c *Context) Redirect(to string) error { return c.Ctx.Redirect().Status(301).To(to) }
 
-func (c *Context) Back() error { return c.Ctx.Redirect().Back("/") }
+func (c *Context) Back() error { return c.Ctx.Redirect().Status(fiber.StatusFound).Back("/") }
 
 func handler(c *Context) error {
 	return c.Redirect("/x")
 }
 `,
-			msg:   "Migrating redirect methods",
-			notes: []string{"303 See Other"},
+			msg: "Migrating redirect methods",
 		},
 		{
 			name: "other receivers stay",
@@ -376,7 +372,7 @@ func handler(c *fiber.Ctx) error {
 			notes: []string{"main.go:14: ctx.RedirectBack looks like a Fiber v2 context method"},
 		},
 		{
-			name: "calls that cannot be rewritten are reported",
+			name: "v2 uses the first status only: a spread picks it, the others are left out",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -388,7 +384,24 @@ func handler(c *fiber.Ctx, codes []int) error {
 	return c.Redirect("/x", 301, 302)
 }
 `,
-			notes: []string{"main.go:7: c.Redirect was called with more arguments", "main.go:9: c.Redirect was called with more arguments"},
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx, codes []int) error {
+	if c.Query("a") == "1" {
+		return func() error {
+			status := fiber.StatusFound
+			if len(codes) > 0 {
+				status = codes[0]
+			}
+			return c.Redirect().Status(status).To("/x")
+		}()
+	}
+	return c.Redirect().Status(301).To("/x")
+}
+`,
+			msg: "Migrating redirect methods",
 		},
 	})
 }
