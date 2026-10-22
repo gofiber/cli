@@ -79,6 +79,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateEncryptcookieConfig,
 			v3migrations.MigrateCacheConfig,
 			v3migrations.MigrateEnvVarConfig,
+			v3migrations.MigrateFaviconConfig,
 			v3migrations.MigrateSessionConfig,
 			v3migrations.MigrateSessionExtractor,
 			v3migrations.MigrateSessionStore,

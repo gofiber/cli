@@ -310,3 +310,44 @@ var _ = cache.Config{Expiration: 5, CacheControl: true}
 
 	assert.NotContains(t, out, `"time"`)
 }
+
+func Test_migrateFaviconContent_AddsTheImports(t *testing.T) {
+	t.Parallel()
+
+	out := migrateFaviconContent(`package main
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v3/middleware/favicon"
+)
+
+var assets http.FileSystem = http.Dir("./static")
+
+var _ = favicon.Config{File: "favicon.ico", FileSystem: assets}
+`, mw1FileInfo(t))
+
+	assert.Contains(t, out, "\t\"os\"\n")
+	assert.Contains(t, out, "\t\"io/fs\"\n")
+	assert.Contains(t, out, `var assets fs.FS = os.DirFS("./static")`)
+}
+
+func Test_migrateFaviconContent_UsesTheAliasOfOS(t *testing.T) {
+	t.Parallel()
+
+	out := migrateFaviconContent(`package main
+
+import (
+	"net/http"
+	system "os"
+
+	"github.com/gofiber/fiber/v3/middleware/favicon"
+)
+
+var _ = system.Exit
+var _ = favicon.Config{File: "favicon.ico", FileSystem: http.Dir("./static")}
+`, mw1FileInfo(t))
+
+	assert.Contains(t, out, `system.DirFS("./static")`)
+	assert.Equal(t, 1, strings.Count(out, `"os"`))
+}
