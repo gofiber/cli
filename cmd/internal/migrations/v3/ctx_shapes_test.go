@@ -152,7 +152,8 @@ func handler(c *fiber.Ctx) error {
 	return nil
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 	})
 }

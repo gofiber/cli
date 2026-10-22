@@ -71,7 +71,12 @@ func wrap(a, b string) fiber.Handler { return slow }
 	assert.Contains(t, compact, "}, "+timeoutConfig("timeout", "Timeout: 2 * time.Second")+"))")
 	assert.Contains(t, compact, `timeout.New(wrap("a", "b"), `+timeoutConfig("timeout", "Timeout: 2 * time.Second")+")")
 	assert.Contains(t, run.out, "Migrating timeout middleware configs")
-	assert.Empty(t, run.notes)
+
+	// the project is told once that the handlers of v2 swallowed their errors
+	if assert.Len(t, run.notes, 1, "%v", run.messages()) {
+		assert.Contains(t, run.notes[0].Message, "timeout.New(handler, duration) of v2 logged an error the handler returned")
+		assert.Contains(t, run.notes[0].Message, "(5 more in this project)")
+	}
 }
 
 func Test_MigrateTimeoutConfig_NewWithContext(t *testing.T) {
@@ -223,7 +228,7 @@ func routes(app *f.App) {
 	assert.Contains(t, timeoutCompact(file), "timeout.New(slow, timeout.Config{ Timeout: 5 * time.Second, OnTimeout: func(c f.Ctx) error { return f.ErrRequestTimeout }, })")
 	assert.Equal(t, 2, countOf(file, "OnTimeout: func(c f.Ctx)"))
 	assert.NotContains(t, file, "fiber.")
-	assert.Empty(t, res.notes)
+	assert.Len(t, res.notes, 1, "only the timeout.New of v2 swallowed the errors of its handler: %v", res.notes)
 
 	// and under the name of the parameter the function literal would declare
 	res = mw1Run(t, v3.MigrateTimeoutConfig, `package main

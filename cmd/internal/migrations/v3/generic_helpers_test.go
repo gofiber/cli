@@ -81,7 +81,8 @@ func handler(c *fiber.Ctx) error {
 	return err
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "ParamsInt with a default has no error",
@@ -231,7 +232,8 @@ func handler(c *f.Ctx) error {
 	return err
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "the strconv import is added",
@@ -257,7 +259,8 @@ func handler(c *fiber.Ctx) error {
 	return err
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "the strconv import is not needed",
@@ -314,7 +317,8 @@ func handler(c *fiber.Ctx, defaults []int, fs []float64) {
 	}()
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "other receivers stay",
@@ -339,6 +343,110 @@ func handler(c *fiber.Ctx) int {
 }
 `,
 			notes: []string{"main.go:18: ctx.QueryInt was removed in Fiber v3, but ctx is not known"},
+		},
+	})
+}
+
+// ParamsInt without a default value keeps its error, but the text v2 put in
+// front of it is gone: the project is told once, with the number of other places.
+func Test_MigrateGenericHelpers_ErrorTextNote(t *testing.T) {
+	t.Parallel()
+
+	ctxRunCases(t, v3.MigrateGenericHelpers, []ctxCase{
+		{
+			name: "one place",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	_, err := c.ParamsInt("id")
+	return err
+}
+`,
+			want: `package main
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func handler(c *fiber.Ctx) error {
+	_, err := strconv.Atoi(c.Params("id"))
+	return err
+}
+`,
+			msg:   "Migrating generic helpers",
+			notes: []string{`v2 put "failed to convert: " in front of it`},
+		},
+		{
+			name: "the other places are counted",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func a(c *fiber.Ctx) error {
+	_, err := c.ParamsInt("id")
+	return err
+}
+
+func b(c *fiber.Ctx, defaults ...int) error {
+	_, err := c.ParamsInt("page", defaults...)
+	return err
+}
+`,
+			want: `package main
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func a(c *fiber.Ctx) error {
+	_, err := strconv.Atoi(c.Params("id"))
+	return err
+}
+
+func b(c *fiber.Ctx, defaults ...int) error {
+	_, err := func() (int, error) {
+		value, err := strconv.Atoi(c.Params("page"))
+		if err != nil {
+			if len(defaults) > 0 {
+				return defaults[0], nil
+			}
+			return 0, err
+		}
+		return value, nil
+	}()
+	return err
+}
+`,
+			msg:   "Migrating generic helpers",
+			notes: []string{"(1 more in this project)"},
+		},
+		{
+			name: "a default value leaves no error to change",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	_, err := c.ParamsInt("id", 7)
+	return err
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	_, err := fiber.Params[int](c, "id", 7), error(nil)
+	return err
+}
+`,
+			msg: "Migrating generic helpers",
 		},
 	})
 }

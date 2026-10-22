@@ -30,6 +30,13 @@ const (
 
 const ctxParamsInt = "ParamsInt"
 
+// ctxParamsIntNote says that the error of ParamsInt lost the text v2 put in
+// front of it: the default error handler sends the text of an error in the body.
+const ctxParamsIntNote = "ParamsInt without a default value is strconv.Atoi(c.Params(key)) now: its error reads like " +
+	"the one of strconv, where v2 put \"failed to convert: \" in front of it, and the default error handler sends " +
+	"the text of an error in the body of the response; wrap it with fmt.Errorf(\"failed to convert: %w\", err) " +
+	"if something depends on it"
+
 // MigrateGenericHelpers turns the typed getters of the request context into the
 // generic helpers of v3.
 //
@@ -107,6 +114,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			if call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt && len(call.Args) == 2 &&
 				!importsShadowed(strconvName, call.Pos(), stack) {
 				needStrconv = true
+				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
 				ctxQueueParamsIntLiteral(&plan, env, call, sel, strconvName)
 				return true
 			}
@@ -120,6 +128,9 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			// Without a default the error of ParamsInt is real: keep it.
 			useAtoi := twoValued && len(call.Args) == 1
 			needStrconv = needStrconv || useAtoi
+			if useAtoi {
+				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
+			}
 			ctxQueueHelper(&plan, g, call, sel, generic, strconvName, useAtoi, twoValued && !useAtoi)
 		case ctxUnknown:
 			noter.notef(sel.Pos(),

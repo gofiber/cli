@@ -22,7 +22,11 @@ import (
 // Unavailable unless Config.OnTimeout returns fiber.ErrRequestTimeout, which the
 // config gets, so that the status stays the one the clients know.
 func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, migrateTimeoutContent)
+	var swallowed timeoutSwallowed
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return migrateTimeoutContent(content, fi, &swallowed)
+	})
+	swallowed.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate timeout middleware configs: %w", err)
 	}
@@ -34,7 +38,7 @@ func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 	return nil
 }
 
-func migrateTimeoutContent(content string, fi internal.FileInfo) string {
+func migrateTimeoutContent(content string, fi internal.FileInfo, swallowed *timeoutSwallowed) string {
 	if !strings.Contains(content, "New") {
 		return content
 	}
@@ -48,7 +52,7 @@ func migrateTimeoutContent(content string, fi internal.FileInfo) string {
 	}
 
 	fiber, needsFiber := mw1FiberName(content)
-	rw := &timeoutRewrite{g: g, onTimeout: timeoutOnTimeout(fiber)}
+	rw := &timeoutRewrite{g: g, fi: fi, swallowed: swallowed, onTimeout: timeoutOnTimeout(fiber)}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -96,6 +100,8 @@ type timeoutRewrite struct {
 	// onTimeout is the field every config gets.
 	onTimeout string
 	g         *goSource
+	fi        internal.FileInfo
+	swallowed *timeoutSwallowed
 	edits     editSet
 	// rewrote is set once a call has been given a config that refers to the core
 	// package.
@@ -110,6 +116,36 @@ func (rw *timeoutRewrite) migrateNew(call *ast.CallExpr, pkg string, names []str
 	}
 	rw.edits.replaceNode(rw.g, call.Args[1], rw.config(pkg, rw.g.text(call.Args[1]), ""))
 	rw.rewrote = true
+	rw.swallowed.add(rw.fi, rw.g.line(call.Pos()))
+}
+
+// timeoutSwallowed collects the calls of the timeout.New(handler, d) of v2, which
+// only logged an error its handler returned, so that the project is told once.
+type timeoutSwallowed struct {
+	file   string
+	line   int
+	places int
+}
+
+func (t *timeoutSwallowed) add(fi internal.FileInfo, line int) {
+	if t.places == 0 {
+		t.file, t.line = fi.Rel, line
+	}
+	t.places++
+}
+
+// report records the note for the project in root, if a call was rewritten.
+func (t *timeoutSwallowed) report(root string) {
+	if t.places == 0 {
+		return
+	}
+	msg := "timeout.New(handler, duration) of v2 logged an error the handler returned and sent what the handler had " +
+		"written, usually 200 with an empty body, and answered 408 only after the whole time when the handler panicked; " +
+		"the v3 middleware passes the error on to the error handler and answers 500 at once after a panic"
+	if t.places > 1 {
+		msg += fmt.Sprintf(" (%d more in this project)", t.places-1)
+	}
+	internal.AddNote(root, internal.Note{File: t.file, Line: t.line, Message: msg})
 }
 
 // config writes the timeout.Config that takes the place of the duration (and of

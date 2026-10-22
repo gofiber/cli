@@ -131,7 +131,8 @@ func handler(c *fiber.Ctx, defaults ...int) error {
 	return err
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "aliased imports and a multi-line call",
@@ -185,7 +186,8 @@ func (s *server) id() (int, error) {
 
 var _ = sc.Itoa
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "operands that do something are evaluated once, before the literal runs",
@@ -226,7 +228,8 @@ func handler(c *fiber.Ctx) (int, error) {
 	}(c.Status(200), key(), defaults()...)
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "the names of the literal stay clear of the ones the call uses",
@@ -259,7 +262,8 @@ func handler(c *fiber.Ctx, err []int) (int, error) {
 	}()
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "dot import",
@@ -292,7 +296,8 @@ func handler(c *Ctx, defaults []int) (int, error) {
 	}(c.Status(200))
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 		{
 			name: "the getters used as values are reported",
