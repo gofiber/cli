@@ -568,3 +568,61 @@ func main() {
 	assert.ElementsMatch(t, []string{`"other"`}, names(got[`":other"`]))
 	assert.True(t, got[`":other"`].complete)
 }
+
+// A value is impure when evaluating it can do more than compute: it calls a function
+// that is not known to only read, or receives from a channel.
+func Test_appFile_impure(t *testing.T) {
+	t.Parallel()
+
+	files := appTestFiles(t, map[string]string{
+		"go.mod": "module example.com/demo\n",
+		"other/other.go": `package other
+
+func Get() bool { return true }
+`,
+		"main.go": `package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"example.com/demo/other"
+)
+
+func helper() bool { return true }
+
+func cases(ch chan bool, x string) {
+	_ = os.Getenv("X") == "1"
+	_ = strings.ToLower(x)
+	_ = time.Duration(5) * time.Second
+	_ = len(x) > 0 && string(rune(65)) == "A"
+	_ = fmt.Sprintf("%s", x)
+	_ = []byte(x)
+	_ = x == "a"
+	_ = func() bool { return helper() }
+	_ = helper()
+	_ = <-ch
+	_ = other.Get()
+	_ = append([]string{}, x)
+	_ = os.Remove(x)
+	_ = x.Method()
+}
+`,
+	})
+
+	f := files["main.go"]
+	var got []bool
+	ast.Inspect(f.g.file, func(n ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok && len(as.Rhs) == 1 {
+			got = append(got, f.impure(as.Rhs[0]))
+		}
+		return true
+	})
+
+	assert.Equal(t, []bool{
+		false, false, false, false, false, false, false, false, // reads and conversions, a closure that is not run
+		true, true, true, true, true, true, // calls of anything else, a receive
+	}, got)
+}

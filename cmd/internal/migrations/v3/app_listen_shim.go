@@ -90,6 +90,10 @@ type appShimModule struct {
 	// exposed are the exported names of packages that other modules can import,
 	// which the apps of the registry leave the module through.
 	exposed []string
+	// configs are the functions that return a fibermigrate.Config now, and
+	// exposedConfigs those of them that other modules can call.
+	configs        []string
+	exposedConfigs []string
 	// starts are the calls that ask the registry for the settings.
 	starts []*appStartInfo
 	// values are the methods that start an app, used as values.
@@ -147,18 +151,48 @@ type appShimRefusal struct {
 // setting, whether it could move or not, so that the code reads one way.
 //
 // It returns the function that adds the work to the plan, or why it cannot be done.
+// The configs a function returns are carried together, whichever of them asks first.
 func (pl *appPlanner) carry(src *appListenSource) (commit func(), refusal appShimRefusal) {
+	if src.retFn == nil {
+		return pl.carrySource(src)
+	}
+
+	if done := pl.returned[src.retFn]; done != nil {
+		return done.commit, done.refusal
+	}
+	work, why := pl.carrySource(src)
+	done := &appReturned{refusal: why}
+	if work != nil {
+		applied := false
+		done.commit = func() {
+			if !applied {
+				applied = true
+				work()
+			}
+		}
+	}
+	pl.returned[src.retFn] = done
+	return done.commit, done.refusal
+}
+
+// appReturned is the outcome of carrying the configs that a function returns.
+type appReturned struct {
+	commit  func()
+	refusal appShimRefusal
+}
+
+func (pl *appPlanner) carrySource(src *appListenSource) (commit func(), refusal appShimRefusal) {
 	quiet := func(why string) (func(), appShimRefusal) { return nil, appShimRefusal{why: why} }
 	tell := func(why string) (func(), appShimRefusal) { return nil, appShimRefusal{why: why, tell: true} }
 
 	switch {
+	case src.escapes && src.escapeWhy != "":
+		return quiet(src.escapeWhy)
 	case len(src.creations) == 0:
 		return quiet("this fiber.Config is not handed straight to fiber.New")
 	case src.escapes:
 		return quiet("this fiber.Config is also passed on to code that could create another app with it")
-	case src.retFn != nil:
-		return quiet("this fiber.Config comes from a function, away from the app it creates")
-	case src.node == nil && (src.lit == nil || len(src.creations) != 1):
+	case src.retFn == nil && src.node == nil && (src.lit == nil || len(src.creations) != 1):
 		return quiet("this fiber.Config is not a variable or a literal handed to fiber.New")
 	}
 
@@ -182,16 +216,19 @@ func (pl *appPlanner) carry(src *appListenSource) (commit func(), refusal appShi
 	if sp.path == "" {
 		return tell("the file is not in a module, and the registry is a package of the module")
 	}
-	wrap, values, refusal := pl.shimStarts(src, mod)
+	wrap, values, refusal := pl.shimStarts(pl.returnedSource(src), mod)
 	if refusal.why != "" {
 		return nil, refusal
 	}
 
 	w := newShimWork(pl, sp.path)
 	var why string
-	if src.node != nil {
+	switch {
+	case src.retFn != nil:
+		why = shimReturned(w, src)
+	case src.node != nil:
 		why = src.shimVariable(w)
-	} else {
+	default:
 		why = src.shimLiteral(w)
 	}
 	if why != "" {
@@ -208,8 +245,12 @@ func (pl *appPlanner) carry(src *appListenSource) (commit func(), refusal appShi
 	}
 
 	exposed := pl.exposure(mod, src.creations)
+	returned := pl.returnedLabels(mod, src)
 	return func() {
 		w.commit()
+		for _, sel := range src.sels {
+			pl.followed[sel] = true
+		}
 		for _, s := range wrap {
 			if !sp.seen[s.call] {
 				sp.seen[s.call] = true
@@ -226,6 +267,12 @@ func (pl *appPlanner) carry(src *appListenSource) (commit func(), refusal appShi
 			if !slices.Contains(sp.exposed, name) {
 				sp.exposed = append(sp.exposed, name)
 			}
+		}
+		if returned.name != "" && !slices.Contains(sp.configs, returned.name) {
+			sp.configs = append(sp.configs, returned.name)
+		}
+		if returned.exposed && !slices.Contains(sp.exposedConfigs, returned.name) {
+			sp.exposedConfigs = append(sp.exposedConfigs, returned.name)
 		}
 		if sp.first == nil {
 			sp.first = &src.creations[0]
@@ -382,20 +429,32 @@ const appShimNote = "Prefork, Network, DisableStartupMessage and EnablePrintRout
 	"fibermigrate." + appShimNew + " records them for the app and fibermigrate." + appShimConfig + " hands them to the Listen call that starts it. " +
 	"Pass a fiber.ListenConfig to Listen yourself when you can, and delete the package when nothing uses it"
 
-// shimNoteFor is the note of the registry of a module, with the way out of the module
-// of the apps it holds.
+// note is the note of the registry of a module, with the functions that return its
+// config and the way out of the module of the apps it holds.
 func (sp *appShimModule) note() string {
-	if len(sp.exposed) == 0 {
-		return appShimNote
+	note := appShimNote
+	if len(sp.configs) > 0 {
+		note += ". " + appNameList(sp.configs) + " now return" + appPlural(len(sp.configs)) + " fibermigrate." + appShimConfigType +
+			", the fiber.Config of Fiber v2 with the four settings, and fibermigrate." + appShimNewV2 + " hands them to the app it creates"
 	}
-	shown := sp.exposed
-	more := ""
-	if len(shown) > 3 {
-		shown, more = shown[:3], fmt.Sprintf(" and %d more", len(sp.exposed)-3)
+	if len(sp.exposedConfigs) > 0 {
+		note += ". " + appNameList(sp.exposedConfigs) + " can be called from other modules, which cannot hand the result to fiber.New: " +
+			"they take its Config field and pass the settings to Listen"
 	}
-	return appShimNote + ". " + strings.Join(shown, ", ") + more + " export" + appPlural(len(sp.exposed)) +
-		" an app of the registry from a package other modules can import: their calls to Listen start it without these settings, " +
-		"pass them in the fiber.ListenConfig of those calls"
+	if len(sp.exposed) > 0 {
+		note += ". " + appNameList(sp.exposed) + " export" + appPlural(len(sp.exposed)) +
+			" an app of the registry from a package other modules can import: their calls to Listen start it without these settings, " +
+			"pass them in the fiber.ListenConfig of those calls"
+	}
+	return note
+}
+
+// appNameList joins the names the way a note shows them, at most three.
+func appNameList(names []string) string {
+	if len(names) <= 3 {
+		return strings.Join(names, ", ")
+	}
+	return strings.Join(names[:3], ", ") + fmt.Sprintf(" and %d more", len(names)-3)
 }
 
 // appPlural is "s" for a verb that agrees with a single subject.

@@ -117,11 +117,16 @@ type appPlanner struct {
 	reads map[string]*appModuleReads
 	// blocked has the modules whose reads the registry cannot serve, with the reason.
 	blocked map[string]string
-	root    string
-	files   []*appFile
-	starts  []*appStartInfo
-	values  []*appValueInfo
-	sources []*appListenSource
+	// returned remembers what became of the configs a function returns.
+	returned map[*ast.FuncDecl]*appReturned
+	// followed are the reads and assignments of settings that the migration handled
+	// where a config it follows is held by a variable or handed on.
+	followed map[*ast.SelectorExpr]bool
+	root     string
+	files    []*appFile
+	starts   []*appStartInfo
+	values   []*appValueInfo
+	sources  []*appListenSource
 }
 
 // appPlanListenerFields reads the project and plans the migration.
@@ -145,14 +150,16 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 	}
 
 	pl := &appPlanner{
-		plan:    &appListenPlan{files: map[string]*appFilePlan{}},
-		shims:   map[string]*appShimModule{},
-		mods:    map[string]appModuleOf{},
-		unknown: map[*appFile]int{},
-		reads:   map[string]*appModuleReads{},
-		blocked: map[string]string{},
-		root:    cwd,
-		files:   files,
+		plan:     &appListenPlan{files: map[string]*appFilePlan{}},
+		shims:    map[string]*appShimModule{},
+		mods:     map[string]appModuleOf{},
+		unknown:  map[*appFile]int{},
+		reads:    map[string]*appModuleReads{},
+		blocked:  map[string]string{},
+		returned: map[*ast.FuncDecl]*appReturned{},
+		followed: map[*ast.SelectorExpr]bool{},
+		root:     cwd,
+		files:    files,
 	}
 	pl.collectReads()
 	for _, f := range files {
@@ -196,6 +203,9 @@ func (pl *appPlanner) noteUntracked(files []*appFile) {
 				followed[occ.node] = true
 			}
 		}
+	}
+	for sel := range pl.followed {
+		followed[sel] = true
 	}
 
 	for _, f := range files {
@@ -347,11 +357,20 @@ func (pl *appPlanner) moveInPlace(src *appListenSource) appInPlace {
 	if len(src.movableFields()) == 0 && !src.wantsVariable() {
 		return appInPlace{}
 	}
+	if src.escapes && src.escapeWhy != "" {
+		return appInPlace{reason: src.escapeWhy}
+	}
 	if len(src.creations) == 0 {
 		return appInPlace{reason: "this fiber.Config is not handed straight to fiber.New"}
 	}
 	if src.escapes {
 		return appInPlace{reason: "this fiber.Config is also passed on to code that could create another app with it"}
+	}
+	if src.branches {
+		return appInPlace{reason: "this fiber.Config is one of several that the function returns"}
+	}
+	if src.node != nil && src.retFn != nil {
+		return appInPlace{reason: "this fiber.Config is returned from a function, away from the app it creates"}
 	}
 
 	linked, never, reason := pl.linkedStarts(src)

@@ -931,16 +931,19 @@ func main() {
 	assert.Contains(t, main, `go second.Listen(":3001", fiber.ListenConfig{EnablePrefork: os.Getenv("PREFORK") == "1", DisableStartupMessage: true})`)
 	assert.Contains(t, main, `"os"`)
 
-	// the settings that depend on the arguments of the function cannot move, the others do
-	assert.Contains(t, cfg, `fiber.Config{Prefork: prefork}`)
-	assert.Contains(t, main, `fourth.Listen(":3003", fiber.ListenConfig{ListenerNetwork: "tcp"})`)
-	// a method whose receiver is not in scope where the app starts, either
-	assert.Contains(t, cfg, "EnablePrintRoutes: !s.Quiet")
+	// the settings that depend on the arguments of the function, or on the receiver of
+	// the method, cannot move to the call that starts the app: they travel with the
+	// config, which is the config of v2 now
+	assert.Contains(t, cfg, "func ForServer(prefork bool) fibermigrate.Config {\n\treturn fibermigrate.Config{Network: \"tcp\", Prefork: prefork}\n}")
+	assert.Contains(t, cfg, "func (s Settings) Fiber() fibermigrate.Config {\n\treturn fibermigrate.Config{EnablePrintRoutes: !s.Quiet}\n}")
+	assert.Contains(t, main, "third := fibermigrate.New(s.Fiber())")
+	assert.Contains(t, main, `go third.Listen(":3002", fibermigrate.ListenConfig(third))`)
+	assert.Contains(t, main, "fourth := fibermigrate.New(config.ForServer(true))")
+	assert.Contains(t, main, `log.Fatal(fourth.Listen(":3003", fibermigrate.ListenConfig(fourth)))`)
 	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 2)
-	for _, n := range notes {
-		assert.Equal(t, "config/config.go", n.File)
-	}
+	require.Len(t, notes, 1)
+	assert.Equal(t, "main.go", notes[0].File)
+	assert.Contains(t, notes[0].Message, "config.Settings.Fiber, config.ForServer now return fibermigrate.Config")
 }
 
 func Test_MigrateConfigListenerFields_ConfigThatEscapes(t *testing.T) {

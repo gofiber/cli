@@ -152,11 +152,11 @@ func (r *appConfigRewrite) creationsOf(lit *ast.CompositeLit) []appNew {
 	if src.node == nil {
 		return src.creations
 	}
-	creations, escapes := src.variableUses()
-	if escapes {
+	uses := src.variableUses()
+	if uses.escapes || len(uses.returns) > 0 {
 		return nil // the config is also used to create other apps
 	}
-	return creations
+	return uses.creations
 }
 
 // useAfter schedules the statement that registers the middleware on the app the

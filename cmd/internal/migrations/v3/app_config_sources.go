@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"slices"
@@ -20,15 +21,25 @@ type appListenSource struct {
 	node ast.Node
 	// scope is nil for a package-level variable.
 	scope ast.Node
-	// retFn is the function the literal is returned from, nil otherwise.
-	retFn     *ast.FuncDecl
-	name      string
+	// retFn is the function the config is returned from, nil otherwise: the literal
+	// of a return statement, or a local variable that the function returns.
+	retFn *ast.FuncDecl
+	name  string
+	// escapeWhy says where the config is used in a way that cannot be followed, for
+	// the configs a function returns.
+	escapeWhy string
 	fields    []*appSourceField
 	creations []appNew
+	// sels are the reads and assignments of fields that code makes on the config
+	// where the function hands it to a variable or a selector.
+	sels []*ast.SelectorExpr
 	// escapes is set when the config is also used in a way that cannot be
 	// followed, so that settings moved to the apps found would be lost for
 	// the others.
 	escapes bool
+	// branches is set when the function returns more than one config, so that its
+	// callers get one of several.
+	branches bool
 }
 
 // appSourceField is one setting of a source that moves to fiber.ListenConfig.
@@ -107,11 +118,24 @@ func (f *appFile) sourceOfLiteral(lit *ast.CompositeLit) *appListenSource {
 			}
 		}
 	case *ast.ReturnStmt:
-		if fn, ok := f.enclosingFuncOf(p).(*ast.FuncDecl); ok && appResultCount(fn.Type) == 1 && len(p.Results) == 1 {
+		if fn, ok := f.enclosingFuncOf(p).(*ast.FuncDecl); ok && len(p.Results) == 1 && f.returnsConfig(fn) {
 			src.retFn = fn
 		}
 	}
 	return src
+}
+
+// returnsConfig reports whether the function has one result, unnamed, of type
+// fiber.Config.
+func (f *appFile) returnsConfig(fn *ast.FuncDecl) bool {
+	if fn.Type.Results == nil || len(fn.Type.Results.List) != 1 || len(fn.Type.Results.List[0].Names) != 0 {
+		return false
+	}
+	t := fn.Type.Results.List[0].Type
+	if _, isPointer := t.(*ast.StarExpr); isPointer {
+		return false
+	}
+	return f.fiberTypeName(t) == appNameConfig
 }
 
 // enclosingFuncOf returns the innermost function declaration or literal around
@@ -163,10 +187,14 @@ func (src *appListenSource) collect() {
 	}
 	switch {
 	case src.node != nil:
-		creations, escapes := src.variableUses()
-		src.creations = append(src.creations, creations...)
-		src.escapes = src.escapes || escapes
+		uses := src.variableUses()
+		src.creations = append(src.creations, uses.creations...)
+		src.escapes = src.escapes || uses.escapes
+		src.returnedVariable(uses)
 		src.collectVariableUses(field)
+		if src.retFn != nil {
+			src.callUses()
+		}
 	case src.retFn != nil:
 		src.callUses()
 	}
@@ -217,10 +245,26 @@ func (src *appListenSource) isTheVariable(rf *appFile, id *ast.Ident) bool {
 	return ok && b.node == src.node && b.file == src.file
 }
 
+// appVarUses is what the code does with the variable that holds a config.
+type appVarUses struct {
+	// at is the first use that cannot be followed, and file the file it is in.
+	at   ast.Node
+	file *appFile
+	// creations are the fiber.New calls that take the variable.
+	creations []appNew
+	// returns are the statements that return the variable.
+	returns []*ast.ReturnStmt
+	// sels are the reads and assignments of its fields.
+	sels []*ast.SelectorExpr
+	// escapes is set when the variable is used in any other way.
+	escapes bool
+}
+
 // variableUses finds the fiber.New calls that take the variable which holds the
-// source, and whether the variable is used in any other way than to read or
-// assign one of its fields.
-func (src *appListenSource) variableUses() (creations []appNew, escapes bool) {
+// source, the statements that return it, and whether the variable is used in any
+// other way than to read or assign one of its fields.
+func (src *appListenSource) variableUses() appVarUses {
+	var uses appVarUses
 	for _, r := range src.regions() {
 		ast.Inspect(r.root, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
@@ -230,64 +274,240 @@ func (src *appListenSource) variableUses() (creations []appNew, escapes bool) {
 			switch p := r.file.parent[id].(type) {
 			case *ast.CallExpr:
 				if r.file.isNewCall(p) && len(p.Args) == 1 && p.Args[0] == id {
-					creations = append(creations, appNew{file: r.file, call: p})
+					uses.creations = append(uses.creations, appNew{file: r.file, call: p})
 					return true
 				}
 			case *ast.SelectorExpr:
 				if p.X == id {
+					uses.sels = append(uses.sels, p)
 					return true
 				}
 			case *ast.ValueSpec:
 				if slices.Contains(p.Names, id) {
 					return true // the declaration of a package-level variable
 				}
+			case *ast.ReturnStmt:
+				if len(p.Results) == 1 {
+					uses.returns = append(uses.returns, p)
+					return true
+				}
 			}
-			escapes = true
+			if !uses.escapes {
+				uses.at, uses.file = id, r.file
+			}
+			uses.escapes = true
 			return true
 		})
 	}
-	return creations, escapes
+	return uses
+}
+
+// returnedVariable works out what it means that the code returns the variable that
+// holds the source: when a function returns it, the source is the config of that
+// function, and the apps are made from what the callers of the function get.
+func (src *appListenSource) returnedVariable(uses appVarUses) {
+	if len(uses.returns) == 0 {
+		return
+	}
+	var fn *ast.FuncDecl
+	for _, ret := range uses.returns {
+		decl, ok := src.file.enclosingFuncOf(ret).(*ast.FuncDecl)
+		if !ok || !src.file.returnsConfig(decl) || (fn != nil && decl != fn) {
+			src.escape(src.file, ret, "the config is returned from a function that cannot be followed")
+			return
+		}
+		fn = decl
+	}
+	switch {
+	case src.scope == nil:
+		src.escape(src.file, uses.returns[0], "the config is a variable of the package, which the functions that return it share")
+	case len(uses.creations) > 0:
+		src.escape(src.file, uses.creations[0].call, "an app is created from the config in the function that returns it")
+	case uses.escapes:
+		src.escape(uses.file, uses.at, "the config is used in a way the migration does not follow")
+	default:
+		src.retFn = fn
+	}
+}
+
+// escape records that the config is used in a way that cannot be followed, and
+// where, for the first such use.
+func (src *appListenSource) escape(f *appFile, n ast.Node, why string) {
+	src.escapes = true
+	if src.escapeWhy == "" {
+		src.escapeWhy = fmt.Sprintf("%s, at line %d of %s", why, f.g.line(n.Pos()), appFileLabel(f))
+	}
 }
 
 // callUses finds the fiber.New calls that take the config a function returns:
 // the calls of the function that are handed to fiber.New, directly or through a
-// variable. Any other use of its result means the config escapes.
+// variable. Any other use of its result, and any reference to the function that is
+// not a call, means the config escapes.
 func (src *appListenSource) callUses() {
-	if appReturnCount(src.retFn) != 1 {
-		src.escapes = true
-		return
-	}
+	fn := src.retFn
+	src.branches = appReturnCount(fn) != 1
 
-	name := src.retFn.Name.Name
 	for _, pf := range src.file.ix.moduleFiles() {
 		ast.Inspect(pf.g.file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !appCallsName(call, name) {
-				return true
-			}
-			if callee, found := pf.calleeOf(call, 0); !found || callee.decl != src.retFn {
-				return true
-			}
-
-			switch p := pf.parent[call].(type) {
+			switch x := n.(type) {
 			case *ast.CallExpr:
-				if pf.isNewCall(p) && len(p.Args) == 1 && p.Args[0] == call {
-					src.creations = append(src.creations, appNew{file: pf, call: p})
-					return true
+				if appCallsName(x, fn.Name.Name) {
+					src.followCall(pf, x)
 				}
-			case *ast.AssignStmt:
-				if id, isDefine := appSingleDefine(p, call); isDefine {
-					held := &appListenSource{file: pf, node: call, scope: pf.parent[p], name: id.Name}
-					creations, escapes := held.variableUses()
-					src.creations = append(src.creations, creations...)
-					src.escapes = src.escapes || escapes
-					return true
+			case *ast.Ident, *ast.SelectorExpr:
+				if pf.referencesFunc(x, fn) {
+					src.escape(pf, x, fn.Name.Name+" is used as a value")
 				}
 			}
-			src.escapes = true
 			return true
 		})
 	}
+}
+
+// followCall classifies a call of a function or method of the name of the one the
+// config is returned from.
+func (src *appListenSource) followCall(pf *appFile, call *ast.CallExpr) {
+	fn := src.retFn
+	callee, found := pf.calleeOf(call, 0)
+	switch {
+	case found && callee.decl != fn:
+		return // another function of the same name
+	case !found:
+		// a method of another type, or of a type the project does not declare, is
+		// not it; a receiver that cannot be traced may be
+		if fn.Recv != nil && !pf.foreignReceiver(call) && pf.feedsNew(call) {
+			src.escape(pf, call, "a call of "+fn.Name.Name+" whose receiver could not be traced may hand its config to fiber.New")
+		}
+		return
+	}
+
+	switch p := pf.parent[call].(type) {
+	case *ast.CallExpr:
+		if pf.isNewCall(p) && len(p.Args) == 1 && p.Args[0] == call {
+			src.creations = append(src.creations, appNew{file: pf, call: p})
+			return
+		}
+	case *ast.AssignStmt:
+		if id, isDefine := appSingleDefine(p, call); isDefine {
+			held := &appListenSource{file: pf, node: call, scope: pf.parent[p], name: id.Name}
+			uses := held.variableUses()
+			src.creations = append(src.creations, uses.creations...)
+			src.sels = append(src.sels, uses.sels...)
+			switch {
+			case uses.escapes:
+				src.escape(uses.file, uses.at, "the result of "+fn.Name.Name+" is held in a variable that is used in a way the migration does not follow")
+			case len(uses.returns) > 0:
+				src.escape(pf, uses.returns[0], "the result of "+fn.Name.Name+" is returned on")
+			}
+			return
+		}
+	case *ast.SelectorExpr:
+		if p.X == ast.Expr(call) {
+			src.sels = append(src.sels, p)
+			return
+		}
+	}
+	src.escape(pf, call, "the result of "+fn.Name.Name+" is used in a way the migration does not follow")
+}
+
+// feedsNew reports whether the result of the call is handed to fiber.New, or held
+// by a variable declared with it: the shapes of the call of a function that returns
+// a config.
+func (f *appFile) feedsNew(call *ast.CallExpr) bool {
+	switch p := f.parent[call].(type) {
+	case *ast.CallExpr:
+		return f.isNewCall(p)
+	case *ast.AssignStmt:
+		_, isDefine := appSingleDefine(p, call)
+		return isDefine
+	}
+	return false
+}
+
+// foreignReceiver reports whether the receiver of a method call is known to be a
+// value of a type that the project does not declare, so that the method is not one
+// of the project's.
+func (f *appFile) foreignReceiver(call *ast.CallExpr) bool {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if id, isIdent := sel.X.(*ast.Ident); isIdent && f.isImportName(id) {
+		return true // a name of another package is not a method
+	}
+	t, tf := f.valueType(sel.X, 0)
+	if t == nil {
+		return false
+	}
+	switch x := appStripType(t).(type) {
+	case *ast.SelectorExpr:
+		id, isIdent := x.X.(*ast.Ident)
+		return isIdent && tf.packageNamed(id.Name) == nil
+	case *ast.Ident:
+		return tf.resolveNamedType(x) == nil
+	case *ast.ArrayType, *ast.MapType, *ast.ChanType, *ast.FuncType:
+		return true
+	}
+	return false
+}
+
+// isImportName reports whether id names an import of the file rather than a
+// variable.
+func (f *appFile) isImportName(id *ast.Ident) bool {
+	if _, bound := f.binding(id); bound {
+		return false
+	}
+	return f.importPathOf(id.Name) != ""
+}
+
+// referencesFunc reports whether the identifier or selector n names the function
+// fn without calling it, which hands the function to code that cannot be followed.
+func (f *appFile) referencesFunc(n ast.Node, fn *ast.FuncDecl) bool {
+	var name string
+	switch x := n.(type) {
+	case *ast.Ident:
+		name = x.Name
+	case *ast.SelectorExpr:
+		name = x.Sel.Name
+	}
+	if name != fn.Name.Name {
+		return false
+	}
+
+	switch p := f.parent[n].(type) {
+	case *ast.CallExpr:
+		if p.Fun == n {
+			return false // a call
+		}
+	case *ast.FuncDecl:
+		return false // the declaration
+	case *ast.SelectorExpr:
+		if p.Sel == n {
+			return false // handled as the selector
+		}
+	case *ast.KeyValueExpr:
+		if p.Key == n {
+			return false // the name of a field
+		}
+	case *ast.Field, *ast.ValueSpec, *ast.TypeSpec, *ast.ImportSpec:
+		return false
+	}
+
+	switch x := n.(type) {
+	case *ast.Ident:
+		if _, bound := f.binding(x); bound {
+			return false
+		}
+		pkg := f.ix.pkgOf(f)
+		return fn.Recv == nil && pkg != nil && pkg.funcs[name] != nil && pkg.funcs[name].decl == fn
+	case *ast.SelectorExpr:
+		call := &ast.CallExpr{Fun: x}
+		if callee, found := f.calleeOf(call, 0); found {
+			return callee.decl == fn
+		}
+		return fn.Recv != nil && !f.foreignReceiver(call)
+	}
+	return false
 }
 
 // appCallsName reports whether call is a call of a function or method called

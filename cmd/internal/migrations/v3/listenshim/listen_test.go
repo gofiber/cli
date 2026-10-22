@@ -215,7 +215,8 @@ func Test_Config(t *testing.T) {
 		got := ConfigOf(fiber.New(fiber.Config{AppName: "plain"}))
 
 		assert.Equal(t, "plain", got.AppName)
-		assert.Equal(t, fiber.ListenConfig{}, got.Settings())
+		assert.Equal(t, fiber.NetworkTCP4, got.Network, "the network v2 filled in")
+		assert.Equal(t, fiber.ListenConfig{ListenerNetwork: fiber.NetworkTCP4}, got.Settings())
 	})
 }
 

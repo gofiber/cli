@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 // appShimWork is what carrying the settings of one source takes: the edits and
@@ -16,6 +18,20 @@ type appShimWork struct {
 	imports map[*appFile]*appImports
 	// path is the import path of the package of the registry.
 	path string
+	// notes are what the user is told about the work once it is done.
+	notes []appShimNoteAt
+}
+
+// appShimNoteAt is a note about a place of a file.
+type appShimNoteAt struct {
+	file *appFile
+	text string
+	line int
+}
+
+// note schedules a note for the line of the file.
+func (w *appShimWork) note(f *appFile, line int, text string) {
+	w.notes = append(w.notes, appShimNoteAt{file: f, line: line, text: text})
 }
 
 func newShimWork(pl *appPlanner, path string) *appShimWork {
@@ -53,6 +69,9 @@ func (w *appShimWork) commit() {
 	}
 	for f, imps := range w.imports {
 		w.pl.plan.fileOf(f).imps = *imps
+	}
+	for _, n := range w.notes {
+		internal.Notef(n.file.fi, n.line, "%s", n.text)
 	}
 }
 
@@ -115,6 +134,7 @@ func (src *appListenSource) shimVariable(w *appShimWork) string {
 	if len(drop) > 0 && !appRemoveElements(g, edits, src.lit, drop, nil) {
 		return appLiteralLayoutProblem
 	}
+	src.noteOrder(w, drop)
 	listenCfg := w.importsOf(f).fiberQualifier(f) + "ListenConfig{" + strings.Join(held, ", ") + "}"
 	edits.replace(at, at, "\n"+declare(listenCfg))
 
@@ -147,8 +167,21 @@ func (src *appListenSource) shimLiteral(w *appShimWork) string {
 	if len(drop) > 0 && !appRemoveElements(f.g, edits, src.lit, drop, nil) {
 		return appLiteralLayoutProblem
 	}
+	src.noteOrder(w, drop)
 	shimCreation(w, c, w.importsOf(f).fiberQualifier(f)+"ListenConfig{"+strings.Join(held, ", ")+"}")
 	return ""
+}
+
+// noteOrder tells when the settings that leave the literal of the source, whose
+// elements are at the indexes in drop, are evaluated in another order than v2
+// evaluated them: they are evaluated after the rest of the config now.
+func (src *appListenSource) noteOrder(w *appShimWork, drop []int) {
+	if src.lit == nil || len(drop) == 0 {
+		return
+	}
+	if note := src.file.orderNote(src.lit, drop, false); note != "" {
+		w.note(src.file, src.file.g.line(src.lit.Pos()), note)
+	}
 }
 
 // shimCreation turns the fiber.New call c into the call that records the

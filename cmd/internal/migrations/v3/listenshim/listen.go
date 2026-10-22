@@ -123,9 +123,12 @@ func New(config ...Config) *fiber.App {
 }
 
 // ConfigOf is app.Config() with the settings that v2 kept in it: the ones that
-// NewApp recorded for the app.
+// NewApp recorded for the app, and the network v2 filled in when there was none.
 func ConfigOf(app *fiber.App) Config {
 	settings := listenRecorded(app)
+	if settings.network == "" {
+		settings.network = fiber.NetworkTCP4
+	}
 	return Config{
 		Config:                app.Config(),
 		Network:               settings.network,
