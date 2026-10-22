@@ -100,6 +100,93 @@ func codecs(url string, v any) error {
 			},
 		},
 		{
+			name: "comments_in_chains",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func commented(url, token string) ([]byte, error) {
+	code, body, errs := fiber.Post(url).
+		// the credentials
+		Set("Authorization", "Bearer "+token). // not logged
+		Timeout(3 * time.Second). // keep it short
+		Bytes()
+	if len(errs) > 0 { // could not send
+		return nil, errs[0]
+	}
+	_ = code
+	return body, nil
+}
+
+func retry(url string) ([]byte, error) {
+	var last error
+	for attempt := 0; attempt < 3; attempt++ {
+		agent := fiber.Get(url) // attempt
+		agent.Timeout(time.Second)
+		code, body, errs := agent.Bytes()
+		if len(errs) > 0 {
+			last = errs[0]
+			continue
+		}
+		if code == fiber.StatusOK {
+			return body, nil
+		}
+	}
+	return nil, last
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func commented(url, token string) ([]byte, error) {
+	// the credentials
+	// not logged
+	// keep it short
+	resp, err := client.Post(url, client.Config{
+		Header:  map[string]string{"Authorization": "Bearer " + token},
+		Timeout: 3 * time.Second,
+	})
+	if err != nil { // could not send
+		return nil, err
+	}
+	code, body := resp.StatusCode(), resp.Body()
+	_ = code
+	return body, nil
+}
+
+func retry(url string) ([]byte, error) {
+	var last error
+	for attempt := 0; attempt < 3; attempt++ {
+		// attempt
+		resp, err := client.Get(url, client.Config{Timeout: time.Second})
+		if err != nil {
+			last = err
+			continue
+		}
+		code, body := resp.StatusCode(), resp.Body()
+		if code == fiber.StatusOK {
+			return body, nil
+		}
+	}
+	return nil, last
+}
+`,
+			},
+		},
+		{
 			name: "decl_line_chain",
 			files: map[string]string{
 				"main.go": `package main
