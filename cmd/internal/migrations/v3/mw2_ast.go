@@ -19,13 +19,20 @@ import (
 // moved to v3 yet is recognized as well.
 var (
 	mw2KeyAuth    = mw2Middleware("keyauth")
+	mw2Limiter    = mw2Middleware("limiter")
+	mw2Proxy      = mw2Middleware("proxy")
+	mw2Timeout    = mw2Middleware("timeout")
 	mw2Extractors = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/extractors$`)
+	mw2Fasthttp   = regexp.MustCompile(`^github\.com/valyala/fasthttp$`)
 )
 
 // mw2Middleware returns the import path matcher of a built-in middleware.
 func mw2Middleware(name string) *regexp.Regexp {
 	return regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+/middleware/` + regexp.QuoteMeta(name) + `$`)
 }
+
+// mw2New is the name of the constructor every middleware package has.
+const mw2New = "New"
 
 // mw2IsSelector reports whether e is the selector name.sel where name is one of
 // the identifiers a file binds to a package.

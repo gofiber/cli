@@ -75,3 +75,8 @@ func mw2Single(t *testing.T, migrate mw2Migration, src string) (content string, 
 	run = mw2Apply(t, migrate, map[string]string{"main.go": src})
 	return run.file(t, "main.go"), run
 }
+
+// countImports counts the import lines of src that name path.
+func countImports(src, path string) int {
+	return strings.Count(src, `"`+path+`"`)
+}
