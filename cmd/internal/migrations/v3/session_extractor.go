@@ -32,9 +32,12 @@ const mw3StringsPkg = "strings"
 // The program may have built a lookup from the Source constants, or read the
 // lookup of a store back. Neither exists in v3, and both are written as what they
 // were before the lookups are rewritten: the Source type is string and its
-// constants are the strings they stood for (mw3SessionSourceContent), and
-// store.KeyLookup and store.CookieName are computed from store.Extractor
-// (mw3SessionReadsContent). Each step is a pass over the project of its own, so
+// constants are the strings they stood for, or the type of the module package
+// where the program asks for the difference (mw3SessionSourceContent), and
+// store.KeyLookup and store.CookieName are the strings the program gave them, or
+// computed from store.Extractor (mw3SessionReadsContent). The assignments to the
+// two fields of a store are dropped, as v2 only changed what the store reported
+// with them (storeWrites). Each step is a pass over the project of its own, so
 // that the next one reads the whole project as the step before left it.
 func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	// Every step reads the project as the one before left it, with a view of the

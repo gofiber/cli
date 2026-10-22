@@ -71,16 +71,25 @@ type mw3Owner struct {
 //
 // are written as a function literal that is called with store.Extractor, which
 // gives exactly the strings the lookups of this migration had. It works on
-// stores, on variables that hold a session.Config, and on session.ConfigDefault,
-// in files that do not import the session package as well, when they use a store
-// that another file of the package declares.
+// stores (also the ones a type embeds, and the ones of other packages of the
+// module), on variables that hold a session.Config, and on session.ConfigDefault,
+// in files that do not import the session package as well.
+//
+// Where the program shows how the config was made (session.ConfigDefault, a
+// literal, a variable or a function of the package that nothing changes
+// afterwards, a store made by session.New from one of those), the read is the
+// string it was given, which v2 kept as it was (see mw3GivenReader):
+//
+//	session.New(session.Config{CookieName: "sid"}).CookieName  ->  "sid"
 //
 // A lookup that is copied from one config to another needs no string at all:
 //
 //	session.Config{KeyLookup: other.KeyLookup}  ->  session.Config{Extractor: other.Extractor}
 //
-// Assigning to the field, or taking its address, is not a read and is left to
-// the extractor rewrite to report.
+// The address of the field of a store is the address of a copy of the string, as
+// v2 never used the field to look anything up. Assigning to the field of a store
+// is dropped by the extractor rewrite, and assigning to the field of a config, or
+// taking its address, is reported there.
 func mw3SessionReadsContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
 	f, ok := mw3OpenStoreUser(fi, src, pkgs, func(src string) bool {
 		return strings.Contains(src, "."+mw3KeyLookup) || strings.Contains(src, "."+mw3CookieName)

@@ -31,9 +31,10 @@ var mw3SessionV3Path = regexp.MustCompile(`^github\.com/gofiber/fiber/v3/middlew
 //
 // Middleware handlers do NOT require Release() as the middleware manages the lifecycle.
 //
-// The store is found through the file's own import of the session package, and
-// may be a variable of the function, a package level variable (of any file of
-// the package), a parameter, or a field of a struct the package declares.
+// The store may be a variable of the function, a package level variable (of any
+// file of the package), a parameter, a field of a struct, a type that embeds a
+// store, or any of these in another package of the module; a session that an
+// interface of the program hands out is released like one from the store.
 //
 // A session that leaves the function it was gotten in (it is returned, stored,
 // sent, or handed to a goroutine) is not released there: whoever uses it next
