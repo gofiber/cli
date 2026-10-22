@@ -36,11 +36,19 @@ const (
 	// ctxAbsQualifier starts the qualifier of a package of the module, followed by
 	// its import path.
 	ctxAbsQualifier = "\x00pkg:"
+	// ctxIterQualifier stands for the standard package iter, whose Seq and Seq2 the
+	// range statements of the code are typed with.
+	ctxIterQualifier = "\x00iter"
 )
 
 // ctxFiberRef returns fiber.name, as a translated type spells it.
 func ctxFiberRef(name string) *ast.SelectorExpr {
 	return &ast.SelectorExpr{X: &ast.Ident{Name: ctxFiberQualifier}, Sel: &ast.Ident{Name: name}}
+}
+
+// ctxIterRef returns iter.name, as a translated type spells it.
+func ctxIterRef(name string) *ast.SelectorExpr {
+	return &ast.SelectorExpr{X: &ast.Ident{Name: ctxIterQualifier}, Sel: &ast.Ident{Name: name}}
 }
 
 // ctxExtRef returns pkg.name for a package outside of the module.
@@ -306,6 +314,8 @@ func (tr *ctxTranslator) pkgRef(importPath, name string) ast.Expr {
 	switch {
 	case reFiberCorePath.MatchString(importPath):
 		return ctxFiberRef(name)
+	case importPath == ctxIterPackage:
+		return ctxIterRef(name)
 	case tr.m.inModule(importPath):
 		return ctxAbsRef(importPath, name)
 	}

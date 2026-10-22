@@ -388,6 +388,10 @@ func (env *ctxEnv) isIterPackage(e ast.Expr) bool {
 	if !ok {
 		return false
 	}
+	if id.Name == ctxIterQualifier {
+		// a type written in another file or package (see ctxModule)
+		return true
+	}
 
 	for _, spec := range env.g.file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)

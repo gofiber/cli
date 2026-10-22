@@ -34,7 +34,11 @@ func ctxModuleKinds(t *testing.T, files map[string]string, target string) map[st
 // context: an alias, wrappers, a generic handler type and holders.
 const ctxModuleWeb = `package web
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"iter"
+
+	"github.com/gofiber/fiber/v2"
+)
 
 type Ctx = fiber.Ctx
 type Ctx2 = Ctx
@@ -114,6 +118,16 @@ var Default2 = fiber.New()
 // Queue holds contexts.
 var Queue = make(chan *fiber.Ctx, 1)
 
+// Seq yields the context.
+func Seq(c *fiber.Ctx) iter.Seq[*fiber.Ctx] {
+	return func(yield func(*fiber.Ctx) bool) { _ = yield(c) }
+}
+
+// Pairs yields a key and the context.
+func Pairs(c *fiber.Ctx) iter.Seq2[string, *fiber.Ctx] {
+	return func(yield func(string, *fiber.Ctx) bool) { _ = yield("k", c) }
+}
+
 // Fresh makes a context holder.
 var Fresh = new(Holder)
 `
@@ -186,6 +200,12 @@ func handlers(c *web.Ctx, c2 web.Ctx2, c3 util.Ctx3, w *web.Context, d *web.Deep
 	web.Default2.AcquireCtx(nil).probe("context acquired from an app variable of another package")
 	received := <-web.Queue
 	received.probe("received from a channel of another package")
+	for each := range web.Seq(nil) {
+		each.probe("range over an iterator of another package")
+	}
+	for _, each := range web.Pairs(nil) {
+		each.probe("range over a pair iterator of another package")
+	}
 	web.Fresh.Ctx.probe("field of a variable made by new")
 	pr.Ctx().probe("method of an interface")
 	pr2.Ctx().probe("method of an embedded interface")
@@ -254,6 +274,8 @@ func handlers(c *web.Ctx, c2 web.Ctx2, c3 util.Ctx3, w *web.Context, d *web.Deep
 		`"local variable"`:                                           ctxYes,
 		`"range variable"`:                                           ctxYes,
 		`"a local called like the package"`:                          ctxNo,
+		`"range over an iterator of another package"`:                ctxYes,
+		`"range over a pair iterator of another package"`:            ctxYes,
 		`"received from a channel of another package"`:               ctxYes,
 		`"field of a variable made by new"`:                          ctxYes,
 		`"context acquired from an app of another package"`:          ctxYes,
