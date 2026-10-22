@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"go/ast"
+	"strconv"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -115,7 +116,7 @@ func (m *authorizerMigration) wrap(e ast.Expr) {
 }
 
 // mw1FreeNames returns names for two parameters of a closure that do not shadow
-// anything the expression refers to.
+// anything the expression refers to: the given ones when they are free.
 func mw1FreeNames(e ast.Expr, first, second string) (a, b string) {
 	used := map[string]bool{}
 	ast.Inspect(e, func(n ast.Node) bool {
@@ -124,10 +125,17 @@ func mw1FreeNames(e ast.Expr, first, second string) (a, b string) {
 		}
 		return true
 	})
-	for _, candidate := range [][2]string{{first, second}, {"username", "password"}, {"mw1User", "mw1Pass"}} {
-		if !used[candidate[0]] && !used[candidate[1]] {
-			return candidate[0], candidate[1]
+	for i := 0; ; i++ {
+		a, b = first, second
+		if i > 0 {
+			suffix := "Arg"
+			if i > 1 {
+				suffix += strconv.Itoa(i)
+			}
+			a, b = first+suffix, second+suffix
+		}
+		if !used[a] && !used[b] {
+			return a, b
 		}
 	}
-	return "mw1User", "mw1Pass"
 }

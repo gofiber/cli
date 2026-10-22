@@ -76,3 +76,29 @@ func mw1AppendParam(g *goSource, ft *ast.FuncType, typ string) (offset int, text
 	}
 	return offset, ", " + param
 }
+
+// mw1ParamsOnOwnLines reports whether the parameters of ft are written one
+// per line, the closing parenthesis included.
+func mw1ParamsOnOwnLines(g *goSource, ft *ast.FuncType) bool {
+	if ft.Params == nil || len(ft.Params.List) == 0 {
+		return false
+	}
+	first := ft.Params.List[0]
+	return g.line(ft.Params.Opening) != g.line(first.Pos())
+}
+
+// mw1PrependParam returns the offset and the text that add a parameter of the
+// given type in front of the parameter list of ft. The parameter is blank when
+// the others are named.
+func mw1PrependParam(g *goSource, ft *ast.FuncType, typ string) (offset int, text string) {
+	first := ft.Params.List[0]
+	param := typ
+	if len(first.Names) > 0 {
+		param = "_ " + typ
+	}
+	offset = g.offset(first.Pos())
+	if mw1ParamsOnOwnLines(g, ft) {
+		return offset, param + ",\n"
+	}
+	return offset, param + ", "
+}

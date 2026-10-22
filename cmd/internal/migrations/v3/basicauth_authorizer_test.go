@@ -128,7 +128,7 @@ func shadowing(user *authService) fiber.Handler {
 	assert.Contains(t, file, `Authorizer: func(user, pass string, _ fiber.Ctx) bool { return svc.Authorize(user, pass) }`)
 	assert.Contains(t, file, `cfg.Authorizer = func(user, pass string, _ fiber.Ctx) bool { return authFn(user, pass) }`)
 	// a parameter called user must not hide the receiver
-	assert.Contains(t, file, `Authorizer: func(username, password string, _ fiber.Ctx) bool { return user.Authorize(username, password) }`)
+	assert.Contains(t, file, `Authorizer: func(userArg, passArg string, _ fiber.Ctx) bool { return user.Authorize(userArg, passArg) }`)
 	assert.Empty(t, res.notes)
 }
 
