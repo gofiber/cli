@@ -252,7 +252,8 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 }
 
 // printNotes tells the user what the migrations left for them to look at. The
-// same finding reported by several migrations is only listed once.
+// same finding reported by several migrations is only listed once, and the notes
+// of one line are one item: the first is the line, the others follow it.
 func printNotes(cmd *cobra.Command, notes []internal.Note) {
 	type key struct {
 		file    string
@@ -280,9 +281,22 @@ func printNotes(cmd *cobra.Command, notes []internal.Note) {
 		)
 	})
 
-	cmd.Printf("\n%d %s to review by hand:\n", len(unique), pluralize(len(unique), "item", "items"))
+	// The notes are sorted by place, so those of one line are next to each other.
+	var items [][]internal.Note
 	for _, n := range unique {
-		cmd.Printf("  %s\n", n)
+		if last := len(items) - 1; last >= 0 && n.File != "" && n.Line > 0 && items[last][0].File == n.File && items[last][0].Line == n.Line {
+			items[last] = append(items[last], n)
+			continue
+		}
+		items = append(items, []internal.Note{n})
+	}
+
+	cmd.Printf("\n%d %s to review by hand:\n", len(items), pluralize(len(items), "item", "items"))
+	for _, item := range items {
+		cmd.Printf("  %s\n", item[0])
+		for _, n := range item[1:] {
+			cmd.Printf("      also: %s\n", internal.Note{Migration: n.Migration, Message: n.Message})
+		}
 	}
 }
 
