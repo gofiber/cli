@@ -127,7 +127,10 @@ type appPlanner struct {
 	ix         *appIndex
 	// visited are the Go files of the walk, including those the migration did not
 	// open because nothing in them mentions fiber.
-	visited map[string]appVisited
+	visited map[string]internal.FileInfo
+	// wrapped are the fiber.Config literals that a change of the plan wraps in the
+	// config of the registry, which a second change must not wrap again.
+	wrapped map[*ast.CompositeLit]bool
 	// siteIndex indexes the calls, selectors and literals of the project.
 	siteIndex *appSites
 	// flows are the sets of places that hold a config, which were changed together
@@ -149,13 +152,13 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 
 	var files []*appFile
 	unreadable := false
-	visited := map[string]appVisited{}
+	visited := map[string]internal.FileInfo{}
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
 		// only a file that mentions fiber, starts an app or names a setting that moved
 		// (the literal of an alias of fiber.Config does) can matter, and the file of an
 		// earlier run is not the project's code
 		if !appMayMatter(content) || isShimFile(fi.Path, content) {
-			visited[fi.Path] = appVisited{fi: fi, src: content}
+			visited[fi.Path] = fi
 			return content
 		}
 		if f, ok := ix.openFile(fi, content); ok {
@@ -180,6 +183,7 @@ func appPlanListenerFields(cwd string) (*appListenPlan, error) {
 		followed: map[*ast.SelectorExpr]bool{},
 		flowWhy:  map[*ast.SelectorExpr]string{},
 		visited:  visited,
+		wrapped:  map[*ast.CompositeLit]bool{},
 		ix:       ix,
 		root:     cwd,
 		files:    files,
@@ -419,12 +423,16 @@ func (pl *appPlanner) move(src *appListenSource) string {
 	}
 
 	if refusal.nobody {
-		if drop, dropped := pl.dropUnstarted(src); drop != nil {
+		drop, dropped, why := pl.dropUnstarted(src)
+		if drop != nil {
 			drop()
 			ip.dropped = append(ip.dropped, dropped...)
 			if !src.hasLeftovers(ip) {
 				return ip.reason
 			}
+		}
+		if why != "" {
+			refusal.why = "no Listen call of this module starts the app, but " + why
 		}
 	}
 

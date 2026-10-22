@@ -12,25 +12,20 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// appVisited is a Go file the walk of the project came across, whether or not the
-// migration opened it: a file that names neither fiber nor a Listen call can still
-// hold a literal of an alias of fiber.Config, or call a function that takes one.
-type appVisited struct {
-	fi  internal.FileInfo
-	src string
-}
-
 // editable reports whether the migration may change the file, opening it when it
-// was only read to understand the project.
+// was only read to understand the project: the walk of the project came across it,
+// whether or not it opened it, because a file that names neither fiber nor a Listen
+// call can still hold a literal of an alias of fiber.Config or call a function that
+// takes one.
 func (pl *appPlanner) editable(f *appFile) bool {
 	if f.walked {
 		return true
 	}
-	v, seen := pl.visited[f.path]
-	if !seen || v.src != f.g.src {
+	fi, seen := pl.visited[f.path]
+	if !seen {
 		return false
 	}
-	opened, ok := pl.ix.openFile(v.fi, v.src)
+	opened, ok := pl.ix.openFile(fi, f.g.src)
 	return ok && opened.walked
 }
 
@@ -127,7 +122,7 @@ func (fl *appFlow) finish() (commit func(), refusal appShimRefusal) {
 		if commit, why := fl.drop(mod); commit != nil {
 			return commit, appShimRefusal{}
 		} else if why != "" {
-			refusal.why += "; and they cannot be dropped: " + why
+			refusal.why = "no Listen call of this module starts the app, but " + why
 		}
 	}
 	if refusal.why != "" {
@@ -316,6 +311,9 @@ func (fl *appFlow) drop(mod goModule) (commit func(), why string) {
 	case len(pl.exposure(mod, fl.news)) > 0:
 		return nil, "an app of the set can leave the module through a package other modules import"
 	}
+	if why := pl.appReach(fl.news); why != "" {
+		return nil, why + ", where code outside the migration may start it"
+	}
 
 	edits := map[*appFile]*editSet{}
 	editsOf := func(f *appFile) *editSet {
@@ -434,4 +432,22 @@ func appRemoveInline(f *appFile, edits *editSet, stmt ast.Stmt) bool {
 	}
 	edits.replaceNode(f.g, stmt, "")
 	return true
+}
+
+// appReach follows the apps the fiber.New calls make through the code of the module,
+// and says where one reaches code the migration cannot see: an app passed to a
+// function of another module, to an interface, stored in a struct or a collection.
+// Such code may start the app, which the calls of the module do not show. It
+// returns "" when the apps go nowhere but to the module's own functions and to the
+// methods called on them.
+func (pl *appPlanner) appReach(creations []appNew) string {
+	if len(creations) == 0 {
+		return ""
+	}
+	fl := pl.newFlow(creations[0].file)
+	for _, c := range creations {
+		fl.claimExpr(c.file, c.call, flowApp, true)
+	}
+	fl.run()
+	return fl.why
 }

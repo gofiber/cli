@@ -136,22 +136,27 @@ func (pl *appPlanner) dropDead(src *appListenSource) (commit func(), dropped []*
 // made, and used for tests or by a program in another module, and the settings
 // only take effect when an app is started. Code outside the module that starts one
 // of the apps has to pass them in its own fiber.ListenConfig, which the note says.
-func (pl *appPlanner) dropUnstarted(src *appListenSource) (commit func(), dropped []*appSourceField) {
+func (pl *appPlanner) dropUnstarted(src *appListenSource) (commit func(), dropped []*appSourceField, why string) {
 	if len(src.creations) == 0 || src.escapes || src.retFn != nil || !src.file.walked || (src.node != nil && src.scope == nil) || pl.unreadable {
-		return nil, nil
+		return nil, nil, ""
 	}
 	for _, c := range src.creations {
 		if !c.file.walked {
-			return nil, nil
+			return nil, nil, ""
 		}
 	}
 
 	// an app that a package other modules can import hands out may be started there,
 	// and the settings are what its author wants for it: they stay, with the note
 	if mod, ok := pl.moduleOf(src.file); ok && len(pl.exposure(mod, src.creations)) > 0 {
-		return nil, nil
+		return nil, nil, ""
 	}
-	return pl.dropFields(src, "no call of this module starts the app this config makes")
+	// so may an app that goes to code outside the migration
+	if reach := pl.appReach(src.creations); reach != "" {
+		return nil, nil, reach + ", where code outside the migration may start it"
+	}
+	commit, dropped = pl.dropFields(src, "no call of this module starts the app this config makes")
+	return commit, dropped, ""
 }
 
 // dropFields plans the removal of the settings of the source that can be taken out

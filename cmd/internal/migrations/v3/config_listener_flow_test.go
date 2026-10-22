@@ -726,3 +726,52 @@ func Test_MigrateConfigListenerFields_Flow_AcrossModules(t *testing.T) {
 	assert.Contains(t, joined, "shared/config/config.go: fiber.Config has no DisableStartupMessage field in v3")
 	assert.Contains(t, joined, "app/other/other.go: fiber.Config has no Prefork field in v3")
 }
+
+// An app that nothing of the module starts may still be started by code the migration
+// does not see: the settings of the apps that go there stay, and the note says where.
+func Test_MigrateConfigListenerFields_Flow_AppsThatReachOtherCode(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"net/http/httptest"
+
+	"github.com/example/runner"
+	"github.com/gofiber/fiber/v2"
+)
+
+type holder struct{ app *fiber.App }
+
+func register(r fiber.Router) { r.Get("/", func(c *fiber.Ctx) error { return nil }) }
+
+func build() *fiber.App {
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	register(app)
+	return app
+}
+
+func main() {
+	build().Test(httptest.NewRequest("GET", "/", nil))
+
+	other := fiber.New(fiber.Config{Prefork: true})
+	runner.Run(other)
+
+	third := fiber.New(fiber.Config{EnablePrintRoutes: true})
+	_ = holder{app: third}
+}
+`)
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, "app := fiber.New(fiber.Config{})", "an app that only its own module's code uses has no use for them")
+	assert.Contains(t, main, "other := fiber.New(fiber.Config{Prefork: true})")
+	assert.Contains(t, main, "third := fiber.New(fiber.Config{EnablePrintRoutes: true})")
+
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 3)
+	assert.Contains(t, notes[0].Message, "has no DisableStartupMessage field in v3: dropped")
+	assert.Contains(t, notes[1].Message, "no Listen call of this module starts the app, but the app is passed to runner.Run, at line 24 of main.go, where code outside the migration may start it")
+	assert.Contains(t, notes[2].Message, "the app is stored in the field app of holder, at line 10 of main.go")
+}

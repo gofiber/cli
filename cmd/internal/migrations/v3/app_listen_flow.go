@@ -51,6 +51,7 @@ const (
 	flowConfig appFlowClass = iota // a fiber.Config, or a pointer to one
 	flowFunc                       // a function that takes one
 	flowFuncs                      // a slice of such functions, such as the options of a variadic parameter
+	flowApp                        // a fiber.App, followed to see whether code the migration cannot see gets it
 )
 
 // what names the value in a reason.
@@ -60,6 +61,8 @@ func (c appFlowClass) what() string {
 		return "a function that takes the config"
 	case flowFuncs:
 		return "functions that take the config"
+	case flowApp:
+		return "the app"
 	default:
 		return "the config"
 	}
@@ -231,6 +234,12 @@ func (fl *appFlow) claimExpr(f *appFile, e ast.Expr, class appFlowClass, usage b
 		fl.claimSelector(f, x, class, usage)
 		return
 	case *ast.CallExpr:
+		if class == flowApp && f.isNewCall(x) {
+			if usage {
+				fl.use(f, x, class) // the app this call makes
+			}
+			return
+		}
 		fl.claimCall(f, x, 0, class)
 		return
 	}
@@ -284,7 +293,7 @@ func (fl *appFlow) claimCall(f *appFile, call *ast.CallExpr, idx int, class appF
 			return
 		}
 	}
-	if _, _, isAppConfig := f.appConfigCall(call); isAppConfig {
+	if _, _, isAppConfig := f.appConfigCall(call); isAppConfig && class == flowConfig {
 		fl.failf(f, call, "the config of an app is handed on (%s)", f.g.text(call))
 		return
 	}
@@ -343,6 +352,10 @@ func (fl *appFlow) claimResult(f *appFile, fn *ast.FuncDecl, idx int, class appF
 
 // claimField adds a field of a struct type.
 func (fl *appFlow) claimField(td *appTypeDecl, name string, class appFlowClass) {
+	if class == flowApp {
+		fl.failf(td.file, td.spec, "the app is stored in the field %s of %s", name, td.spec.Name.Name)
+		return
+	}
 	if fl.claim(appFlowKey{kind: flowField, class: class, node: td.spec, name: name}) {
 		fl.queue = append(fl.queue, func() { fl.scanField(td, name, class) })
 	}
@@ -352,6 +365,14 @@ func (fl *appFlow) claimField(td *appTypeDecl, name string, class appFlowClass) 
 // change. It fails when t is not the type the class says.
 func (fl *appFlow) retype(f *appFile, t ast.Expr, class appFlowClass) bool {
 	switch class {
+	case flowApp:
+		// nothing changes for an app: the type must be one that cannot hand it to code
+		// that starts it
+		if k := f.typeKind(t, 0); k != appKindApp && k != appKindRouter {
+			fl.failf(f, t, "the app is held by a value of type %s", f.g.text(t))
+			return false
+		}
+		return true
 	case flowFunc:
 		return fl.retypeFunc(f, t)
 	case flowFuncs:
@@ -470,6 +491,9 @@ func (fl *appFlow) use(f *appFile, e ast.Expr, class appFlowClass) {
 
 	switch p := f.parent[e].(type) {
 	case *ast.SelectorExpr:
+		if p.X == e && class == flowApp {
+			return // a method of the app, or a field of it
+		}
 		if p.X == e && class == flowConfig {
 			if appListenerFieldV3(p.Sel.Name) != "" {
 				fl.sels[p] = f

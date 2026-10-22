@@ -20,6 +20,8 @@ type appShimWork struct {
 	path string
 	// notes are what the user is told about the work once it is done.
 	notes []appShimNoteAt
+	// wraps are the literals the work wraps in the config of the registry.
+	wraps []*ast.CompositeLit
 }
 
 // appShimNoteAt is a note about a place of a file.
@@ -72,6 +74,9 @@ func (w *appShimWork) commit() {
 	}
 	for _, n := range w.notes {
 		internal.Notef(n.file.fi, n.line, "%s", n.text)
+	}
+	for _, lit := range w.wraps {
+		w.pl.wrapped[lit] = true
 	}
 }
 

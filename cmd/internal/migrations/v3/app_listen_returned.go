@@ -208,6 +208,10 @@ func shimReturnedVariable(w *appShimWork, f *appFile, id *ast.Ident, retyped map
 // literal of the registry's Config, and the rest stays in the fiber.Config in it.
 func shimWrapLiteral(w *appShimWork, f *appFile, lit *ast.CompositeLit) string {
 	g := f.g
+	if w.pl.wrapped[lit] {
+		return fmt.Sprintf("the fiber.Config literal at line %d is already changed by another change", g.line(lit.Pos()))
+	}
+	w.wraps = append(w.wraps, lit)
 
 	var drop []int
 	var held []string
