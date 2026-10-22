@@ -149,7 +149,7 @@ func (p *mw3SessionReadsPass) read(sel *ast.SelectorExpr, stack []ast.Node) {
 		return
 	}
 
-	if use == mw3UseRead {
+	if use == mw3UseRead && !mw3IsCaseOrKey(sel, stack) {
 		if value, known := p.known(sel, field, owner, stack); known {
 			fold := mw3Fold{sel: sel, stack: stack, owner: owner, value: value, field: field, fn: mw3OutermostFunc(stack)}
 			if id, isIdent := ast.Unparen(mw3Receiver(sel, owner)).(*ast.Ident); isIdent && fold.fn != nil {
@@ -162,6 +162,22 @@ func (p *mw3SessionReadsPass) read(sel *ast.SelectorExpr, stack []ast.Node) {
 		}
 	}
 	p.rewrite(sel, field, owner, use, outer, stack)
+}
+
+// mw3IsCaseOrKey reports whether the expression is the value of a case of a switch
+// or the key of a composite literal: a constant there would be one more case or key
+// that may be there already.
+func mw3IsCaseOrKey(e ast.Expr, stack []ast.Node) bool {
+	if len(stack) == 0 {
+		return false
+	}
+	switch parent := stack[len(stack)-1].(type) {
+	case *ast.CaseClause:
+		return slices.Contains(parent.List, e)
+	case *ast.KeyValueExpr:
+		return parent.Key == e
+	}
+	return false
 }
 
 // mw3Receiver returns the expression the config is read from: the store, for the

@@ -732,3 +732,30 @@ func main() {
 	assert.Contains(t, got, "}(session.ConfigDefault.Extractor))")
 	assert.Contains(t, res.files["init.go"], `session.ConfigDefault.Extractor = extractors.FromHeader("X-Default")`)
 }
+
+// A constant in a case or in the key of a literal would be a case or a key more
+// that may be there already: those reads stay reads of the extractor.
+func Test_MigrateSessionReads_NoConstantInACaseOrAKey(t *testing.T) {
+	t.Parallel()
+
+	got, _ := mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func where(v string) bool {
+	store := session.New()
+	defer store.Reset()
+	switch v {
+	case store.KeyLookup:
+		return true
+	case "cookie:session_id":
+		return false
+	}
+	_ = map[string]bool{store.KeyLookup: true, "cookie:session_id": false}
+	return false
+}
+`, v3.MigrateSessionExtractor)
+
+	assert.Equal(t, 2, strings.Count(got, "}(store.Extractor)"), got)
+	assert.NotContains(t, got, ".KeyLookup")
+}
