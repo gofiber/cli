@@ -382,6 +382,28 @@ func purge() error { return store.Reset() }
 `,
 			rewrite: mw3SessionMethodsContent,
 		},
+		{
+			name: "session source: the import goes with its last use",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+func where(src session.Source) bool { return src == session.SourceCookie }
+`,
+			rewrite: mw3SessionSourceContent,
+		},
+		{
+			name: "session source: the import stays for what is still used",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+var store = session.NewStore()
+
+func where(src session.Source) bool { return src == session.SourceCookie }
+`,
+			rewrite: mw3SessionSourceContent,
+		},
 	}
 
 	for _, tc := range tests {
@@ -470,9 +492,18 @@ var _ = fiber.New
 			})
 		}
 	}
+	sourceBodies := []string{
+		"func f(src session.Source) bool { return src == session.SourceCookie }",
+		"var kinds = map[session.Source]string{\n\tsession.SourceCookie: \"c\",\n\tsession.SourceHeader: \"h\",\n}",
+		"type t struct {\n\tsession.Source\n\tname string\n}",
+		"func f() string {\n\treturn string(session.SourceURLQuery) + fmt.Sprint(session.SourceHeader)\n}",
+		"var s = session.New(session.Config{KeyLookup: string(session.SourceCookie) + \":sid\"})",
+		"func f(src session.Source) *session.Store {\n\treturn session.New(session.Config{KeyLookup: fmt.Sprintf(\"%s:%s\", src, \"sid\")})\n}",
+	}
 	run("session config", sessionHeader, sessionBodies, mw3SessionConfigContent)
 	run("session extractor", sessionHeader, sessionBodies, mw3SessionExtractorContent)
 	run("session store", sessionHeader, sessionBodies, mw3SessionStoreContent)
 	run("session methods", sessionHeader, sessionBodies, mw3SessionMethodsContent)
+	run("session source", sessionHeader, sourceBodies, mw3SessionSourceContent)
 	run("filesystem", fsHeader, fsBodies, mw3FilesystemContent)
 }

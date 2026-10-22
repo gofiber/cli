@@ -28,19 +28,36 @@ const mw3StringsPkg = "strings"
 // computed CookieName next to a KeyLookup, or the function not being writable in
 // the file) are left as they are, so that the build fails on them instead of the
 // session quietly using the default cookie, and are reported.
+//
+// The program may have built a lookup from the Source constants, which do not
+// exist in v3. The Source type is string and its constants are the strings they
+// stood for (mw3SessionSourceContent), and that is written first, in a pass over
+// the project of its own, so that the lookups are read as plain strings.
 func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	pkgs := newMw3Pkgs()
-	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		return mw3SessionExtractorContent(content, fi, pkgs)
-	})
+	// Every step reads the project as the one before left it, with a view of the
+	// package of its own.
+	run := func(rewrite func(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string) (bool, error) {
+		pkgs := newMw3Pkgs()
+		return internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+			return rewrite(content, fi, pkgs)
+		})
+	}
+
+	sources, err := run(mw3SessionSourceContent)
+	if err != nil {
+		return fmt.Errorf("failed to migrate session sources: %w", err)
+	}
+	if sources {
+		cmd.Println("Migrating session Source constants")
+	}
+
+	lookups, err := run(mw3SessionExtractorContent)
 	if err != nil {
 		return fmt.Errorf("failed to migrate session extractor config: %w", err)
 	}
-	if !changed {
-		return nil
+	if lookups {
+		cmd.Println("Migrating session KeyLookup config")
 	}
-
-	cmd.Println("Migrating session KeyLookup config")
 	return nil
 }
 
@@ -327,14 +344,15 @@ func (p *mw3SessionExtractorPass) assign(as *ast.AssignStmt, stack []ast.Node) {
 }
 
 // selector reports the session identifiers that v3 no longer has: the lookup
-// fields of a store and the Source constants.
+// fields of a store, and a Source that could not be written as a string.
 func (p *mw3SessionExtractorPass) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 	g := p.f.g
 	if id, ok := sel.X.(*ast.Ident); ok && p.f.isPackage(id, stack) {
-		switch sel.Sel.Name {
-		case "Source", "SourceCookie", "SourceHeader", "SourceURLQuery":
+		if name := sel.Sel.Name; name == mw3SessionSource || mw3SessionSourceValues[name] != "" {
 			internal.Notef(p.fi, g.line(sel.Pos()),
-				"%s was removed: a session reads its ID through Config.Extractor now (extractors.FromCookie, FromHeader, FromQuery), and extractors.Source tells where an ID came from.",
+				"%s was removed, and could not be written as a string here (it is an embedded field, the file declares string itself, "+
+					"or it is a case of a type switch that has a case string already): "+
+					"Source was a string type, and SourceCookie, SourceHeader and SourceURLQuery were \"cookie\", \"header\" and \"query\".",
 				g.text(sel))
 		}
 		return
