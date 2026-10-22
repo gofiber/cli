@@ -238,7 +238,7 @@ func (env *ctxEnv) unify(param, arg ast.Expr, tparams []string, bind map[string]
 			env.unifyAll(ctxResultTypes(p), ctxResultTypes(a), tparams, bind, depth+1)
 		}
 	case *ast.IndexExpr, *ast.IndexListExpr:
-		if ctxTypeName(param) == ctxTypeName(arg) {
+		if key := env.typeKey(param); key != "" && key == env.typeKey(arg) {
 			env.unifyAll(ctxTypeArgs(param), ctxTypeArgs(arg), tparams, bind, depth+1)
 		}
 	}
@@ -260,8 +260,8 @@ func (env *ctxEnv) underlying(t ast.Expr, depth int) ast.Expr {
 		case *ast.ParenExpr:
 			t = x.X
 			continue
-		case *ast.Ident, *ast.IndexExpr, *ast.IndexListExpr:
-			spec := env.typeDecl[ctxTypeName(x)]
+		case *ast.Ident, *ast.SelectorExpr, *ast.IndexExpr, *ast.IndexListExpr:
+			spec := env.typeSpec(env.typeKey(x))
 			if spec == nil {
 				return nil
 			}
@@ -388,6 +388,10 @@ func (env *ctxEnv) isIterPackage(e ast.Expr) bool {
 	if !ok {
 		return false
 	}
+	if id.Name == ctxIterQualifier {
+		// a type written in another file or package (see ctxModule)
+		return true
+	}
 
 	for _, spec := range env.g.file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
@@ -408,16 +412,16 @@ func (env *ctxEnv) isIterPackage(e ast.Expr) bool {
 // a method of a type declared in the file, of an interface, or one that the
 // structs and interfaces embedded in the type promote.
 func (env *ctxEnv) methodFuncType(recv ast.Expr, name string, depth int) (*ast.FuncType, map[string]ast.Expr) {
-	typeName := ctxTypeName(recv)
+	typeName := env.typeKey(recv)
 	if typeName == "" || depth > ctxMaxDepth {
 		return nil, nil
 	}
 	args := ctxTypeArgs(recv)
 
-	if method := env.methods[typeName+"."+name]; method != nil {
+	if method := env.methodDecl(typeName, name); method != nil {
 		return method.Type, ctxBindParams(ctxTypeNames(ctxTypeArgs(ctxFirstFieldType(method.Recv))), args)
 	}
-	spec := env.typeDecl[typeName]
+	spec := env.typeSpec(typeName)
 	if spec == nil {
 		return nil, nil
 	}
@@ -527,26 +531,6 @@ func (env *ctxEnv) resultTypeAt(e ast.Expr, index int, stack []ast.Node, depth i
 		if index == 0 && x.Op == token.ARROW {
 			return env.elementType(env.typeOfAt(x.X, stack, depth+1))
 		}
-	}
-	return nil
-}
-
-// pkgVarType returns the type of the package-level variable name, declared in
-// this file or in another file of the package.
-func (env *ctxEnv) pkgVarType(name string, depth int) ast.Expr {
-	pv, ok := env.pkgVars[name]
-	if !ok || depth > ctxMaxDepth {
-		return nil
-	}
-
-	spec := pv.spec
-	switch {
-	case spec.Type != nil:
-		return spec.Type
-	case len(spec.Values) == len(spec.Names):
-		return env.typeOfAt(spec.Values[pv.index], nil, depth+1)
-	case len(spec.Values) == 1:
-		return env.resultTypeAt(spec.Values[0], pv.index, nil, depth+1)
 	}
 	return nil
 }

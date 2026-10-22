@@ -68,6 +68,7 @@ type reviewFile struct {
 
 func (r *reviewer) scan(content string, fi internal.FileInfo) {
 	if !strings.Contains(content, "github.com/gofiber/") {
+		r.scanModuleContexts(content, fi)
 		return
 	}
 	g, ok := parseFile(fi, content)
@@ -217,18 +218,18 @@ func (rf *reviewFile) checkLiteral(lit *ast.CompositeLit) {
 // groups and hooks.
 func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || len(rf.core) == 0 {
+	if !ok {
 		return
 	}
 	name := sel.Sel.Name
 
 	switch {
-	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && isFiberCtxExpr(sel.X, rf.core, stack):
+	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && rf.isCtxMethod(sel, stack):
 		rf.r.fileNameSeen = true
 		rf.notef(sel.Sel.Pos(), "%s takes the file name literally in Fiber v3 instead of percent-decoding it, so a name taken from a route parameter keeps its %%XX escapes unless fiber.Config{UnescapePath: true} is set; decode it and make sure it stays inside the directory you serve", name)
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && rf.isCtxMethod(sel, stack):
 		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s%s", name, reviewHint("Ctx."+name), rf.wrapperHint(sel, stack))
-	case name == "Redirect" && len(call.Args) > 0 && isFiberCtxExpr(sel.X, rf.core, stack):
+	case name == "Redirect" && len(call.Args) > 0 && rf.isCtxMethod(sel, stack):
 		rf.notef(sel.Sel.Pos(), "Redirect takes no arguments in Fiber v3%s", reviewHint("Ctx.Redirect"))
 	case reviewRemovedRouterMethod(name) && rf.isRouterExpr(sel.X, stack, 0):
 		rf.notef(sel.Sel.Pos(), "%s was removed in Fiber v3%s", name, reviewHint("App."+name))
@@ -246,7 +247,7 @@ func (rf *reviewFile) isCtxMethod(sel *ast.SelectorExpr, stack []ast.Node) bool 
 		return true
 	}
 	if rf.env == nil {
-		rf.env = newCtxEnv(rf.g, rf.core, rf.r.run.siblings(rf.fi, rf.g)...)
+		rf.env = rf.r.run.newEnv(rf.fi, rf.g, rf.core)
 	}
 	return rf.env.receiverKind(sel, stack) == ctxYes
 }
@@ -256,7 +257,7 @@ func (rf *reviewFile) isCtxMethod(sel *ast.SelectorExpr, stack []ast.Node) bool 
 // be called on the embedded context when the type declares a method of its name
 // (a wrapper with a Redirect(to string) of its own hides the Redirect() of v3).
 func (rf *reviewFile) wrapperHint(sel *ast.SelectorExpr, stack []ast.Node) string {
-	if isFiberCtxExpr(sel.X, rf.core, stack) {
+	if isFiberCtxExpr(sel.X, rf.core, stack) || rf.env.isCtxAlias(ctxDerefType(rf.env.typeOf(sel.X, stack)), nil) {
 		return ""
 	}
 	recv := rf.g.text(sel.X)

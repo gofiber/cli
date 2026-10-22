@@ -2,6 +2,7 @@ package v3_test
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -45,7 +46,8 @@ func ctxSrc(s string) string {
 
 // ctxRun runs the migration on a project that has one file, main.go unless a
 // name is given, and returns the file afterwards, what the migration printed and
-// its notes.
+// its notes. A project with files in directories is a module (example.com/app),
+// unless one of the files is its go.mod.
 func ctxRun(t *testing.T, migrate ctxMigrateFn, name, in string, others map[string]string) (out, printed string, notes []internal.Note) {
 	t.Helper()
 
@@ -53,11 +55,19 @@ func ctxRun(t *testing.T, migrate ctxMigrateFn, name, in string, others map[stri
 		name = "main.go"
 	}
 	dir := t.TempDir()
-	file := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(file, []byte(in), 0o600))
+	files := map[string]string{name: in}
 	for other, src := range others {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, other), []byte(ctxSrc(src)), 0o600))
+		files[other] = ctxSrc(src)
 	}
+	if _, ok := files["go.mod"]; !ok && slices.ContainsFunc(slices.Collect(maps.Keys(files)), func(f string) bool { return strings.Contains(f, "/") }) {
+		files["go.mod"] = "module example.com/app\n\ngo 1.25\n"
+	}
+	for path, src := range files {
+		full := filepath.Join(dir, filepath.FromSlash(path))
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
+		require.NoError(t, os.WriteFile(full, []byte(src), 0o600))
+	}
+	file := filepath.Join(dir, filepath.FromSlash(name))
 
 	var buf bytes.Buffer
 	require.NoError(t, migrate(newCmd(&buf), dir, nil, nil))

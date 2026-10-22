@@ -54,7 +54,10 @@ type rshape struct {
 	subst map[string]*rshape
 	// fields are the declared fields of a struct, or the methods of an interface.
 	fields *ast.FieldList
-	name   string
+	// name is the name of a declared type, or of a type parameter that is not bound,
+	// and decl the key the environment knows a declared type by (ctxEnv.typeKey).
+	name string
+	decl string
 	// args are the type arguments of a declared generic type.
 	args []*rshape
 	// params and results are the parameters and results of a function.
@@ -236,7 +239,7 @@ func unify(param, arg *rshape, bind map[string]*rshape, depth int) {
 	case rkStruct, rkIface, rkNone, rkRange, rkSet, rkParam:
 	}
 
-	if param.name != "" && param.name == arg.name {
+	if param.decl != "" && param.decl == arg.decl {
 		for i := range min(len(param.args), len(arg.args)) {
 			unify(param.args[i], arg.args[i], bind, depth+1)
 		}

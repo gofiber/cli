@@ -120,15 +120,26 @@ func (p *mw2Planner) pick(candidates []*mw2Role) *mw2Role {
 
 // read plans the migration of one c.Locals(key) read.
 func (p *mw2Planner) read(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast.Node) {
-	if len(p.f.fiber) == 0 {
-		return
-	}
 	key, ok := p.f.kr.key(call.Args[0])
 	if !ok {
 		return
 	}
 	candidates := p.m.candidates(key)
 	if len(candidates) == 0 {
+		return
+	}
+
+	// The receiver decides whether it is the locals of the request: a file that
+	// imports fiber reads them from a value it does not know the type of too (that
+	// is where the handlers declare their context), but one that does not imports
+	// the package for a reason, and a Locals call of a value that is no context
+	// is none of the middleware's.
+	switch kind := p.receiver(sel, stack); {
+	case kind == ctxNo:
+		return
+	case kind == ctxUnknown && len(p.f.fiber) == 0:
+		p.skipf(key, call, "%s(%s) was left as it is: %s is not known to be a fiber context here, so it may not read what %s stored. If it does, use %s.",
+			p.f.g.text(sel), p.f.g.text(call.Args[0]), p.f.g.text(sel.X), mw2Names(candidates), mw2Readers(candidates))
 		return
 	}
 
@@ -147,6 +158,37 @@ func (p *mw2Planner) read(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast
 	default:
 		p.rewrite(call, sel, stack, key, role)
 	}
+}
+
+// receiver says whether the receiver of the Locals call is a fiber context. The
+// file types it the way the other migrations of the request context do: a value of
+// a type another package of the module declares, a wrapper or an alias of the
+// context, is one.
+func (p *mw2Planner) receiver(sel *ast.SelectorExpr, stack []ast.Node) ctxKind {
+	env := p.f.typing()
+	if env == nil {
+		return ctxNo
+	}
+
+	// A fiber context satisfies an interface that declares Locals: what it holds
+	// is not known.
+	if kind := env.receiverKind(sel, stack); kind != ctxNo || !env.isInterfaceValue(sel.X, stack) {
+		return kind
+	}
+	return ctxUnknown
+}
+
+// readerArg returns the text of the argument of the reader that replaces
+// recv.Locals(...): the receiver, or the context it embeds where it is a struct
+// that wraps one, because that is a fiber.Ctx whatever the wrapper declares.
+func (p *mw2Planner) readerArg(sel *ast.SelectorExpr, stack []ast.Node) string {
+	text := p.f.g.text(sel.X)
+	if env := p.f.typing(); env != nil {
+		if path := env.embeddedCtxOf(sel.X, stack); path != "" {
+			return text + "." + path
+		}
+	}
+	return text
 }
 
 // mw2Names lists the middleware of the roles for a note.
@@ -211,7 +253,7 @@ func mw2ContextOf(node ast.Expr, stack []ast.Node) mw2ReadContext {
 // used decides what else has to change: v3 returns a string or a pointer where
 // c.Locals returned an any.
 func (p *mw2Planner) rewrite(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast.Node, key mw2Key, role *mw2Role) {
-	reader := p.qualifier(role) + role.reader + "(" + p.f.g.text(sel.X) + ")"
+	reader := p.qualifier(role) + role.reader + "(" + p.readerArg(sel, stack) + ")"
 	ctx := mw2ContextOf(call, stack)
 	edits, g := &p.plan.edits, p.f.g
 

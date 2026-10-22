@@ -52,16 +52,10 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	if !strings.Contains(content, ctxRedirect) {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -75,7 +69,7 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || env.isCtxType(sel.X) {
+		if !ok || env.isCtxType(sel.X, stack) {
 			return true
 		}
 
@@ -106,7 +100,7 @@ func ctxRedirectContent(content string, fi internal.FileInfo, run *ctxRun) strin
 		return true
 	})
 
-	return plan.apply(content)
+	return env.finish(content, plan.apply(content))
 }
 
 // ctxQueueRedirectValue queues the replacement of a redirect method that is used
@@ -121,7 +115,7 @@ func ctxQueueRedirectValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast
 	// A method expression, (*fiber.Ctx).Redirect, is a value even when it is
 	// called: the context is its first argument.
 	kind := ctxYes
-	if !env.isCtxType(sel.X) {
+	if !env.isCtxType(sel.X, stack) {
 		if _, isCall := ctxParentCall(sel, stack); isCall {
 			return
 		}
@@ -322,6 +316,9 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 // ctxFiberNames returns the names the file binds to the fiber package, which
 // the body of a function literal refers to.
 func ctxFiberNames(env *ctxEnv) []string {
+	if len(env.names) == 0 && env.alias != "" {
+		return []string{env.alias}
+	}
 	return slices.DeleteFunc(slices.Clone(env.names), func(name string) bool { return name == "." })
 }
 

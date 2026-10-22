@@ -41,16 +41,10 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 	if !strings.Contains(content, "SendFile") && !strings.Contains(content, ctxDownload) {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var edits editSet
 	var values ctxPlan
@@ -64,7 +58,7 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || env.isCtxType(sel.X) {
+		if !ok || env.isCtxType(sel.X, stack) {
 			return true
 		}
 
@@ -72,12 +66,12 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 		case mw3SendFile:
 			switch env.receiverKind(sel, stack) {
 			case ctxYes:
-				rewriteSendFileCall(g, &edits, fi, call, names, stack)
+				rewriteSendFileCall(env, &edits, fi, call, stack)
 			case ctxUnknown:
 				if len(call.Args) == 2 && isBoolLiteral(call.Args[1]) {
 					internal.Notef(fi, g.line(call.Pos()),
 						"SendFile(..., %s): if the receiver is a fiber context, the flag is now %s{Compress: %s, ByteRange: true}",
-						g.text(call.Args[1]), ctxQualifier(names)+"SendFile", g.text(call.Args[1]))
+						g.text(call.Args[1]), env.spell("SendFile"), g.text(call.Args[1]))
 				}
 			case ctxNo:
 			}
@@ -85,14 +79,14 @@ func migrateSendFileContent(content string, fi internal.FileInfo, run *ctxRun) s
 			if env.receiverKind(sel, stack) == ctxYes {
 				noter.oncef("download", sel.Pos(),
 					"%s no longer serves byte ranges (resumable downloads) in Fiber v3. Where that matters, call %s.Attachment(name), then %s.SendFile(path, %sSendFile{ByteRange: true})",
-					g.text(sel), g.text(sel.X), g.text(sel.X), env.qual(""))
+					g.text(sel), g.text(sel.X), g.text(sel.X), env.spell(""))
 			}
 		}
 		return true
 	})
 
 	values.run(&edits)
-	return edits.apply(content)
+	return env.finish(content, edits.apply(content))
 }
 
 // ctxQueueSendFileValue queues the replacement of c.SendFile used as a value,
@@ -105,7 +99,7 @@ func ctxQueueSendFileValue(plan *ctxPlan, env *ctxEnv, sel *ast.SelectorExpr, st
 
 	// A method expression, (*fiber.Ctx).SendFile, is a value even when it is
 	// called: the context is its first argument.
-	if !env.isCtxType(sel.X) {
+	if !env.isCtxType(sel.X, stack) {
 		if _, isCall := ctxParentCall(sel, stack); isCall || env.receiverKind(sel, stack) != ctxYes {
 			return
 		}
@@ -116,18 +110,19 @@ func ctxQueueSendFileValue(plan *ctxPlan, env *ctxEnv, sel *ast.SelectorExpr, st
 
 // rewriteSendFileCall schedules the edits that move the arguments of a
 // Ctx.SendFile call to the config struct.
-func rewriteSendFileCall(g *goSource, edits *editSet, fi internal.FileInfo, call *ast.CallExpr, names []string, stack []ast.Node) {
-	cfgType := ctxQualifier(names) + "SendFile"
+func rewriteSendFileCall(env *ctxEnv, edits *editSet, fi internal.FileInfo, call *ast.CallExpr, stack []ast.Node) {
+	g := env.g
 
 	switch {
 	case len(call.Args) == 0:
 	case call.Ellipsis.IsValid() || len(call.Args) > 2:
 		internal.Notef(fi, g.line(call.Pos()),
-			"SendFile takes a single %s config now, convert the compress flags by hand (set ByteRange: true to keep range requests)", cfgType)
+			"SendFile takes a single %s config now, convert the compress flags by hand (set ByteRange: true to keep range requests)", env.spell("SendFile"))
 	case len(call.Args) == 1:
 		end := g.offset(call.Args[0].End())
-		edits.replace(end, end, ", "+cfgType+"{ByteRange: true}")
-	case !isSendFileConfig(call.Args[1], names, stack, 0):
+		edits.replace(end, end, ", "+env.qual("SendFile")+"{ByteRange: true}")
+	case !isSendFileConfig(call.Args[1], env.names, stack, 0):
+		cfgType := env.qual("SendFile")
 		compress := g.text(call.Args[1])
 		cfg := cfgType + "{Compress: " + compress + ", ByteRange: true}"
 		if compress == litFalse {

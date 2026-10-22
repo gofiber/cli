@@ -103,7 +103,7 @@ func (env *ctxEnv) newValueBuilder(sel *ast.SelectorExpr, stack []ast.Node, memb
 	hidden := env.embeddedCtxVia(sel.X, stack, members)
 	id, isIdent := ast.Unparen(sel.X).(*ast.Ident)
 	switch {
-	case env.isCtxType(sel.X):
+	case env.isCtxType(sel.X, stack):
 		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(ctxTypeCtx), expr: true}
 	case isIdent && hidden == "" && ctxVariableStable(id.Name, id.Pos(), stack):
 		namer[id.Name] = true
@@ -115,9 +115,14 @@ func (env *ctxEnv) newValueBuilder(sel *ast.SelectorExpr, stack []ast.Node, memb
 }
 
 // isCtxType reports whether x is the fiber.Ctx type, the receiver of a method
-// expression such as (*fiber.Ctx).RedirectBack, and not a value.
-func (env *ctxEnv) isCtxType(x ast.Expr) bool {
-	return ctxIsFiberType(ast.Unparen(x), env.names, ctxTypeCtx)
+// expression such as (*fiber.Ctx).RedirectBack, and not a value. An alias of the
+// type, web.Ctx after type Ctx = fiber.Ctx, is the same type.
+func (env *ctxEnv) isCtxType(x ast.Expr, stack []ast.Node) bool {
+	x = ast.Unparen(x)
+	if ctxIsFiberType(x, env.names, ctxTypeCtx) {
+		return true
+	}
+	return env.isCtxAlias(ast.Unparen(ctxDerefType(x)), stack)
 }
 
 // name returns a name for a parameter or a variable of the literal.

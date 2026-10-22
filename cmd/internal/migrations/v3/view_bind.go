@@ -35,16 +35,10 @@ func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) strin
 	if !ctxContainsAny(content, ".Bind") {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -58,7 +52,7 @@ func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) strin
 		// method used as a value, f := c.Bind, and as a method expression,
 		// (*fiber.Ctx).Bind, is the one of v2.
 		call, isCall := ctxParentCall(sel, stack)
-		expr := env.isCtxType(sel.X)
+		expr := env.isCtxType(sel.X, stack)
 		if isCall && !expr && len(call.Args) != 1 {
 			return true
 		}
@@ -82,7 +76,7 @@ func ctxViewBindContent(content string, fi internal.FileInfo, run *ctxRun) strin
 		return true
 	})
 
-	return plan.apply(content)
+	return env.finish(content, plan.apply(content))
 }
 
 // ctxIsFiberMap reports whether e is a fiber.Map literal or conversion.

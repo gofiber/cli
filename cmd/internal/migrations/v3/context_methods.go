@@ -57,16 +57,10 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 		!ctxContainsAny(content, ctxContextCallName, ctxUserContext, ctxSetUserContext) {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 
 	// A context that already has SetContext, the v3 name, was migrated by hand
@@ -87,7 +81,7 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 			// (*fiber.Ctx).Context, is the one of v2 too.
 			call, isCall := ctxParentCall(sel, stack)
 			switch {
-			case env.isCtxType(sel.X):
+			case env.isCtxType(sel.X, stack):
 				contextCalls = append(contextCalls, sel)
 			case isCall && len(call.Args) != 0:
 			case env.receiverKind(sel, stack, ctxRequestCtxName) == ctxYes:
@@ -101,7 +95,7 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 				renamed = ctxSetContext
 			}
 			kind, via := ctxYes, ""
-			if !env.isCtxType(sel.X) {
+			if !env.isCtxType(sel.X, stack) {
 				kind, via = env.receiverKindVia(sel, stack, renamed)
 			}
 			switch kind {
@@ -127,7 +121,7 @@ func ctxContextMethodsContent(content string, fi internal.FileInfo, run *ctxRun)
 		}
 	}
 
-	out := plan.apply(content)
+	out := env.finish(content, plan.apply(content))
 	if out != content && !strings.Contains(out, ctxContextMarker) {
 		if !strings.HasSuffix(out, "\n") {
 			out += "\n"

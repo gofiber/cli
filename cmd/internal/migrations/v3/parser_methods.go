@@ -54,16 +54,10 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 	if !ctxContainsAny(content, methods...) {
 		return content
 	}
-	names := fiberNames(content)
-	if len(names) == 0 {
-		return content
-	}
-	g, ok := parseFile(fi, content)
+	g, env, ok := run.open(fi, content)
 	if !ok {
 		return content
 	}
-
-	env := newCtxEnv(g, names, run.siblings(fi, g)...)
 	noter := newCtxNoter(fi, g, run)
 	var plan ctxPlan
 
@@ -75,7 +69,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 
 		// A method expression, (*fiber.Ctx).BodyParser, takes the context as its
 		// first parameter: it becomes a function literal that does.
-		if env.isCtxType(sel.X) {
+		if env.isCtxType(sel.X, stack) {
 			b := env.newValueBuilder(sel, stack, ctxMembersBind)
 			plan.add(func(e *editSet) {
 				v := b.parser(sel.Sel.Name)
@@ -107,7 +101,7 @@ func ctxMigrateParserCalls(content string, fi internal.FileInfo, run *ctxRun, me
 		return true
 	})
 
-	return plan.apply(content)
+	return env.finish(content, plan.apply(content))
 }
 
 // ctxParserHint spells the v3 replacement of the parser method sel.

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 // mw2LocalsIndex knows, for each module of a project, which middleware keep a
@@ -16,10 +18,13 @@ type mw2LocalsIndex struct {
 	modules *mw2Modules
 	pkgs    *mw2Packages
 	byRoot  map[string]*mw2LocalsModule
+	// run types the receivers of the reads: whether a value is a fiber context is
+	// what every migration of the request context asks (see ctxEnv).
+	run *ctxRun
 }
 
 func newMW2LocalsIndex(root string) *mw2LocalsIndex {
-	return &mw2LocalsIndex{modules: newMW2Modules(root), pkgs: newMW2Packages(), byRoot: map[string]*mw2LocalsModule{}}
+	return &mw2LocalsIndex{modules: newMW2Modules(root), pkgs: newMW2Packages(), byRoot: map[string]*mw2LocalsModule{}, run: newCtxRun()}
 }
 
 // module returns what is known about the module that holds file.
@@ -77,11 +82,27 @@ type mw2LocalsFile struct {
 	g     *goSource
 	kr    *mw2KeyResolver
 	names map[string][]*mw2Role
-	path  string
+	run   *ctxRun
+	// env types the receivers of the file, built when first needed; it is nil
+	// for a file that has nothing to do with contexts.
+	env  *ctxEnv
+	path string
 	// rel is the path relative to the migrated directory.
 	rel string
+	fi  internal.FileInfo
 	// fiber are the identifiers the file binds to the core package.
-	fiber []string
+	fiber  []string
+	hasEnv bool
+}
+
+// typing returns the environment that tells what the receivers of the file are,
+// nil when the file reaches no fiber context at all.
+func (f *mw2LocalsFile) typing() *ctxEnv {
+	if !f.hasEnv {
+		f.hasEnv = true
+		f.env = f.run.envFor(f.fi, f.g, f.fiber)
+	}
+	return f.env
 }
 
 // read parses a file; nil when it cannot be read or does not parse (the
@@ -109,6 +130,8 @@ func (ix *mw2LocalsIndex) read(path string) *mw2LocalsFile {
 		names: names,
 		fiber: fiberNames(string(src)),
 		kr:    &mw2KeyResolver{g: g, pkg: ix.pkgs.of(dir, g.file.Name.Name), names: names, dir: dir},
+		fi:    internal.FileInfo{Root: ix.modules.root, Path: path, Rel: rel},
+		run:   ix.run,
 	}
 }
 
