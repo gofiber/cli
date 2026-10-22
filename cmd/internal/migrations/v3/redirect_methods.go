@@ -3,6 +3,7 @@ package v3
 import (
 	"fmt"
 	"go/ast"
+	"slices"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -186,29 +187,47 @@ func ctxRouteConfig(e *editSet, noter *ctxNoter, env *ctxEnv, params ast.Expr) s
 		return cfgType + "{Params: " + ctxRenderNode(e, g, params) + "}"
 	}
 
-	var queries string
-	var rest []string
+	var entry *ast.KeyValueExpr
 	for _, elt := range lit.Elts {
-		kv, isKV := elt.(*ast.KeyValueExpr)
-		if isKV && ctxIsStringLiteral(kv.Key, "queries") {
-			queries = ctxRenderNode(e, g, kv.Value)
-			continue
+		if kv, isKV := elt.(*ast.KeyValueExpr); isKV && ctxIsStringLiteral(kv.Key, "queries") {
+			entry = kv
+			break
 		}
-		rest = append(rest, ctxRenderNode(e, g, elt))
+	}
+	if entry == nil {
+		return cfgType + "{Params: " + ctxRenderNode(e, g, lit) + "}"
 	}
 
-	var fields []string
-	if len(rest) > 0 || queries == "" {
-		typ := ""
-		if lit.Type != nil {
-			typ = ctxRenderNode(e, g, lit.Type)
-		}
-		fields = append(fields, "Params: "+typ+"{"+strings.Join(rest, ", ")+"}")
+	value := ctxRenderNode(e, g, entry.Value)
+	if len(lit.Elts) == 1 {
+		return cfgType + "{Queries: " + value + "}"
 	}
-	if queries != "" {
-		fields = append(fields, "Queries: "+queries)
+
+	// The literal without the entry, which keeps the rest of it as it is.
+	without := editSet{edits: slices.Clone(e.edits)}
+	start, end := ctxElementSpan(g, entry)
+	without.replace(start, end, "")
+	rest := ctxRender(&without, g.src, g.offset(lit.Pos()), g.offset(lit.End()))
+	return cfgType + "{Params: " + rest + ", Queries: " + value + "}"
+}
+
+// ctxElementSpan returns the offsets of an element of a composite literal, the
+// comma that follows it and, when the element has its lines to itself, those
+// lines.
+func ctxElementSpan(g *goSource, elt ast.Expr) (start, end int) {
+	start, end = g.offset(elt.Pos()), g.offset(elt.End())
+	if rest := strings.TrimLeft(g.src[end:], " \t"); strings.HasPrefix(rest, ",") {
+		end = len(g.src) - len(rest) + 1
 	}
-	return cfgType + "{" + strings.Join(fields, ", ") + "}"
+
+	lineStart := strings.LastIndexByte(g.src[:start], '\n') + 1
+	if strings.TrimSpace(g.src[lineStart:start]) != "" {
+		return start, end
+	}
+	if nl := strings.IndexByte(g.src[end:], '\n'); nl >= 0 && strings.TrimSpace(g.src[end:end+nl]) == "" {
+		return lineStart, end + nl + 1
+	}
+	return start, end
 }
 
 // ctxIsStringLiteral reports whether e is the string literal "value".

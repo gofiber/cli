@@ -154,6 +154,39 @@ func handler(c *fiber.Ctx) error {
 			notes: []string{"main.go:8: A redirect without a status answers 303 See Other"},
 		},
 		{
+			name: "the queries entry moves and the rest of the params stays as written",
+			in: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	return c.RedirectToRoute(
+		"user",
+		fiber.Map{
+			"id": c.Params("id"), // the id
+			"queries": map[string]string{
+				"tab": "profile",
+			},
+		},
+		fiber.StatusSeeOther,
+	)
+}
+`,
+			want: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	return c.Redirect().Status(fiber.StatusSeeOther).Route("user", fiber.RedirectConfig{Params: fiber.Map{
+		"id": c.Params("id"), // the id
+	}, Queries: map[string]string{
+		"tab": "profile",
+	}})
+}
+`,
+			msg: "Migrating redirect methods",
+		},
+		{
 			name: "params that are not a literal may hold queries",
 			in: `package main
 
