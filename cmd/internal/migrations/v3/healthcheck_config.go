@@ -352,6 +352,11 @@ type hcConfig struct {
 	readiness hcProbe
 	// multiline is whether the literal spans several lines.
 	multiline bool
+	// nextCode is set when Next is code (a function literal, a call) rather than
+	// the name of a function: the config of a variable that is taken apart does
+	// not repeat it, the config for the readiness probe refers to the Next of the
+	// other one.
+	nextCode bool
 }
 
 // rewriteUse replaces `X.Use(..., healthcheck.New(cfg), ...)` with one route per
@@ -600,6 +605,7 @@ func (h *hcMigration) parseConfig(lit *ast.CompositeLit) (cfg hcConfig, ok bool)
 		switch key.Name {
 		case hcNext:
 			next = &hcElement{text: "Next: " + value, comment: comment}
+			cfg.nextCode = !isPlainPath(kv.Value)
 		case hcLivenessProbe:
 			cfg.liveness.elems = append(cfg.liveness.elems, hcElement{text: "Probe: " + value, comment: comment})
 		case hcReadinessProbe:
@@ -856,14 +862,23 @@ func (h *hcMigration) splitDeclaration(lit *ast.CompositeLit, cfg hcConfig, read
 	})
 
 	pkg := h.packageName(lit.Type)
-	liveText := hcConfigLiteral(pkg, cfg, cfg.liveness, "")
-	readyText := hcConfigLiteral(pkg, cfg, cfg.readiness, "")
 	empty := pkg + ".Config{}"
+	liveText := hcConfigLiteral(pkg, cfg, cfg.liveness, "")
 	if liveText == "" {
 		liveText = empty
 	}
-	if readyText == "" {
-		readyText = empty
+	// readyText writes the config of the readiness probe; name is the variable that
+	// keeps the one of the liveness probe
+	readyText := func(name string) string {
+		ready := cfg.readiness
+		if cfg.nextCode && len(ready.elems) > 0 {
+			ready.elems = slices.Clone(ready.elems)
+			ready.elems[0] = hcElement{text: "Next: " + name + ".Next"}
+		}
+		if text := hcConfigLiteral(pkg, cfg, ready, ""); text != "" {
+			return text
+		}
+		return empty
 	}
 
 	switch p := parent.(type) {
@@ -871,7 +886,8 @@ func (h *hcMigration) splitDeclaration(lit *ast.CompositeLit, cfg hcConfig, read
 		if p.Tok != token.DEFINE || len(p.Lhs) != 1 || len(p.Rhs) != 1 {
 			return nil, false
 		}
-		if _, inBlock := grand.(*ast.BlockStmt); !inBlock {
+		id, isIdent := p.Lhs[0].(*ast.Ident)
+		if _, inBlock := grand.(*ast.BlockStmt); !inBlock || !isIdent {
 			return nil, false
 		}
 		indent := mw1Indent(h.g.src, h.g.offset(p.Pos()))
@@ -879,7 +895,7 @@ func (h *hcMigration) splitDeclaration(lit *ast.CompositeLit, cfg hcConfig, read
 			h.split[lit] = true
 			h.edits.replaceNode(h.g, lit, liveText)
 			end := h.g.offset(p.End())
-			h.edits.replace(end, end, "\n"+indent+readiness+" := "+readyText)
+			h.edits.replace(end, end, "\n"+indent+readiness+" := "+readyText(id.Name))
 		}, true
 	case *ast.ValueSpec:
 		gd, isDecl := grand.(*ast.GenDecl)
@@ -895,11 +911,11 @@ func (h *hcMigration) splitDeclaration(lit *ast.CompositeLit, cfg hcConfig, read
 			h.edits.replaceNode(h.g, lit, liveText)
 			if gd.Lparen.IsValid() {
 				end := h.g.offset(p.End())
-				h.edits.replace(end, end, "\n"+readiness+typ+" = "+readyText)
+				h.edits.replace(end, end, "\n"+readiness+typ+" = "+readyText(p.Names[0].Name))
 				return
 			}
 			end := h.g.offset(gd.End())
-			h.edits.replace(end, end, "\n\nvar "+readiness+typ+" = "+readyText)
+			h.edits.replace(end, end, "\n\nvar "+readiness+typ+" = "+readyText(p.Names[0].Name))
 		}, true
 	}
 	return nil, false

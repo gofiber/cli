@@ -181,7 +181,7 @@ var (
 		Next: func(c *fiber.Ctx) bool { return c.Query("skip") != "" },
 	}
 	settingsReadiness = healthcheck.Config{
-		Next:  func(c *fiber.Ctx) bool { return c.Query("skip") != "" },
+		Next:  settings.Next,
 		Probe: func(c *fiber.Ctx) bool { return false },
 	}
 	other = 1

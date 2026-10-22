@@ -429,6 +429,46 @@ func main() {
 `, res.file())
 }
 
+func Test_MigrateHealthcheckConfig_NextOfASplitVariableIsNotRepeated(t *testing.T) {
+	t.Parallel()
+
+	// the code of Next is written once, however many configs the variable becomes
+	res := mw1Run(t, v3.MigrateHealthcheckConfig, `package main
+
+`+hcImports+`
+func skipper() func(c *fiber.Ctx) bool { return func(c *fiber.Ctx) bool { return false } }
+
+func named(c *fiber.Ctx) bool { return false }
+
+var packageCfg = healthcheck.Config{
+	Next:           func(c *fiber.Ctx) bool { return c.Query("skip") != "" },
+	ReadinessProbe: func(c *fiber.Ctx) bool { return false },
+}
+
+var namedCfg = healthcheck.Config{Next: named, ReadinessProbe: func(c *fiber.Ctx) bool { return false }}
+
+func main() {
+	app := fiber.New()
+	app.Use("/a", healthcheck.New(packageCfg))
+	app.Use("/b", healthcheck.New(namedCfg))
+
+	cfg := healthcheck.Config{Next: skipper(), LivenessProbe: func(c *fiber.Ctx) bool { return true }}
+	app.Use("/c", healthcheck.New(cfg))
+}
+`)
+
+	file := res.file()
+	assert.Contains(t, file, "packageCfgReadiness = healthcheck.Config{\n\tNext:  packageCfg.Next,\n\tProbe: func(c *fiber.Ctx) bool { return false },\n}")
+	assert.Equal(t, 1, strings.Count(file, `c.Query("skip")`))
+	// the name of a function is as good as a reference
+	assert.Contains(t, file, "var namedCfg = healthcheck.Config{Next: named}")
+	assert.Contains(t, file, "namedCfgReadiness = healthcheck.Config{Next: named, Probe: func(c *fiber.Ctx) bool { return false }}")
+	// and a call is made once
+	assert.Contains(t, file, "cfg := healthcheck.Config{Next: skipper(), Probe: func(c *fiber.Ctx) bool { return true }}\n\tcfgReadiness := healthcheck.Config{Next: cfg.Next}")
+	assert.Equal(t, 1, strings.Count(file, "Next: skipper()"))
+	assert.Empty(t, res.notes)
+}
+
 func Test_MigrateHealthcheckConfig_SharedConfigWithoutProbes(t *testing.T) {
 	t.Parallel()
 
