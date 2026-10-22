@@ -222,7 +222,7 @@ func (p *i18nPlan) rewrite(content string, fi internal.FileInfo) string {
 	for _, call := range u.odd {
 		f.notef(call.Pos(), "%s", i18nOddNote)
 	}
-	return f.apply()
+	return contribDropOrphans(g, f.apply(), "i18n")
 }
 
 const i18nOddNote = "i18n New returns a translator now, not a handler: do not register it with Use (it panics when the program starts), " +

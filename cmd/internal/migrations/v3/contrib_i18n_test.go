@@ -471,6 +471,70 @@ func main() {
 	assert.Contains(t, content, "translator.MustLocalize(c, &i18n.LocalizeConfig{")
 }
 
+// goimports removes the imports that a file does not use, unless it fails to ask
+// the go command about the module (an empty module cache, a go.mod that needs a
+// toolchain the machine does not have): it then keeps them all, without a word.
+// A file that refers to the translator of another file is the common victim, so
+// the migration removes the import that it orphans itself.
+func Test_MigrateI18nTranslator_DropsTheImportWhenGoimportsCannotAskTheGoCommand(t *testing.T) {
+	// "go 99.0" cannot be satisfied by any toolchain, and GOTOOLCHAIN=local keeps
+	// the go command from looking for one.
+	t.Setenv("GOTOOLCHAIN", "local")
+	contribVersions(t, map[string]string{"i18n": "v1.0.13"})
+
+	// The state the program is in when the contrib migrations run: Fiber is
+	// migrated, the contrib module is still v2's.
+	dir := t.TempDir()
+	t.Chdir(dir) // goimports asks the go command in the directory it runs in
+	contribWriteFile(t, dir, "go.mod", "module example.com/app\n\ngo 99.0\n")
+	main := contribWriteFile(t, dir, "main.go", `package main
+
+import (
+	"github.com/gofiber/contrib/fiberi18n/v2"
+	"github.com/gofiber/fiber/v3"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(fiberi18n.New())
+	app.Get("/", home)
+}
+`)
+	handlers := contribWriteFile(t, dir, "handlers.go", `package main
+
+import (
+	"github.com/gofiber/contrib/fiberi18n/v2"
+	"github.com/gofiber/fiber/v3"
+	"github.com/nicksnyder/go-i18n/v2/i18n"
+)
+
+func home(c fiber.Ctx) error {
+	msg, err := fiberi18n.Localize(c, "welcome")
+	if err != nil {
+		return err
+	}
+	return c.SendString(msg)
+}
+
+func hello(c fiber.Ctx) error {
+	return c.SendString(fiberi18n.MustLocalize(c, &i18n.LocalizeConfig{MessageID: "hello"}))
+}
+`)
+
+	contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateI18nTranslator)
+
+	mainContent := readFile(t, main)
+	contribRequireParses(t, mainContent)
+	assert.Contains(t, mainContent, "\tfiberi18n \"github.com/gofiber/contrib/v3/i18n\"\n")
+	assert.Contains(t, mainContent, "var translator *fiberi18n.I18n")
+
+	handlersContent := readFile(t, handlers)
+	contribRequireParses(t, handlersContent)
+	assert.Contains(t, handlersContent, `msg, err := translator.Localize(c, "welcome")`)
+	assert.NotContains(t, handlersContent, "contrib", "the import is not used any more")
+	assert.Contains(t, handlersContent, "\t\"github.com/nicksnyder/go-i18n/v2/i18n\"\n")
+}
+
 func Test_MigrateI18nTranslator_SkipsBrokenFiles(t *testing.T) {
 	t.Parallel()
 

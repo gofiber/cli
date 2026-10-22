@@ -437,3 +437,62 @@ func (c *contribConfig) finish() {
 		c.removed = nil
 	}
 }
+
+// contribSelectorBases returns the identifiers that are the left side of a
+// selector somewhere in the file: the names a package is used by.
+func contribSelectorBases(g *goSource) map[string]bool {
+	used := map[string]bool{}
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok {
+				used[id.Name] = true
+			}
+		}
+		return true
+	})
+	return used
+}
+
+// contribDropOrphans removes the imports of the contrib module short that the
+// rewrite left unused: the names the module was used by in before and that
+// out does not use any more. goimports would do the same, but not on a machine
+// whose module cache is empty, where it keeps every import of a file that
+// refers to a name it cannot place (a variable of another file of the package).
+func contribDropOrphans(before *goSource, out, short string) string {
+	after, ok := parseSource(out)
+	if !ok {
+		return out
+	}
+	usedBefore, usedAfter := contribSelectorBases(before), contribSelectorBases(after)
+
+	var edits editSet
+	for _, imp := range contribImportsOf(after, short) {
+		if usedBefore[imp.name] && !usedAfter[imp.name] {
+			contribRemoveImport(after, &edits, imp.spec)
+		}
+	}
+	return edits.apply(out)
+}
+
+// contribRemoveImport schedules the removal of an import. The declaration goes
+// with it when it was the only one.
+func contribRemoveImport(g *goSource, edits *editSet, spec *ast.ImportSpec) {
+	for _, d := range g.file.Decls {
+		decl, ok := d.(*ast.GenDecl)
+		if !ok || decl.Tok != token.IMPORT || !slices.Contains(decl.Specs, ast.Spec(spec)) {
+			continue
+		}
+
+		var n ast.Node = spec
+		if len(decl.Specs) == 1 {
+			n = decl
+		}
+		start, end := g.offset(n.Pos()), g.offset(n.End())
+		if contribOwnsLine(g.src, start, end) {
+			edits.replace(contribLineStart(g.src, start), contribLineEnd(g.src, end), "")
+		} else {
+			edits.replace(start, end, "")
+		}
+		return
+	}
+}
