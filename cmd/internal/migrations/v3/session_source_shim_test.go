@@ -360,3 +360,109 @@ func is(v any) bool {
 	assert.Contains(t, got, "type lookup struct {\n\tSource fibermigrate.SessionSource\n}")
 	assert.Contains(t, got, "\tSource *fibermigrate.SessionSource `json:\"s\"`\n")
 }
+
+// The cases of a switch on an interface, and the keys of a map with interface
+// keys, can be a Source and the string of the same value, which are different
+// values for v2. A union of the two in a constraint has them as two terms.
+func Test_MigrateSessionSource_CollisionsOfTheTwoTypes(t *testing.T) {
+	t.Parallel()
+
+	sources := map[string]string{
+		"switch": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func kind(v any) string {
+	switch v {
+	case session.SourceCookie:
+		return "source"
+	case "cookie":
+		return "string"
+	}
+	return "other"
+}
+`,
+		"map": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+var names = map[any]string{session.SourceHeader: "typed", "header": "plain"}
+`,
+		"union": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func lookup[T interface{ string | session.Source }](v T) string { return string(v) }
+`,
+	}
+	for name, src := range sources {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			res := mw3RunModule(t, map[string]string{"main.go": src}, v3.MigrateSessionExtractor)
+			assert.Contains(t, res.files["main.go"], "fibermigrate")
+			assert.Contains(t, res.files, mw3ShimPath)
+		})
+	}
+
+	// Different values, or no string next to them, are no reason.
+	res := mw3RunModule(t, map[string]string{"main.go": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func kind(src session.Source) string {
+	switch src {
+	case session.SourceCookie, session.SourceHeader:
+		return "known"
+	}
+	return map[session.Source]string{session.SourceURLQuery: "query"}[src]
+}
+
+func other(v string) bool {
+	switch v {
+	case "cookie":
+		return true
+	case "header":
+		return false
+	}
+	return false
+}
+`}, v3.MigrateSessionExtractor)
+	assert.NotContains(t, res.files, mw3ShimPath)
+}
+
+// A lookup that is built from a Source is a string the program shows, in both
+// forms of the type.
+func Test_MigrateSessionSource_LookupsOfASourceVariable(t *testing.T) {
+	t.Parallel()
+
+	const program = `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func build() *session.Store {
+	var src session.Source = session.SourceHeader
+	return session.New(session.Config{KeyLookup: string(src) + ":X-ID"})
+}
+
+func is(v any) bool {
+	_, ok := v.(session.Source)
+	return ok
+}
+`
+	shimmed := mw3RunModule(t, map[string]string{"main.go": program}, v3.MigrateSessionExtractor)
+	assert.Contains(t, shimmed.files["main.go"], `var src fibermigrate.SessionSource = fibermigrate.SessionSourceHeader`)
+	assert.Contains(t, shimmed.files["main.go"], `session.Config{Extractor: extractors.FromHeader("X-ID")}`)
+	assert.NotContains(t, shimmed.files["main.go"], "func(lookup string)")
+
+	plain := mw3RunModule(t, map[string]string{"main.go": `package main
+
+import "github.com/gofiber/fiber/v2/middleware/session"
+
+func build() *session.Store {
+	var src session.Source = session.SourceHeader
+	return session.New(session.Config{KeyLookup: string(src) + ":X-ID"})
+}
+`}, v3.MigrateSessionExtractor)
+	assert.Contains(t, plain.files["main.go"], `session.Config{Extractor: extractors.FromHeader("X-ID")}`)
+}

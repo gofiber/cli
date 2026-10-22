@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -445,8 +446,35 @@ func (s mw3Strings) eval(e ast.Expr, stack []ast.Node, depth int) (string, bool)
 		return left + right, ok
 	case *ast.Ident:
 		return s.evalIdent(x, stack, depth)
+	case *ast.SelectorExpr:
+		return s.evalSourceConstant(x)
 	case *ast.CallExpr:
+		if isIdentNamed(x.Fun, "string") && len(x.Args) == 1 && !x.Ellipsis.IsValid() {
+			// A conversion of a string, or of a Source, to a string.
+			if _, hidden := resolveIdent("string", x.Pos(), stack); !hidden {
+				return s.eval(x.Args[0], stack, depth+1)
+			}
+		}
 		return s.evalSprintf(x, stack, depth)
+	}
+	return "", false
+}
+
+// mw3ShimPath matches the import path of the package the migrations add to a
+// module.
+var mw3ShimPath = regexp.MustCompile(`/` + regexp.QuoteMeta(moduleShimDir) + `$`)
+
+// evalSourceConstant evaluates a constant of the Source type that the module
+// package has, SessionSourceCookie for instance.
+func (s mw3Strings) evalSourceConstant(sel *ast.SelectorExpr) (string, bool) {
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	for _, c := range mw3SourceConstants {
+		if c.shim == sel.Sel.Name && slices.Contains(importNames(s.g.src, mw3ShimPath, moduleShimPkg), id.Name) {
+			return c.value, true
+		}
 	}
 	return "", false
 }

@@ -182,6 +182,18 @@ func (ix *moduleIndex) fileNeedsSourceType(f *modFile) bool {
 					needs = needs || isSource(e, e.Pos(), inner)
 				}
 			}
+		case *ast.SwitchStmt:
+			// The cases of a switch on an interface can be a Source and the string
+			// that has the same value, which are two cases of different types.
+			needs = needs || (n.Tag != nil && mw3SourceTwice(mw3CaseExprs(n), names, stack))
+		case *ast.CompositeLit:
+			if _, isMap := n.Type.(*ast.MapType); isMap {
+				needs = needs || mw3SourceTwice(mw3MapKeys(n), names, stack)
+			}
+		case *ast.BinaryExpr:
+			// A union of types, in the constraint of a type parameter, has the Source
+			// and the string as two terms.
+			needs = needs || (n.Op == token.OR && (isSource(mw3UnionTerm(n.X), n.Pos(), stack) || isSource(mw3UnionTerm(n.Y), n.Pos(), stack)))
 		case *ast.SelectorExpr:
 			if hidesString && (isSource(n, n.Pos(), stack) || mw3IsSourceConstant(n, names, stack)) {
 				needs = true
@@ -190,6 +202,60 @@ func (ix *moduleIndex) fileNeedsSourceType(f *modFile) bool {
 		return !needs
 	})
 	return needs
+}
+
+// mw3UnionTerm returns the type of a term of a union, which may be written ~T.
+func mw3UnionTerm(e ast.Expr) ast.Expr {
+	if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.TILDE {
+		return u.X
+	}
+	return e
+}
+
+// mw3CaseExprs returns the values of the cases of a switch.
+func mw3CaseExprs(sw *ast.SwitchStmt) []ast.Expr {
+	var exprs []ast.Expr
+	for _, stmt := range sw.Body.List {
+		if clause, ok := stmt.(*ast.CaseClause); ok {
+			exprs = append(exprs, clause.List...)
+		}
+	}
+	return exprs
+}
+
+// mw3MapKeys returns the keys of a map literal.
+func mw3MapKeys(lit *ast.CompositeLit) []ast.Expr {
+	var keys []ast.Expr
+	for _, elt := range lit.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			keys = append(keys, kv.Key)
+		}
+	}
+	return keys
+}
+
+// mw3SourceTwice reports whether the values hold a constant of the Source type and
+// a string literal with the same value: once both are strings they would be one.
+func mw3SourceTwice(values []ast.Expr, names []string, stack []ast.Node) bool {
+	typed, plain := map[string]struct{}{}, map[string]struct{}{}
+	for _, e := range values {
+		switch x := ast.Unparen(e).(type) {
+		case *ast.SelectorExpr:
+			if mw3IsSourceConstant(x, names, stack) {
+				typed[mw3SessionSourceValues[x.Sel.Name]] = struct{}{}
+			}
+		case *ast.BasicLit:
+			if value, ok := mw3UnquoteString(x); ok {
+				plain[value] = struct{}{}
+			}
+		}
+	}
+	for value := range typed {
+		if _, twice := plain[value]; twice {
+			return true
+		}
+	}
+	return false
 }
 
 // mw3IsSourceConstant reports whether the selector is one of the constants of the

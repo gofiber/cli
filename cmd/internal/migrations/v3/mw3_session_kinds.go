@@ -390,6 +390,7 @@ func (f *mw3SessionFacts) scanStruct(name string, st *ast.StructType, env *mw3En
 				if kind.base != mw3KindNone {
 					s.fields[id.Name] = kind
 				}
+				f.scanFuncField(name, id.Name, field.Type, env)
 			}
 			continue
 		}
@@ -405,6 +406,21 @@ func (f *mw3SessionFacts) scanStruct(name string, st *ast.StructType, env *mw3En
 		s.fields[embedded] = kind
 	}
 	f.structs[name] = s
+}
+
+// scanFuncField records what a field that holds a function returns, which is
+// called like a method.
+func (f *mw3SessionFacts) scanFuncField(typ, field string, t ast.Expr, env *mw3Env) {
+	ft, ok := ast.Unparen(t).(*ast.FuncType)
+	if !ok {
+		return
+	}
+	if kind := mw3FirstResult(ft, env); kind.base != mw3KindNone {
+		if f.methods[typ] == nil {
+			f.methods[typ] = map[string]mw3Kind{}
+		}
+		f.methods[typ][field] = kind
+	}
 }
 
 // scanInterface records the methods of an interface type, and the interfaces it

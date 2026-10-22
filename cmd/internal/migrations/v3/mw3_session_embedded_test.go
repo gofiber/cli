@@ -279,3 +279,38 @@ func reset(s *Service, c *Cache) {
 	assert.Contains(t, res.files["use.go"], "_ = c.Reset()")
 	assert.Empty(t, res.notes)
 }
+
+// A function that a field or a variable holds is called like a method or a
+// function, and gives a store as they do.
+func Test_SessionMigrations_FunctionsThatGiveAStore(t *testing.T) {
+	t.Parallel()
+
+	res := mw3RunModule(t, map[string]string{
+		"main.go": `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+type deps struct {
+	newStore func() *session.Store
+	name     string
+}
+
+var makeStore = func() *session.Store { return session.New() }
+
+var typed func() *session.Store
+
+func use(d deps) {
+	_ = d.newStore().Reset()
+	_ = makeStore().Reset()
+	_ = typed().Reset()
+	_ = d.name.Reset()
+}
+`,
+	}, mw3SessionChain...)
+
+	got := res.files["main.go"]
+	assert.Contains(t, got, "_ = d.newStore().Reset(context.Background())")
+	assert.Contains(t, got, "_ = makeStore().Reset(context.Background())")
+	assert.Contains(t, got, "_ = typed().Reset(context.Background())")
+	assert.Contains(t, got, "_ = d.name.Reset()")
+}

@@ -333,7 +333,23 @@ func (r *mw3KindReader) ofFuncCall(call *ast.CallExpr, fun *ast.Ident, stack []a
 			return r.ofExpr(call.Args[0], stack)
 		}
 	}
-	return r.resolve(r.facts.funcs[fun.Name])
+	if kind, ok := r.facts.funcs[fun.Name]; ok {
+		return r.resolve(kind)
+	}
+	// A variable of the package level that holds a function.
+	if v, ok := r.facts.vars[fun.Name]; ok {
+		switch {
+		case v.typ != nil:
+			if ft, isFunc := ast.Unparen(v.typ).(*ast.FuncType); isFunc {
+				return r.resolve(mw3FirstResult(ft, v.env))
+			}
+		case v.init != nil:
+			if lit, isLit := ast.Unparen(v.init).(*ast.FuncLit); isLit {
+				return r.resolve(mw3FirstResult(lit.Type, v.env))
+			}
+		}
+	}
+	return mw3Kind{}
 }
 
 // The names of the members of the session types: a type that embeds one has them
