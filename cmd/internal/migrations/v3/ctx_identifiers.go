@@ -34,11 +34,15 @@ var ctxBinderIdents = []string{"SetParserDecoder", "ParserConfig", ctxIDParserTy
 //	fiber.HeaderFeaturePolicy      "Feature-Policy"   (v3 only has Permissions-Policy, a different header)
 //	fiber.ConstraintGuid           fiber.ConstraintGUID
 //	fiber.IndexRune(s, r)          strings.ContainsRune(s, r)
-//	fiber.OnShutdownHandler        func() error       (what the alias stood for)
+//	fiber.OnShutdownHandler        func() error       (what the alias stood for; a note says where it was used)
 //	fiber.SetParserDecoder, fiber.ParserConfig, fiber.ParserType
 //	                               the same names in the binder package, with Customtype now CustomType
 func MigrateCoreIdentifiers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changed, err := internal.ChangeFileContentInfo(cwd, ctxCoreIdentifiersContent)
+	run := newCtxRun()
+	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
+		return ctxCoreIdentifiersContent(content, fi, run)
+	})
+	run.report(cwd)
 	if err != nil {
 		return fmt.Errorf("failed to migrate core identifiers: %w", err)
 	}
@@ -50,7 +54,7 @@ func MigrateCoreIdentifiers(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	return nil
 }
 
-func ctxCoreIdentifiersContent(content string, fi internal.FileInfo) string {
+func ctxCoreIdentifiersContent(content string, fi internal.FileInfo, run *ctxRun) string {
 	if !ctxContainsAny(content, ctxIDHeaderFeaturePolicy, ctxIDOldConstraintGUID, ctxIDIndexRune, ctxIDOnShutdownHandler, "SetParserDecoder", "ParserConfig", ctxIDParserType) {
 		return content
 	}
@@ -63,6 +67,7 @@ func ctxCoreIdentifiersContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
+	noter := newCtxNoter(fi, g, run)
 	binderName := ctxImportName(content, ctxFiberSubpath(content, "binder"), "binder")
 	if binderName == "" {
 		binderName = "binder"
@@ -91,6 +96,9 @@ func ctxCoreIdentifiersContent(content string, fi internal.FileInfo) string {
 				needStrings = true
 			case x.Sel.Name == ctxIDOnShutdownHandler:
 				edits.replaceNode(g, x, "func() error")
+				noter.oncef("on-shutdown-handler", x.Pos(),
+					"%s no longer exists in Fiber v3 and was replaced by func() error; Hooks().OnShutdown is OnPostShutdown(func(error) error) now, so adapt the code that registers these handlers",
+					g.text(x))
 			case slices.Contains(ctxBinderIdents, x.Sel.Name):
 				edits.replaceNode(g, id, binderName)
 				needBinder = true
