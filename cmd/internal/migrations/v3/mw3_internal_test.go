@@ -382,6 +382,50 @@ func purge() error { return store.Reset() }
 `,
 			rewrite: mw3SessionMethodsContent,
 		},
+		{
+			name: "session methods: fmt for the keys",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+func keys(sess *session.Session) []string { return sess.Keys() }
+`,
+			rewrite: mw3SessionMethodsContent,
+		},
+		{
+			name: "session source: the import goes with its last use",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+func where(src session.Source) bool { return src == session.SourceCookie }
+`,
+			rewrite: mw3SessionSourceContent,
+		},
+		{
+			name: "session source: the import stays for what is still used",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+var store = session.NewStore()
+
+func where(src session.Source) bool { return src == session.SourceCookie }
+`,
+			rewrite: mw3SessionSourceContent,
+		},
+		{
+			name: "session reads: the extractors package",
+			src: `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+var store = session.NewStore()
+
+func lookup() string { return store.KeyLookup }
+`,
+			rewrite: mw3SessionReadsContent,
+		},
 	}
 
 	for _, tc := range tests {
@@ -470,9 +514,39 @@ var _ = fiber.New
 			})
 		}
 	}
+	keysBodies := []string{
+		"func f(c *fiber.Ctx) []string {\n\tstore := session.New()\n\tsess, _ := store.Get(c)\n\treturn sess.Keys()\n}",
+		"func f(sess *session.Session) int {\n\treturn len(sess.Keys())\n}",
+		"func f(sess *session.Session) {\n\tfor _, k := range sess.Keys() {\n\t\tfmt.Println(k)\n\t}\n}",
+	}
+	sourceBodies := []string{
+		"func f(src session.Source) bool { return src == session.SourceCookie }",
+		"var kinds = map[session.Source]string{\n\tsession.SourceCookie: \"c\",\n\tsession.SourceHeader: \"h\",\n}",
+		"type t struct {\n\tsession.Source\n\tname string\n}",
+		"func f() string {\n\treturn string(session.SourceURLQuery) + fmt.Sprint(session.SourceHeader)\n}",
+		"var s = session.New(session.Config{KeyLookup: string(session.SourceCookie) + \":sid\"})",
+		"func f(src session.Source) *session.Store {\n\treturn session.New(session.Config{KeyLookup: fmt.Sprintf(\"%s:%s\", src, \"sid\")})\n}",
+	}
 	run("session config", sessionHeader, sessionBodies, mw3SessionConfigContent)
 	run("session extractor", sessionHeader, sessionBodies, mw3SessionExtractorContent)
 	run("session store", sessionHeader, sessionBodies, mw3SessionStoreContent)
 	run("session methods", sessionHeader, sessionBodies, mw3SessionMethodsContent)
+	run("session methods keys", sessionHeader, keysBodies, mw3SessionMethodsContent)
+	readBodies := []string{
+		"var s = session.New()\nvar _ = s.KeyLookup",
+		"func f(s *session.Store) string {\n\treturn s.KeyLookup + s.CookieName\n}",
+		"func f(s *session.Store) {\n\tfmt.Println(\n\t\ts.KeyLookup,\n\t)\n}",
+		"var cfg = session.Config{KeyLookup: \"cookie:a\"}\nvar _ = cfg.KeyLookup",
+		"func f(a *session.Store) *session.Store {\n\treturn session.New(session.Config{KeyLookup: a.KeyLookup, /* c */ CookieSecure: true})\n}",
+		"func f(a *session.Store) *session.Store {\n\tcfg := session.ConfigDefault\n\tcfg.KeyLookup = a.KeyLookup\n\treturn session.New(cfg)\n}",
+		"func f(s *session.Store) {\n\ts.KeyLookup = \"x\"\n}",
+		"func f(s *session.Store) (string, string) {\n\treturn s.KeyLookup, s.CookieName\n}",
+		"func f(s *session.Store) {\n\tswitch {\n\tcase s.KeyLookup == \"a\", s.CookieName == \"b\":\n\t\tfmt.Println()\n\t}\n}",
+		"func f(s *session.Store) {\n\tgo func() { fmt.Println(s.KeyLookup) }()\n}",
+		"type t struct{ lookup string }\n\nfunc f(s *session.Store) t {\n\treturn t{lookup: s.KeyLookup}\n}",
+		"func f(stores ...*session.Store) {\n\tfor _, s := range stores {\n\t\tfmt.Println(s.KeyLookup)\n\t}\n}",
+	}
+	run("session source", sessionHeader, sourceBodies, mw3SessionSourceContent)
+	run("session reads", sessionHeader, readBodies, mw3SessionReadsContent)
 	run("filesystem", fsHeader, fsBodies, mw3FilesystemContent)
 }

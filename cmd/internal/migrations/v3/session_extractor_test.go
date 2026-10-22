@@ -373,8 +373,9 @@ func fromEnv(cfg session.Config) *session.Store {
 	return session.New(cfg)
 }
 
-func read(store *session.Store) (string, string) {
-	return store.KeyLookup, store.CookieName
+func write(store *session.Store) {
+	store.KeyLookup = "header:X-SID"
+	store.CookieName = "sid"
 }
 `, v3.MigrateSessionExtractor)
 
@@ -417,34 +418,20 @@ func fromEnv(cfg session.Config) *session.Store {
 	return session.New(cfg)
 }
 
-func read(store *session.Store) (string, string) {
-	return store.KeyLookup, store.CookieName
+func write(store *session.Store) {
+	store.KeyLookup = "header:X-SID"
+	store.CookieName = "sid"
 }
 `, got)
 
+	// Assigning to the field of a store only changed what the store reported in v2,
+	// not where it looked for the ID, while a new Extractor would: that is left to
+	// the user.
 	msgs := mw3Messages(res.notes)
 	require.Len(t, msgs, 3)
 	assert.Contains(t, msgs[0], "KeyLookup is computed")
 	assert.Contains(t, msgs[1], "store.KeyLookup no longer exists")
 	assert.Contains(t, msgs[2], "store.CookieName no longer exists")
-}
-
-func Test_MigrateSessionExtractor_ReportsTheRemovedSource(t *testing.T) {
-	t.Parallel()
-
-	_, res := mw3RunOne(t, `package main
-
-import "github.com/gofiber/fiber/v2/middleware/session"
-
-func lookup(src session.Source) string { return string(src) + ":sid" }
-
-var cookie = lookup(session.SourceCookie)
-`, v3.MigrateSessionExtractor)
-
-	msgs := mw3Messages(res.notes)
-	require.Len(t, msgs, 2)
-	assert.Contains(t, msgs[0], "session.Source was removed")
-	assert.Contains(t, msgs[1], "session.SourceCookie was removed")
 }
 
 func Test_MigrateSessionExtractor_ExistingImports(t *testing.T) {

@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -251,10 +252,12 @@ func handler(ctx fiber.Ctx, store *session.Store) error {
 	assert.Empty(t, res.out)
 }
 
-func Test_MigrateSessionMethods_ReportsKeys(t *testing.T) {
+// The keys of a v2 session were strings, and v3 gives them as any: the call is
+// wrapped so that the program gets the strings it was written for.
+func Test_MigrateSessionMethods_KeysAreStrings(t *testing.T) {
 	t.Parallel()
 
-	got, res := mw3RunOne(t, `package main
+	src := `package main
 
 import (
 	"sort"
@@ -269,18 +272,230 @@ func keys(c fiber.Ctx) []string {
 	sess, _ := store.Get(c)
 	var names []string
 	for _, k := range sess.Keys() {
-		names = append(names, k.(string))
+		names = append(names, k)
 	}
 	sort.Strings(names)
 	return names
 }
+`
+	got, res := mw3RunOne(t, src, v3.MigrateSessionMethods)
+
+	assert.Equal(t, `package main
+
+import (
+	"fmt"
+	"sort"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+var store = session.NewStore()
+
+func keys(c fiber.Ctx) []string {
+	sess, _ := store.Get(c)
+	var names []string
+	for _, k := range func(keys []any) []string {
+		names := make([]string, len(keys))
+		for i, key := range keys {
+			names[i] = fmt.Sprint(key)
+		}
+		return names
+	}(sess.Keys()) {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+`, got)
+	assert.Empty(t, res.notes)
+	assert.Contains(t, res.out, "Migrating session methods")
+
+	again, second := mw3RunOne(t, got, v3.MigrateSessionMethods)
+	assert.Equal(t, got, again)
+	assert.Empty(t, second.out)
+	assert.Empty(t, second.notes)
+}
+
+func Test_MigrateSessionMethods_KeysWhereTheyAreUsed(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+
+	"github.com/gofiber/fiber/v3"
+	fsession "github.com/gofiber/fiber/v3/middleware/session"
+)
+
+var store = fsession.NewStore()
+
+func handler(c fiber.Ctx) error {
+	sess, err := store.Get(c)
+	if err != nil {
+		return err
+	}
+	keys := sess.Keys()
+	sort.Strings(keys)
+	var all []string
+	all = append(all, sess.Keys()...)
+	joined := strings.Join(sess.Keys(), ",")
+	raw, _ := json.Marshal(sess.Keys())
+	if len(sess.Keys()) > 3 {
+		return c.SendString(joined + string(raw))
+	}
+	return c.JSON(map[string]any{
+		"keys": sess.Keys(),
+		"all":  all,
+	})
+}
 `, v3.MigrateSessionMethods)
 
-	assert.Contains(t, got, "for _, k := range sess.Keys()")
+	// len() does not care what the keys are, the rest does.
+	assert.Contains(t, got, "if len(sess.Keys()) > 3 {")
+	assert.Equal(t, 5, strings.Count(got, "func(keys []any) []string {"), got)
+	assert.Contains(t, got, "}(sess.Keys())...)")
+	assert.Contains(t, got, `strings.Join(func(keys []any) []string {`)
+	assert.Contains(t, got, `"keys": func(keys []any) []string {`)
+	assert.Contains(t, got, `import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+`)
+	assert.Empty(t, res.notes)
+}
+
+// A function literal that takes []any does not need strings either, which is how
+// the rewritten call looks, so a second run leaves it alone.
+func Test_MigrateSessionMethods_KeysForAnyAreLeftAlone(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+var store = session.NewStore()
+
+func handler(c fiber.Ctx) int {
+	sess, _ := store.Get(c)
+	count := func(keys []any) int { return len(keys) }(sess.Keys())
+	empty := func(prefix string, keys []interface{}) int { return len(keys) }("x", sess.Keys())
+	return count + empty + len(sess.Keys())
+}
+`
+	got, res := mw3RunOne(t, src, v3.MigrateSessionMethods)
+	assert.Equal(t, src, got)
+	assert.Empty(t, res.out)
+	assert.Empty(t, res.notes)
+
+	// A len that the program declares is a function like any other.
+	got, _ = mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+var store = session.NewStore()
+
+func handler(sess *session.Session) int {
+	len := func(keys []string) int { return 0 }
+	return len(sess.Keys())
+}
+`, v3.MigrateSessionMethods)
+	assert.Contains(t, got, "}(sess.Keys()))")
+}
+
+// fmt is imported when the file does not, and is not taken for another name.
+func Test_MigrateSessionMethods_KeysNeedFmt(t *testing.T) {
+	t.Parallel()
+
+	got, _ := mw3RunOne(t, `package main
+
+import (
+	f "fmt"
+
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+func show(sess *session.Session) []string {
+	f.Println("keys")
+	return sess.Keys()
+}
+`, v3.MigrateSessionMethods)
+	assert.Contains(t, got, "names[i] = f.Sprint(key)")
+	assert.Equal(t, 1, strings.Count(got, `"fmt"`))
+
+	got, _ = mw3RunOne(t, `package main
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+func show(sess *session.Session) []string {
+	fmt := "a name the file uses for something else"
+	_ = fmt
+	return sess.Keys()
+}
+`, v3.MigrateSessionMethods)
+	assert.Contains(t, got, `stdfmt "fmt"`)
+	assert.Contains(t, got, "names[i] = stdfmt.Sprint(key)")
+
+	// The import is there, and hidden where the call is: the call is reported.
+	src := `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+var _ = fmt.Sprint
+
+func show(sess *session.Session) []string {
+	fmt := "hidden"
+	_ = fmt
+	return sess.Keys()
+}
+`
+	got, res := mw3RunOne(t, src, v3.MigrateSessionMethods)
+	assert.Equal(t, src, got)
 	require.Len(t, res.notes, 1)
-	assert.Equal(t, 15, res.notes[0].Line)
+	assert.Equal(t, 14, res.notes[0].Line)
 	assert.Contains(t, res.notes[0].Message, "sess.Keys() returns []any in v3")
-	assert.Empty(t, res.out, "a note is no change")
+}
+
+func Test_MigrateSessionMethods_KeysOnlyOfSessions(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import (
+	"github.com/gofiber/fiber/v3/middleware/session"
+)
+
+var _ = session.NewStore
+
+type registry struct{ names map[string]bool }
+
+func (r registry) Keys() []string {
+	var keys []string
+	for k := range r.names {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func list(r registry, other interface{ Keys() []string }) []string {
+	return append(r.Keys(), other.Keys()...)
+}
+`
+	got, res := mw3RunOne(t, src, v3.MigrateSessionMethods)
+	assert.Equal(t, src, got)
+	assert.Empty(t, res.out)
+	assert.Empty(t, res.notes)
 }
 
 // A handler file need not import the session package to use a store that

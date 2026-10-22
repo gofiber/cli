@@ -22,8 +22,9 @@ import (
 //
 // The store methods take a context for the storage call: the request context
 // when the call sits in a handler, context.Background() elsewhere. Session.Keys
-// returns []any now, which cannot be fixed without knowing what the keys are
-// used for, so the calls are reported.
+// returns []any now, where the keys of a v2 session were strings: the call is
+// wrapped in a function literal that converts them, so that the result is the
+// []string the program was written for.
 func MigrateSessionMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	pkgs := newMw3Pkgs()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -96,9 +97,91 @@ func (p *mw3SessionMethodsPass) call(call *ast.CallExpr, stack []ast.Node) {
 		start := g.offset(call.Args[0].Pos())
 		p.edits.replace(start, start, p.context(stack)+", ")
 	case sel.Sel.Name == "Keys" && len(call.Args) == 0 && p.f.isSession(sel.X, stack):
+		p.keys(call, stack)
+	}
+}
+
+// keys makes the keys of a session the strings they were in v2:
+//
+//	sess.Keys()  ->  func(keys []any) []string { ... fmt.Sprint(key) ... }(sess.Keys())
+//
+// fmt.Sprint hands a string key back as it is and cannot panic on any other
+// kind. The call stays as it is where a slice of any does as well, which the
+// program cannot tell from one of strings: its length is all that is taken, or it
+// is passed to a function literal that takes []any, which also is what the
+// rewritten call looks like.
+func (p *mw3SessionMethodsPass) keys(call *ast.CallExpr, stack []ast.Node) {
+	g := p.f.g
+	if mw3KeysNeedNoStrings(call, stack) {
+		return
+	}
+	if mw3ImportHidden(g, "fmt", call.Pos(), stack) {
 		internal.Notef(p.fi, g.line(call.Pos()),
 			"%s returns []any in v3 (v2: []string): convert the keys where you need strings, for instance with fmt.Sprint(key) or key.(string).", g.text(call))
+		return
 	}
+
+	pkg := mw3NeedImport(g, &p.imports, "fmt", "fmt", "stdfmt")
+	start, end := g.offset(call.Pos()), g.offset(call.End())
+	p.edits.replace(start, start, strings.Join([]string{
+		"func(keys []any) []string {",
+		"names := make([]string, len(keys))",
+		"for i, key := range keys {",
+		"names[i] = " + pkg + ".Sprint(key)",
+		"}",
+		"return names",
+		"}(",
+	}, "\n"))
+	p.edits.replace(end, end, ")")
+}
+
+// mw3KeysNeedNoStrings reports whether the call of Keys, whose ancestors are
+// stack, is used in a way that does not care what the keys are: len(sess.Keys()),
+// or the argument of a function literal that is called at once and takes a slice
+// of any for it.
+func mw3KeysNeedNoStrings(call *ast.CallExpr, stack []ast.Node) bool {
+	if len(stack) == 0 {
+		return false
+	}
+	outer, ok := stack[len(stack)-1].(*ast.CallExpr)
+	if !ok || outer.Ellipsis.IsValid() {
+		return false
+	}
+	idx := slices.Index(outer.Args, ast.Expr(call))
+	if idx < 0 {
+		return false
+	}
+
+	if isIdentNamed(outer.Fun, "len") && len(outer.Args) == 1 {
+		_, shadowed := resolveIdent("len", outer.Pos(), stack)
+		return !shadowed
+	}
+	lit, ok := outer.Fun.(*ast.FuncLit)
+	if !ok {
+		return false
+	}
+	i := 0
+	for _, field := range lit.Type.Params.List {
+		for range max(len(field.Names), 1) {
+			if i == idx {
+				return mw3IsSliceOfAny(field.Type)
+			}
+			i++
+		}
+	}
+	return false
+}
+
+// mw3IsSliceOfAny reports whether the type is []any or []interface{}.
+func mw3IsSliceOfAny(t ast.Expr) bool {
+	arr, ok := t.(*ast.ArrayType)
+	if !ok || arr.Len != nil {
+		return false
+	}
+	if iface, isIface := arr.Elt.(*ast.InterfaceType); isIface {
+		return iface.Methods == nil || len(iface.Methods.List) == 0
+	}
+	return isIdentNamed(arr.Elt, "any")
 }
 
 // context returns the expression for the context a store call takes: the
