@@ -27,10 +27,15 @@ type Migration struct {
 	// Review, when set, runs after every migration and the go.mod work, if the
 	// migration applied. It changes nothing: it records notes about what the
 	// migrations could not finish or could not make behave the same.
-	Review    func(cwd string)
-	From      string
-	To        string
-	Functions []MigrationFn
+	Review func(cwd string)
+	// Dependencies, when set, runs after the go.mod work and before Review, if the
+	// migration applied. skipGoMod says that the go.mod work was skipped. It looks
+	// at the dependencies of the project, which only a tidied go.mod and a module
+	// cache that holds them can tell, and records notes.
+	Dependencies func(cwd string, skipGoMod bool)
+	From         string
+	To           string
+	Functions    []MigrationFn
 }
 
 // Migrations is a list of all migrations
@@ -46,9 +51,10 @@ var Migrations = []Migration{
 	{
 		// v2 to v3. A project that is already on v3 must not get the v2 rewrites
 		// again, and a v2 target must not get v3 code.
-		From:   ">=2.0.0-0 <3.0.0-0",
-		To:     ">=3.0.0-0 <4.0.0-0",
-		Review: v3migrations.Review,
+		From:         ">=2.0.0-0 <3.0.0-0",
+		To:           ">=3.0.0-0 <4.0.0-0",
+		Review:       v3migrations.Review,
+		Dependencies: v3migrations.ReviewDependencies,
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
 			v3migrations.MigrateViewBind,
@@ -194,6 +200,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	var errs []error
 	var notes []internal.Note
 	var reviews []func(cwd string)
+	var dependencies []func(cwd string, skipGoMod bool)
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
 		var err error
@@ -217,6 +224,9 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 
 		if m.Review != nil {
 			reviews = append(reviews, m.Review)
+		}
+		if m.Dependencies != nil {
+			dependencies = append(dependencies, m.Dependencies)
 		}
 
 		for _, fn := range m.Functions {
@@ -249,6 +259,9 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
 			internal.AddNote(cwd, internal.Note{Message: goModFailedNote})
 		}
+	}
+	for _, review := range dependencies {
+		review(cwd, skipGoMod)
 	}
 	for _, review := range reviews {
 		review(cwd)

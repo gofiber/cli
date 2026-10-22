@@ -245,6 +245,8 @@ import (
 )
 
 var _ = fiber.TestConfig{Timeout: time.Second, FailOnTimeout: true}
+
+const want = "test: timeout error 10ms"
 `,
 			line: 6,
 			want: `app.Test: a timeout is reported as os.ErrDeadlineExceeded, whose text is "i/o timeout", where v2 returned "test: timeout error 10ms"`,
@@ -360,7 +362,7 @@ func h(c fiber.Ctx, b bucket) error { return b.Download("a") }
 			absent: "Download and Attachment",
 		},
 		{
-			name: "app.Test without FailOnTimeout",
+			name: "app.Test with a timeout and no text of v2 to compare with",
 			source: `package main
 
 import (
@@ -369,7 +371,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-var _ = fiber.TestConfig{Timeout: time.Second}
+var _ = fiber.TestConfig{Timeout: time.Second, FailOnTimeout: true}
 `,
 			absent: "app.Test: a timeout",
 		},

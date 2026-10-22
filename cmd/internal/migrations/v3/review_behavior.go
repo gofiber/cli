@@ -169,8 +169,9 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: `Download and Attachment: a file name with non-ASCII characters is sent as filename="<name>" and filename*=UTF-8''<percent-encoded name> in Content-Disposition, where v2 sent only the percent-encoded name in filename="..."; check the clients and tests that read the header.`,
 	},
 	{
+		// the text only matters to code that shows or compares it: a test that names the text of v2
 		pkg:     reviewCorePkgRe,
-		when:    func(rf *reviewFile) bool { return rf.literalHasKey(reviewCorePath, "TestConfig", "FailOnTimeout") },
+		uses:    regexp.MustCompile(`\btimeout error\b`),
 		message: `app.Test: a timeout is reported as os.ErrDeadlineExceeded, whose text is "i/o timeout", where v2 returned "test: timeout error 10ms"; compare with errors.Is(err, os.ErrDeadlineExceeded) instead of the text.`,
 	},
 	{
