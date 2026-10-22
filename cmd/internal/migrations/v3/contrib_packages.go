@@ -298,7 +298,7 @@ func (r *contribRun) lines(mod *contribGoMod) []contribModLine {
 	return lines
 }
 
-// noteGoMod reports something about a go.mod file.
+// noteGoModf reports something about a go.mod file.
 func (r *contribRun) noteGoModf(path string, line int, format string, args ...any) {
 	rel, err := filepath.Rel(r.cwd, path)
 	if err != nil {
