@@ -529,3 +529,61 @@ func whoami(c *fiber.Ctx) error {
 	assert.Contains(t, keys, "out = append(out, c.Locals(key))")
 	assert.Contains(t, keys, "return c.Locals(rid)")
 }
+
+// The package that names a key goes with the config and the read that used it: the
+// import is not used any more, and the tidying of the imports cannot tell, since
+// the name of the package of the module is its own business.
+func Test_MigrateMiddlewareLocals_DropsTheImportOfThePackageOfTheKey(t *testing.T) {
+	t.Parallel()
+
+	run := mw2Apply(t, v3.MigrateMiddlewareLocals, map[string]string{
+		"go.mod":                localsGoMod,
+		"internal/keys/keys.go": "package keys\n\nconst RequestID = \"rid\"\n\nconst Header = \"X-Trace\"\n",
+		// the directory is not the name of the package
+		"internal/ids/ids.go": "package idkeys\n\nconst Other = \"other\"\n",
+		"internal/web/web.go": `package web
+
+import (
+	"github.com/gofiber/fiber/v2"
+
+	"example.com/app/internal/keys"
+)
+
+func Who(c *fiber.Ctx) error { return c.SendString(c.Locals(keys.RequestID).(string)) }
+
+func Trace(c *fiber.Ctx) string { return c.Get(keys.Header) }
+`,
+		"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+
+	"example.com/app/internal/ids"
+	"example.com/app/internal/keys"
+	"example.com/app/internal/web"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use(requestid.New(requestid.Config{ContextKey: keys.RequestID}))
+	app.Use(requestid.New(requestid.Config{ContextKey: idkeys.Other}))
+	app.Get("/", web.Who)
+}
+`,
+	})
+
+	main := run.file(t, "main.go")
+	assert.NotContains(t, main, "ContextKey")
+	// both packages were there for the keys only; web is not, and its name is not guessed
+	assert.NotContains(t, main, "internal/keys")
+	assert.NotContains(t, main, "internal/ids")
+	assert.Contains(t, main, `"example.com/app/internal/web"`)
+	assert.Contains(t, main, `"github.com/gofiber/fiber/v2"`)
+
+	web := run.file(t, "internal/web/web.go")
+	assert.Contains(t, web, "requestid.FromContext(c)")
+	// keys is used for the header there too
+	assert.Contains(t, web, `"example.com/app/internal/keys"`)
+	assert.Empty(t, run.notes)
+}

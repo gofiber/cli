@@ -294,3 +294,83 @@ func (kr *mw2KeyResolver) qualified(sel *ast.SelectorExpr, stack []ast.Node) (mw
 	}
 	return mw2Key{val: sel.Sel.Name, dir: target.dir, expr: true}, true
 }
+
+// dropUnusedImports removes the imports of packages of the module that the
+// rewrites of a file left unused: the package that names the key of a read or of a
+// config goes with them (c.Locals(auth.ContextKey), ContextKey: auth.ContextKey). Such
+// an import carries no alias and the name of the package is its own business, so
+// the step that tidies the imports of a changed file keeps it while any other
+// qualifier of the file is not explained by a package it knows; the module knows
+// the name. An import that the file did not use before is not touched.
+func (ix *mw2LocalsIndex) dropUnusedImports(before, after, file string) string {
+	b, okBefore := parseSource(before)
+	a, okAfter := parseSource(after)
+	if !okBefore || !okAfter {
+		return after
+	}
+
+	usedBefore, usedAfter := mw2Qualifiers(b), mw2Qualifiers(a)
+	dir := filepath.Dir(filepath.Clean(file))
+	var edits editSet
+	for _, decl := range a.file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.IMPORT {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			imp, isImport := spec.(*ast.ImportSpec)
+			if !isImport || imp.Name != nil {
+				continue
+			}
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				continue
+			}
+			if pkg := ix.pkgs.atImport(dir, importPath); pkg != nil && usedBefore[pkg.name] && !usedAfter[pkg.name] {
+				mw2RemoveImport(a, &edits, gen, imp)
+			}
+		}
+	}
+	return edits.apply(after)
+}
+
+// mw2Qualifiers returns the names that the file uses as the base of a selector
+// without declaring them in a function: the packages it refers to.
+func mw2Qualifiers(g *goSource) map[string]bool {
+	used := map[string]bool{}
+	g.walk(func(n ast.Node, stack []ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, isIdent := sel.X.(*ast.Ident); isIdent && !modDeclaredLocally(id.Name, id.Pos(), stack) {
+				used[id.Name] = true
+			}
+		}
+		return true
+	})
+	return used
+}
+
+// mw2RemoveImport schedules the removal of an import, with its line when nothing
+// else is on it, and with the whole declaration when it is the only import of one.
+func mw2RemoveImport(g *goSource, edits *editSet, decl *ast.GenDecl, spec *ast.ImportSpec) {
+	var node ast.Node = spec
+	if !decl.Lparen.IsValid() || len(decl.Specs) == 1 {
+		node = decl
+	}
+
+	src := g.src
+	start, end := g.offset(node.Pos()), g.offset(node.End())
+	lineStart := strings.LastIndexByte(src[:start], '\n') + 1
+	next := mw2SkipBlanks(src, end)
+	if strings.HasPrefix(src[next:], "//") {
+		next = mw2LineEnd(src, next)
+	}
+	if strings.TrimSpace(src[lineStart:start]) == "" && (next >= len(src) || src[next] == '\n' || src[next] == '\r') {
+		cut := next
+		if cut < len(src) {
+			cut = mw2LineEnd(src, cut) + 1
+		}
+		edits.replace(lineStart, min(cut, len(src)), "")
+		return
+	}
+	edits.replace(start, end, "")
+}

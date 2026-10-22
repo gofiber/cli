@@ -84,7 +84,7 @@ func migrateLocalsContent(content string, fi internal.FileInfo, index *mw2Locals
 	if len(edits.edits) == 0 {
 		return content
 	}
-	return mw2AddImports(edits.apply(content), plan.imports...)
+	return index.dropUnusedImports(content, mw2AddImports(edits.apply(content), plan.imports...), fi.Path)
 }
 
 // noteRemoval tells the user what the removal of a key field could not account for.
