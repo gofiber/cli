@@ -151,6 +151,23 @@ func Test_isFiber_UnparsableSource(t *testing.T) {
 	assert.False(t, isFiberApp("not go at all", "app"))
 }
 
+func Test_isFiber_EmptyIdentifier(t *testing.T) {
+	t.Parallel()
+
+	// The unnamed parameter of a struct type is indexed under no name at all,
+	// which must not make every lookup of an empty identifier succeed.
+	src := `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type hook func(struct{ *fiber.Ctx }, int)
+`
+	assert.False(t, isFiberCtx(src, ""))
+	assert.False(t, isFiberApp(src, ""))
+	assert.False(t, identHasType(src, "", "fiber.Ctx"))
+	assert.False(t, identAssignedFrom(src, "", `fiber\.New\(`))
+}
+
 func Test_identHasType(t *testing.T) {
 	t.Parallel()
 

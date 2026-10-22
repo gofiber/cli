@@ -560,6 +560,9 @@ func (env *ctxEnv) declares(typeName, name string) bool {
 // declaration of an identifier called name in the file, in any scope, for
 // parameters, struct fields, var declarations and assignments.
 func (env *ctxEnv) declsNamed(name string) (typs, inits []ast.Expr) {
+	if name == "" {
+		return nil, nil
+	}
 	return env.declTypes[name], env.declInits[name]
 }
 
