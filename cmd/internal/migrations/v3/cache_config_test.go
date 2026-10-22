@@ -345,3 +345,66 @@ func handlers(st fiber.Storage) []fiber.Handler {
 	assert.Equal(t, first.file(), second.file())
 	assert.Empty(t, second.stdout)
 }
+
+func Test_MigrateCacheConfig_CopyOfTheDefaultConfig(t *testing.T) {
+	t.Parallel()
+
+	res := mw1Run(t, v3.MigrateCacheConfig, `package main
+
+`+cacheImports+`
+func plain() cache.Config {
+	cfg := cache.ConfigDefault
+	cfg.Methods = []string{fiber.MethodGet}
+	return cfg
+}
+
+func expiration() cache.Config {
+	cfg := cache.ConfigDefault
+	cfg.Expiration = 2 * time.Minute
+	return cfg
+}
+
+func control(on bool) cache.Config {
+	cfg := cache.ConfigDefault
+	if on {
+		cfg.CacheControl = true
+	}
+	return cfg
+}
+
+var shared = cache.ConfigDefault
+`)
+
+	assert.Equal(t, `package main
+
+`+cacheImports+`
+func plain() cache.Config {
+	cfg := cache.ConfigDefault
+	cfg.DisableCacheControl = true
+	cfg.Expiration = time.Minute
+	cfg.Methods = []string{fiber.MethodGet}
+	return cfg
+}
+
+func expiration() cache.Config {
+	cfg := cache.ConfigDefault
+	cfg.DisableCacheControl = true
+	cfg.Expiration = 2 * time.Minute
+	return cfg
+}
+
+func control(on bool) cache.Config {
+	cfg := cache.ConfigDefault
+	cfg.Expiration = time.Minute
+	if on {
+		cfg.DisableCacheControl = false
+	}
+	return cfg
+}
+
+var shared = cache.ConfigDefault
+`, res.file())
+	if assert.Len(t, res.notes, 1) {
+		assert.Contains(t, res.notes[0], "cache.ConfigDefault is not what it was in v2")
+	}
+}

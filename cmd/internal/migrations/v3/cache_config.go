@@ -56,9 +56,15 @@ var cacheV3Fields = []string{
 	"DisableQueryKeys", "DisableVaryHeaders", "DisableValueRedaction", "AllowStaleCredentialResponses",
 }
 
+// cacheDefaultNote is the note for a copy of cache.ConfigDefault that cannot be
+// completed with the defaults of v2.
+const cacheDefaultNote = "cache.ConfigDefault is not what it was in v2 (it sends Cache-Control headers and keeps responses for five minutes): " +
+	"set DisableCacheControl and Expiration on the copy"
+
 // cacheMigration is the state of the rewrite of one file.
 type cacheMigration struct {
 	g         *goSource
+	rep       *mw1Reporter
 	timeName  string
 	edits     editSet
 	needsTime bool
@@ -75,7 +81,7 @@ func migrateCacheContent(content string, fi internal.FileInfo) string {
 		return content
 	}
 
-	m := &cacheMigration{g: g}
+	m := &cacheMigration{g: g, rep: newMW1Reporter(g, fi)}
 	m.timeName, m.needsTime = mw1ImportName(content, "time", "time")
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
@@ -88,15 +94,23 @@ func migrateCacheContent(content string, fi internal.FileInfo) string {
 		case *ast.AssignStmt:
 			if _, field, isAssign := mw1AssignedField(x, stack, names); isAssign {
 				m.assignment(x, field)
+			} else {
+				m.defaultCopy(x, stack, names)
+			}
+		case *ast.ValueSpec:
+			if len(x.Values) == 1 && mw1IsMember(x.Values[0], names, "ConfigDefault") {
+				m.rep.notef(x, cacheDefaultNote)
 			}
 		}
 		return true
 	})
 
-	out := m.edits.apply(content)
+	applied := m.edits.apply(content)
+	out := applied
 	if m.usesTime && m.needsTime {
 		out = mw1AddImport(out, "time")
 	}
+	m.rep.flush(&m.edits, applied, out)
 	return out
 }
 
@@ -212,4 +226,58 @@ func (m *cacheMigration) invert(e ast.Expr) string {
 		return "!" + m.g.text(e)
 	}
 	return "!(" + m.g.text(e) + ")"
+}
+
+// defaultCopy restores the defaults of v2 in a config that starts as a copy of
+// cache.ConfigDefault, which v3 changed: the statements follow the declaration,
+// unless the code sets the field itself afterwards.
+func (m *cacheMigration) defaultCopy(as *ast.AssignStmt, stack []ast.Node, names []string) {
+	if len(as.Lhs) != 1 || len(as.Rhs) != 1 || !mw1IsMember(as.Rhs[0], names, "ConfigDefault") {
+		return
+	}
+	id, ok := as.Lhs[0].(*ast.Ident)
+	if !ok || as.Tok != token.DEFINE || len(stack) == 0 {
+		return
+	}
+	block, ok := stack[len(stack)-1].(*ast.BlockStmt)
+	if !ok || !mw1StartsLine(m.g.src, m.g.offset(as.Pos())) {
+		m.rep.notef(as, cacheDefaultNote)
+		return
+	}
+
+	// the fields that the code sets after the declaration
+	set := map[string]bool{}
+	after := false
+	for _, stmt := range block.List {
+		if stmt == ast.Stmt(as) {
+			after = true
+			continue
+		}
+		if !after {
+			continue
+		}
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if assign, isAssign := n.(*ast.AssignStmt); isAssign && len(assign.Lhs) == 1 {
+				if sel, isSel := assign.Lhs[0].(*ast.SelectorExpr); isSel && isIdentNamed(sel.X, id.Name) {
+					set[sel.Sel.Name] = true
+				}
+			}
+			return true
+		})
+	}
+
+	var stmts []string
+	if !set[cacheControl] && !set[cacheDisableControl] {
+		stmts = append(stmts, id.Name+"."+cacheDisableControl+" = true")
+	}
+	if !set[cacheExpiration] {
+		stmts = append(stmts, id.Name+"."+cacheExpiration+" = "+m.timeName+".Minute")
+		m.usesTime = true
+	}
+	if len(stmts) == 0 {
+		return
+	}
+	indent := mw1Indent(m.g.src, m.g.offset(as.Pos()))
+	end := m.g.offset(as.End())
+	m.edits.replace(end, end, "\n"+indent+strings.Join(stmts, "\n"+indent))
 }
