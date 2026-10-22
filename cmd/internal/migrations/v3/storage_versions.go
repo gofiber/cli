@@ -127,7 +127,9 @@ func importsResolveStorage(name, major string) importsDestination {
 // the context methods of fiber.Storage is raised to the first release that has
 // them. A version is never lowered, nor a newer major version replaced.
 func MigrateStorageVersions(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
-	changedImports, err := internal.ChangeFileContentInfo(cwd, importsMigrateStorage)
+	run := &importsStorageScan{}
+	run.plan(cwd)
+	changedImports, err := internal.ChangeFileContentInfo(cwd, run.migrate)
 	if err != nil {
 		return fmt.Errorf("failed to migrate storage versions: %w", err)
 	}

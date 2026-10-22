@@ -2,6 +2,7 @@ package v3
 
 import (
 	"go/ast"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -28,15 +29,27 @@ type importsStoragePkg struct {
 
 // importsStorageFile rewrites the Go code of one file that imports storage modules.
 type importsStorageFile struct {
-	g        *goSource
-	fi       internal.FileInfo
+	g   *goSource
+	fi  internal.FileInfo
+	run *importsStorageScan
+	// pg answers what the postgres storages of the file are, nil when the project has
+	// none that moves to the v3 line.
+	pg *importsPostgresView
+	// needShim is the import path of the module package to import, when the file
+	// does not import it yet.
+	needShim string
 	edits    *editSet
 	postgres importsStoragePkg
 	redis    importsStoragePkg
+	usesShim bool
 }
 
-func importsMigrateStorage(content string, fi internal.FileInfo) string {
-	if !strings.Contains(content, importsStorageFamily.prefix) {
+func (r *importsStorageScan) migrate(content string, fi internal.FileInfo) string {
+	r.refresh()
+
+	hasStorage := strings.Contains(content, importsStorageFamily.prefix)
+	callsConn := len(r.moving) > 0 && strings.Contains(content, ".Conn()")
+	if !hasStorage && !callsConn {
 		return content
 	}
 	g, ok := parseFile(fi, content)
@@ -47,19 +60,33 @@ func importsMigrateStorage(content string, fi internal.FileInfo) string {
 	var edits editSet
 	moves := importsStorageFamily.moveImports(g, &edits)
 
-	s := &importsStorageFile{g: g, fi: fi, edits: &edits}
+	s := &importsStorageFile{g: g, fi: fi, run: r, edits: &edits}
 	s.postgres.names = importsStorageNames(g, importsRePostgres, "postgres")
 	s.redis.names = importsStorageNames(g, importsReRedis, "redis")
 	for _, mv := range moves {
 		s.postgres.moved = s.postgres.moved || (mv.name == "postgres" && mv.from == "")
 		s.redis.moved = s.redis.moved || (mv.name == "redis" && mv.from == "")
 	}
+	if len(r.moving) > 0 {
+		ix := r.indexes.of(fi)
+		ix.packageIn(filepath.Dir(fi.Path)) // the file knows its package once the directory is read
+		mf := ix.fileAt(fi.Path)
+		s.pg = &importsPostgresView{run: r, g: g, mf: mf, names: s.postgres.names, moved: r.moving[fi.Path]}
+	}
 
-	if len(s.postgres.names) > 0 || len(s.redis.names) > 0 {
+	if len(s.postgres.names) > 0 || len(s.redis.names) > 0 || callsConn {
 		g.walk(s.collectFields)
 		g.walk(s.visit)
 	}
-	return edits.apply(content)
+
+	out := edits.apply(content)
+	if s.usesShim && s.needShim != "" {
+		out = mw1AddImport(out, s.needShim)
+	}
+	if out != content {
+		r.changed = append(r.changed, fi.Path)
+	}
+	return out
 }
 
 // importsStorageNames returns the identifiers the file binds to the imports that match
@@ -109,7 +136,7 @@ func (s *importsStorageFile) visit(n ast.Node, stack []ast.Node) bool {
 			s.edits.replaceNode(s.g, x.Sel, "SSLMode")
 		}
 	case *ast.CallExpr:
-		s.noteConn(x, stack)
+		s.conn(x, stack)
 	}
 	return true
 }
