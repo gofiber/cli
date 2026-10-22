@@ -268,6 +268,10 @@ func (env *ctxEnv) typeIsAt(t ast.Expr, wanted []string, depth int) ctxKind {
 		return env.typeIsAt(x.X, wanted, depth+1)
 	case *ast.StarExpr:
 		return env.typeIsAt(x.X, wanted, depth+1)
+	case *ast.IndexExpr:
+		return env.typeIsAt(x.X, wanted, depth+1)
+	case *ast.IndexListExpr:
+		return env.typeIsAt(x.X, wanted, depth+1)
 	case *ast.SelectorExpr:
 		id, ok := x.X.(*ast.Ident)
 		if !ok {
@@ -438,6 +442,10 @@ func (env *ctxEnv) structFieldType(t ast.Expr, name string, depth int) ast.Expr 
 	case *ast.ParenExpr:
 		return env.structFieldType(x.X, name, depth+1)
 	case *ast.StarExpr:
+		return env.structFieldType(x.X, name, depth+1)
+	case *ast.IndexExpr:
+		return env.structFieldType(x.X, name, depth+1)
+	case *ast.IndexListExpr:
 		return env.structFieldType(x.X, name, depth+1)
 	case *ast.Ident:
 		if spec := env.typeDecl[x.Name]; spec != nil {

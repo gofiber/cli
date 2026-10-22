@@ -151,6 +151,40 @@ func Test_isFiber_UnparsableSource(t *testing.T) {
 	assert.False(t, isFiberApp("not go at all", "app"))
 }
 
+func Test_isFiber_DotImportAndLocalAliases(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import . "github.com/gofiber/fiber/v2"
+
+type server = App
+
+func handler(c *Ctx, s *server, n int) {}
+`
+	assert.True(t, isFiberCtx(src, "c"))
+	assert.True(t, isFiberApp(src, "s"))
+	assert.False(t, isFiberCtx(src, "s"))
+	assert.False(t, isFiberApp(src, "n"))
+
+	src = `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type myApp = fiber.App
+type myGroup = fiber.Group
+
+var (
+	a myApp
+	g myGroup
+)
+`
+	assert.True(t, isFiberApp(src, "a"))
+	assert.True(t, isFiberGroup(src, "g"))
+	assert.True(t, isFiberRouter(src, "a"))
+	assert.False(t, isFiberGroup(src, "a"))
+}
+
 func Test_isFiber_EmptyIdentifier(t *testing.T) {
 	t.Parallel()
 

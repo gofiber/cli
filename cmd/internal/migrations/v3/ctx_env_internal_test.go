@@ -2,6 +2,7 @@ package v3
 
 import (
 	"go/ast"
+	"go/parser"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,20 @@ func Test_ctxAddImport(t *testing.T) {
 			path: "strconv",
 			def:  "strconv",
 			want: "package p\n\nimport \"strconv\"\n\nvar x = 1\n",
+		},
+		{
+			name: "the last import is on the line of the closing parenthesis",
+			src:  "package p\n\nimport (\n\t\"fmt\"\n\t\"strings\")",
+			path: "strconv",
+			def:  "strconv",
+			want: "package p\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n\t\"strconv\")",
+		},
+		{
+			name: "a third party import on the line of the closing parenthesis",
+			src:  "package p\n\nimport (\"example.com/x\")\n",
+			path: "github.com/gofiber/fiber/v3/binder",
+			def:  "binder",
+			want: "package p\n\nimport (\"example.com/x\"\n\t\"github.com/gofiber/fiber/v3/binder\"\n)\n",
 		},
 		{
 			name: "a blank import does not count",
@@ -305,6 +320,173 @@ func handlers(c *f.Ctx, sh *shadow, sm *shadowMethod, w *wrapper, p plain, h *ho
 	assert.Equal(t, want, got)
 }
 
+func Test_ctxEnv_fieldGuesses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		want map[string]ctxKind
+		name string
+		src  string
+	}{
+		{
+			name: "a field that every struct of the file declares the same way",
+			src: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type server struct {
+	ctx *fiber.Ctx
+	id  int
+}
+
+func handlers(list []server) {
+	for _, s := range list {
+		s.ctx.probe("ctx")
+		s.id.probe("id")
+		s.missing.probe("missing")
+	}
+}
+`,
+			want: map[string]ctxKind{`"ctx"`: ctxYes, `"id"`: ctxNo, `"missing"`: ctxUnknown},
+		},
+		{
+			name: "a field that the structs declare differently",
+			src: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type a struct{ ctx *fiber.Ctx }
+type b struct{ ctx string }
+
+func handlers(list []a) {
+	for _, s := range list {
+		s.ctx.probe("ambiguous")
+	}
+}
+`,
+			want: map[string]ctxKind{`"ambiguous"`: ctxUnknown},
+		},
+		{
+			name: "fields of embedded structs",
+			src: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type base struct{ c *fiber.Ctx }
+type mid struct{ base }
+type top struct{ *mid }
+
+func handlers(t top, p *top) {
+	t.c.probe("two levels")
+	p.c.probe("through a pointer")
+	t.base.probe("the embedded struct")
+	t.missing.probe("missing")
+}
+`,
+			want: map[string]ctxKind{`"two levels"`: ctxYes, `"through a pointer"`: ctxYes, `"the embedded struct"`: ctxNo, `"missing"`: ctxUnknown},
+		},
+		{
+			name: "built-in calls, conversions and literals",
+			src: `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type pair [2]*fiber.Ctx
+
+func handlers(ps pair) {
+	new(fiber.Ctx).probe("new")
+	(*fiber.Ctx)(nil).probe("conversion")
+	[2]*fiber.Ctx{}[0].probe("array literal element")
+	ps[1].probe("element of a named array")
+	make([]*fiber.Ctx, 1)[0].probe("make")
+	[]string{}.probe("slice")
+}
+`,
+			want: map[string]ctxKind{
+				`"new"`:                      ctxYes,
+				`"conversion"`:               ctxYes,
+				`"array literal element"`:    ctxYes,
+				`"element of a named array"`: ctxUnknown,
+				`"make"`:                     ctxUnknown,
+				`"slice"`:                    ctxNo,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, ctxKindsOf(t, tc.src))
+		})
+	}
+}
+
+func Test_ctxEnv_typeForms(t *testing.T) {
+	t.Parallel()
+
+	src := `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type box[T any] struct {
+	c *fiber.Ctx
+	v T
+}
+
+type pairOf[K comparable, V any] struct{ c *fiber.Ctx }
+
+type viaBox struct{ *box[int] }
+
+type genericCtx[T any] struct{ *fiber.Ctx }
+
+type viaGeneric struct{ genericCtx[int] }
+
+type session struct{ c *fiber.Ctx }
+
+type Context interface {
+	fiber.Ctx
+	User() string
+}
+
+type reader interface{ Read() }
+
+func (b *box[T]) ctx() *fiber.Ctx { return b.c }
+
+func handlers(b *box[int], p pairOf[string, int], vb viaBox, vg viaGeneric, gc *genericCtx[string], cx Context, rd reader, fn func(*fiber.Ctx), ch chan int, m map[string]int, x any) {
+	b.c.probe("generic struct field")
+	b.ctx().probe("generic method result")
+	p.c.probe("two type parameters")
+	vb.c.probe("embedded generic struct")
+	vg.probe("struct that embeds a generic struct that embeds the context")
+	gc.probe("generic struct that embeds the context")
+	cx.probe("interface that embeds the context")
+	rd.probe("other interface")
+	fn.probe("function")
+	ch.probe("channel")
+	m.probe("map")
+	session(x).c.probe("conversion to a local type")
+	(*session)(nil).c.probe("conversion to a pointer type")
+}
+`
+	want := map[string]ctxKind{
+		`"generic struct field"`:    ctxYes,
+		`"generic method result"`:   ctxYes,
+		`"two type parameters"`:     ctxYes,
+		`"embedded generic struct"`: ctxYes,
+		`"struct that embeds a generic struct that embeds the context"`: ctxYes,
+		`"generic struct that embeds the context"`:                      ctxYes,
+		`"interface that embeds the context"`:                           ctxYes,
+		`"other interface"`:                                             ctxNo,
+		`"function"`:                                                    ctxNo,
+		`"channel"`:                                                     ctxNo,
+		`"map"`:                                                         ctxNo,
+		`"conversion to a local type"`:                                  ctxYes,
+		`"conversion to a pointer type"`:                                ctxYes,
+	}
+	assert.Equal(t, want, ctxKindsOf(t, src))
+}
+
 func Test_ctxEnv_dotImport(t *testing.T) {
 	t.Parallel()
 
@@ -320,6 +502,60 @@ func handler(c *Ctx, other *Config) {
 	got := ctxKindsOf(t, src)
 	assert.Equal(t, ctxYes, got[`"ctx"`])
 	assert.NotEqual(t, ctxYes, got[`"config"`])
+
+	// The results of AcquireCtx and Group are spelled without a qualifier.
+	src = `package main
+
+import . "github.com/gofiber/fiber/v2"
+
+func handler() {
+	app := New()
+	acquired := app.AcquireCtx(nil)
+	acquired.probe("acquired")
+	app.Group("/").probe("group")
+}
+`
+	got = ctxKindsOf(t, src)
+	assert.Equal(t, ctxYes, got[`"acquired"`])
+	assert.NotEqual(t, ctxYes, got[`"group"`])
+}
+
+func Test_ctxIsFiberType(t *testing.T) {
+	t.Parallel()
+
+	parse := func(t *testing.T, expr string) ast.Expr {
+		t.Helper()
+
+		e, err := parser.ParseExpr(expr)
+		require.NoError(t, err)
+		return e
+	}
+
+	tests := []struct {
+		expr  string
+		names []string
+		want  bool
+	}{
+		{expr: "fiber.Ctx", names: []string{"fiber"}, want: true},
+		{expr: "*f.Ctx", names: []string{"f"}, want: true},
+		{expr: "fiber.App", names: []string{"fiber"}, want: false},
+		{expr: "other.Ctx", names: []string{"fiber"}, want: false},
+		{expr: "Ctx", names: []string{"fiber"}, want: false},
+		{expr: "Ctx", names: []string{"."}, want: true},
+		{expr: "*Ctx", names: []string{"."}, want: true},
+		{expr: "(*Ctx)", names: []string{"."}, want: true},
+		{expr: "Config", names: []string{"."}, want: false},
+		{expr: "[]Ctx", names: []string{"."}, want: false},
+		{expr: "other.Ctx", names: []string{"."}, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.expr, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, ctxIsFiberType(parse(t, tc.expr), tc.names, ctxTypeCtx))
+		})
+	}
 }
 
 func Test_ctxEnv_qual(t *testing.T) {
