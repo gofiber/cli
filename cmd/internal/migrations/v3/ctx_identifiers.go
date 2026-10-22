@@ -68,17 +68,10 @@ func ctxCoreIdentifiersContent(content string, fi internal.FileInfo, run *ctxRun
 	}
 
 	noter := newCtxNoter(fi, g, run)
-	binderName := ctxImportName(content, ctxFiberSubpath(content, "binder"), "binder")
-	if binderName == "" {
-		binderName = "binder"
-	}
-	stringsName := ctxImportName(content, "strings", "strings")
-	if stringsName == "" {
-		stringsName = "strings"
-	}
+	env := run.envFor(fi, g, names)
+	binderPath := ctxFiberSubpath(content, "binder")
 
 	var edits editSet
-	needBinder, needStrings := false, false
 	g.walk(func(n ast.Node, _ []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.SelectorExpr:
@@ -92,16 +85,14 @@ func ctxCoreIdentifiersContent(content string, fi internal.FileInfo, run *ctxRun
 			case x.Sel.Name == ctxIDOldConstraintGUID:
 				edits.replaceNode(g, x.Sel, "ConstraintGUID")
 			case x.Sel.Name == ctxIDIndexRune:
-				edits.replaceNode(g, x, stringsName+".ContainsRune")
-				needStrings = true
+				edits.replaceNode(g, x, env.pkgAt(x.Pos(), "strings")+".ContainsRune")
 			case x.Sel.Name == ctxIDOnShutdownHandler:
 				edits.replaceNode(g, x, "func() error")
 				noter.oncef("on-shutdown-handler", x.Pos(),
 					"%s no longer exists in Fiber v3 and was replaced by func() error; Hooks().OnShutdown is OnPostShutdown(func(error) error) now, so adapt the code that registers these handlers",
 					g.text(x))
 			case slices.Contains(ctxBinderIdents, x.Sel.Name):
-				edits.replaceNode(g, id, binderName)
-				needBinder = true
+				edits.replaceNode(g, id, env.pkgAs(id.Pos(), binderPath, "binder", "fiberbinder"))
 			}
 		case *ast.CompositeLit:
 			ctxRenameCustomtypeKeys(g, &edits, x, names)
@@ -109,14 +100,7 @@ func ctxCoreIdentifiersContent(content string, fi internal.FileInfo, run *ctxRun
 		return true
 	})
 
-	out := edits.apply(content)
-	if needBinder {
-		out = ctxAddImport(out, ctxFiberSubpath(content, "binder"), "binder")
-	}
-	if needStrings {
-		out = ctxAddImport(out, "strings", "strings")
-	}
-	return out
+	return env.finish(content, edits.apply(content))
 }
 
 // ctxDefaultFiberPath is the import path of the fiber module that v3 migrations

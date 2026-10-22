@@ -120,9 +120,9 @@ func rewriteSendFileCall(env *ctxEnv, edits *editSet, fi internal.FileInfo, call
 			"SendFile takes a single %s config now, convert the compress flags by hand (set ByteRange: true to keep range requests)", env.spell("SendFile"))
 	case len(call.Args) == 1:
 		end := g.offset(call.Args[0].End())
-		edits.replace(end, end, ", "+env.qual("SendFile")+"{ByteRange: true}")
+		edits.replace(end, end, ", "+env.qual(call.Pos(), "SendFile")+"{ByteRange: true}")
 	case !isSendFileConfig(call.Args[1], env.names, stack, 0):
-		cfgType := env.qual("SendFile")
+		cfgType := env.qual(call.Pos(), "SendFile")
 		compress := g.text(call.Args[1])
 		cfg := cfgType + "{Compress: " + compress + ", ByteRange: true}"
 		if compress == litFalse {

@@ -672,7 +672,16 @@ func Test_ctxEnv_finish(t *testing.T) {
 		t.Parallel()
 		sibling := parse("package p\n\nimport \"github.com/gofiber/fiber/v2\"\n\nvar _ fiber.Ctx\n")
 		env := &ctxEnv{g: parse(content), usedFiber: true, alias: "fiberv3", files: []*ast.File{sibling.file}}
-		assert.Equal(t, "package p\n\nimport fiberv3 \"github.com/gofiber/fiber/v2\"\n\nfunc f() { _ = fiber.Query[int] }\n", env.finish(content, out))
+		aliased := "package p\n\nfunc f() { _ = fiberv3.Query[int] }\n"
+		assert.Equal(t, "package p\n\nimport fiberv3 \"github.com/gofiber/fiber/v2\"\n\nfunc f() { _ = fiberv3.Query[int] }\n", env.finish(content, aliased))
+	})
+
+	t.Run("an import the output does not use is not added", func(t *testing.T) {
+		t.Parallel()
+		env := &ctxEnv{g: parse(content), usedFiber: true, alias: "fiber", extra: "fiberv3", names: []string{"fiber"}}
+		assert.Equal(t, out, env.finish(content, out))
+		env.alias, env.names = "fiberv3", nil
+		assert.Equal(t, out, env.finish(content, out))
 	})
 
 	t.Run("no path to import", func(t *testing.T) {

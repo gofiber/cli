@@ -189,13 +189,13 @@ func ctxQueueRedirect(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *ast.Cal
 	plan.qualify(g, sel, via)
 	if len(statuses) == 0 && !hasParams {
 		plan.add(func(e *editSet) {
-			e.replaceNode(g, sel.Sel, "Redirect().Status("+env.qual(ctxStatusFound)+")."+target.method)
+			e.replaceNode(g, sel.Sel, "Redirect().Status("+env.qual(sel.Pos(), ctxStatusFound)+")."+target.method)
 		})
 		return
 	}
 
 	plan.add(func(e *editSet) {
-		status := env.qual(ctxStatusFound)
+		status := env.qual(call.Pos(), ctxStatusFound)
 		kept := call.Args[:min(len(call.Args), statusAt)]
 		if len(statuses) > 0 {
 			status = ctxRenderNode(e, g, statuses[0])
@@ -271,13 +271,13 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 		if via != "" {
 			recvText += "." + via
 		}
-		recv := lit.bind(ctxOperand{expr: sel.X, text: recvText, typ: env.qual(ctxTypeCtx), name: "c"})
+		recv := lit.bind(ctxOperand{expr: sel.X, text: recvText, typ: env.qual(call.Pos(), ctxTypeCtx), name: "c"})
 
 		var args []string
 		for i, arg := range before {
 			if name == ctxRedirectToRoute && i == 1 {
 				if cfg := ctxRouteConfig(e, noter, env, arg); cfg != "" {
-					args = append(args, lit.bind(ctxOperand{expr: arg, text: cfg, typ: env.qual("RedirectConfig"), name: "cfg"}))
+					args = append(args, lit.bind(ctxOperand{expr: arg, text: cfg, typ: env.qual(call.Pos(), "RedirectConfig"), name: "cfg"}))
 				}
 				continue
 			}
@@ -292,7 +292,7 @@ func ctxQueueRedirectLiteral(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, call *
 			first.typ, first.name, first.spread = ctxLitInts, "codes", true
 			codes := lit.bind(first)
 			status = lit.namer.fresh("status")
-			body = fmt.Sprintf("%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n", status, env.qual(ctxStatusFound), codes)
+			body = fmt.Sprintf("%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n", status, env.qual(call.Pos(), ctxStatusFound), codes)
 		} else {
 			status = lit.bind(first)
 			if extras := statuses[1:]; slices.ContainsFunc(extras, func(x ast.Expr) bool { return !ctxIsPure(x) }) {
@@ -327,7 +327,7 @@ func ctxFiberNames(env *ctxEnv) []string {
 // params, its Queries. It is empty when there is nothing to pass.
 func ctxRouteConfig(e *editSet, noter *ctxNoter, env *ctxEnv, params ast.Expr) string {
 	g := env.g
-	cfgType := env.qual("RedirectConfig")
+	cfgType := env.qual(params.Pos(), "RedirectConfig")
 
 	if isIdentNamed(params, "nil") {
 		return ""

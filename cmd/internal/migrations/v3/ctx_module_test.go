@@ -222,7 +222,11 @@ import (
 )
 
 func id(c *web.Context) (int, error) {
-	return strconv.Atoi(c.Params("id"))
+	value, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 `},
 			notes: []string{"ParamsInt without a default value"},

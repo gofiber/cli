@@ -83,7 +83,7 @@ func (s appStart) rewrite(extras []appListenField, imports appImports) appStartR
 	}
 
 	fields := slices.Concat(base, extras)
-	cfg := out.imports.fiberQualifier(s.file) + "ListenConfig{" + appJoinFields(fields) + "}"
+	cfg := out.imports.fiberQualifierAt(s.file, s.call.Pos()) + "ListenConfig{" + appJoinFields(fields) + "}"
 	end := g.offset(args[len(args)-1].End())
 	out.edits = append(out.edits, textEdit{
 		start: g.offset(s.sel.Sel.Pos()),
@@ -127,14 +127,14 @@ func (s appStart) tlsBase(out *appStartRewrite) (base []appListenField, ok bool)
 			out.problem = "ListenTLSWithCertificate takes an address and a certificate"
 			return nil, false
 		}
-		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
+		tls := out.imports.qualifierAt(s.file, s.call.Pos(), "crypto/tls", "tls")
 		base = []appListenField{{nameTLSConfig, "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
 	case "ListenMutualTLSWithCertificate":
 		if len(args) != 3 {
 			out.problem = "ListenMutualTLSWithCertificate takes an address, a certificate and a client CA pool"
 			return nil, false
 		}
-		tls := out.imports.qualifier(s.file, "crypto/tls", "tls")
+		tls := out.imports.qualifierAt(s.file, s.call.Pos(), "crypto/tls", "tls")
 		base = []appListenField{{"TLSConfig", "&" + tls + "Config{MinVersion: " + tls + "VersionTLS12, ClientAuth: " + tls + "RequireAndVerifyClientCert, ClientCAs: " + g.text(args[2]) + ", Certificates: []" + tls + "Certificate{" + g.text(args[1]) + "}}"}}
 	default:
 		out.problem = "unknown start method " + s.method
@@ -186,7 +186,7 @@ func (s appStart) rewritePlain(extras []appListenField, out appStartRewrite) app
 		if len(extras) == 0 {
 			return out
 		}
-		cfg := out.imports.fiberQualifier(s.file) + "ListenConfig{" + appJoinFields(extras) + "}"
+		cfg := out.imports.fiberQualifierAt(s.file, s.call.Pos()) + "ListenConfig{" + appJoinFields(extras) + "}"
 		at := g.offset(args[0].End())
 		out.edits = append(out.edits, textEdit{start: at, end: at, text: ", " + cfg})
 	case 2:

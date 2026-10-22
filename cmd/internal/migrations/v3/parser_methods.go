@@ -145,7 +145,7 @@ func ctxQueueAllParams(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.Sel
 		if via != "" {
 			recv += "." + via
 		}
-		e.replaceNode(env.g, call, "func(c "+env.qual(ctxTypeCtx)+") map[string]string {\n"+ctxAllParamsBody("c", "params", "name")+"\n}("+recv+")")
+		e.replaceNode(env.g, call, "func(c "+env.qual(call.Pos(), ctxTypeCtx)+") map[string]string {\n"+ctxAllParamsBody("c", "params", "name")+"\n}("+recv+")")
 	})
 }
 

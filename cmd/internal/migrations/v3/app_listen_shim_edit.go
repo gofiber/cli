@@ -135,7 +135,7 @@ func (src *appListenSource) shimVariable(w *appShimWork) string {
 		return appLiteralLayoutProblem
 	}
 	src.noteOrder(w, drop)
-	listenCfg := w.importsOf(f).fiberQualifier(f) + "ListenConfig{" + strings.Join(held, ", ") + "}"
+	listenCfg := w.importsOf(f).fiberQualifierAt(f, g.posAt(at)) + "ListenConfig{" + strings.Join(held, ", ") + "}"
 	edits.replace(at, at, "\n"+declare(listenCfg))
 
 	for _, fld := range src.fields {
@@ -168,7 +168,7 @@ func (src *appListenSource) shimLiteral(w *appShimWork) string {
 		return appLiteralLayoutProblem
 	}
 	src.noteOrder(w, drop)
-	shimCreation(w, c, w.importsOf(f).fiberQualifier(f)+"ListenConfig{"+strings.Join(held, ", ")+"}")
+	shimCreation(w, c, w.importsOf(f).fiberQualifierAt(f, c.call.Pos())+"ListenConfig{"+strings.Join(held, ", ")+"}")
 	return ""
 }
 
@@ -237,7 +237,7 @@ func (s appStart) rewriteShim(imports appImports, receiver, shimPath string) app
 		if !ok {
 			return out
 		}
-		cfg = out.imports.fiberQualifier(s.file) + "ListenConfig{" + appJoinFields(base) + "}"
+		cfg = out.imports.fiberQualifierAt(s.file, s.call.Pos()) + "ListenConfig{" + appJoinFields(base) + "}"
 	}
 
 	shim := out.imports.qualifier(s.file, shimPath, moduleShimPkg)

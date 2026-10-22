@@ -117,6 +117,59 @@ func ctxAddImportAs(src, path, def, alias string) string {
 	return src[:at] + "\n\nimport " + spec + src[at:]
 }
 
+// ctxAddNamedImport adds the import of path under the name alias, even when the
+// source imports the package under another name. It does nothing when the source
+// has that import already.
+func ctxAddNamedImport(src, path, alias string) string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", src, parser.ImportsOnly|parser.SkipObjectResolution)
+	if err != nil && file == nil {
+		return src
+	}
+	for _, spec := range file.Imports {
+		if p, err := strconv.Unquote(spec.Path.Value); err == nil && p == path && spec.Name != nil && spec.Name.Name == alias {
+			return src
+		}
+	}
+	spec := alias + " " + strconv.Quote(path)
+
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.IMPORT {
+			continue
+		}
+
+		if !gd.Lparen.IsValid() {
+			start, end := fset.Position(gd.Pos()).Offset, fset.Position(gd.End()).Offset
+			existing := strings.TrimSpace(strings.TrimPrefix(src[start:end], "import"))
+			return src[:start] + "import (\n\t" + existing + "\n\t" + spec + "\n)" + src[end:]
+		}
+
+		return ctxInsertImportSpec(src, fset, gd, path, spec)
+	}
+
+	at := fset.Position(file.Name.End()).Offset
+	return src[:at] + "\n\nimport " + spec + src[at:]
+}
+
+// ctxUsesName reports whether the source uses name as the operand of a selector,
+// which is how it refers to a package. A source that does not parse is taken to.
+func ctxUsesName(src, name string) bool {
+	file, err := parser.ParseFile(token.NewFileSet(), "", src, parser.SkipObjectResolution)
+	if err != nil && file == nil {
+		return true
+	}
+
+	used := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && isIdentNamed(sel.X, name) {
+			used = true
+		}
+		return !used
+	})
+	return used
+}
+
 // ctxInsertImportSpec adds the import spec to the import block gd.
 func ctxInsertImportSpec(src string, fset *token.FileSet, gd *ast.GenDecl, path, spec string) string {
 	best, bestShared := -1, 0

@@ -85,7 +85,7 @@ func (r *appStaticRewrite) call(call *ast.CallExpr, sel *ast.SelectorExpr) {
 	}
 
 	path, root := args[0], args[1]
-	pkg := r.imps.qualifier(f, appStaticImport, "static")
+	pkg := r.imps.qualifierAt(f, call.Pos(), appStaticImport, "static")
 
 	r.edits.replaceNode(g, sel.Sel, appMethodGet)
 	r.edits.replaceNode(g, path, r.pathText(path))
@@ -99,7 +99,7 @@ func (r *appStaticRewrite) call(call *ast.CallExpr, sel *ast.SelectorExpr) {
 		r.edits.replaceNode(g, root, open+`"."`)
 		open = ""
 	case !f.provablyNotEmpty(root, 0):
-		open += r.imps.qualifier(f, "cmp", "cmp") + "Or("
+		open += r.imps.qualifierAt(f, root.Pos(), "cmp", "cmp") + "Or("
 		closing = `, ".")`
 	}
 	if open != "" {
@@ -155,8 +155,10 @@ func appIsLiteralConcat(e ast.Expr) bool {
 // now, and of its Index field.
 func (r *appStaticRewrite) selector(sel *ast.SelectorExpr) {
 	f := r.f
-	if id, ok := sel.X.(*ast.Ident); ok && f.isFiberQualifier(id.Name) && sel.Sel.Name == appNameStatic {
-		r.edits.replaceNode(f.g, sel, r.imps.qualifier(f, appStaticImport, "static")+"Config")
+	// a variable called like the package, fiber.Static("/p", dir) on fiber := fiber.New(), is
+	// the method and not the type
+	if id, ok := sel.X.(*ast.Ident); ok && f.isFiberQualifier(id.Name) && !f.hiddenAt(id.Name, id.Pos()) && sel.Sel.Name == appNameStatic {
+		r.edits.replaceNode(f.g, sel, r.imps.qualifierAt(f, sel.Pos(), appStaticImport, "static")+"Config")
 		return
 	}
 

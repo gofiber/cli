@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -62,6 +63,9 @@ type ctxEnv struct {
 	mod *ctxModule
 	// imports are the imports of the file, known with a module.
 	imports *ctxImports
+	// speller names the other packages the rewrites write (strconv, fmt), read when
+	// first asked for (see pkgAt).
+	speller *pkgSpeller
 	// pkgPath is the import path of the package of the file, known with a module.
 	pkgPath string
 	// declFile is the file that declares each type, function, method and variable
@@ -70,6 +74,9 @@ type ctxEnv struct {
 	// alias is the name the fiber package gets in a file that imports none: fiber,
 	// unless the file or its package gives that name to something else.
 	alias string
+	// extra is the name of the second import of the fiber package, empty until a
+	// rewrite needs one (see extraName).
+	extra string
 	// names are the identifiers the file binds to the core fiber package.
 	names []string
 	// pkgNames are the names the file and the other files of its package bind
@@ -79,7 +86,7 @@ type ctxEnv struct {
 	// files are the other files of the package.
 	files []*ast.File
 	// usedFiber is set once a rewrite spelled the qualifier of the fiber package
-	// for a file that imports none (see finish).
+	// (see finish).
 	usedFiber bool
 }
 
@@ -290,12 +297,13 @@ func ctxQualifier(names []string) string {
 	return "fiber."
 }
 
-// qual returns the file's spelling of the fiber identifier name for the code of
-// a rewrite: a file that imports no fiber package gets the import added (see
-// finish).
-func (env *ctxEnv) qual(name string) string {
+// qual returns the spelling of the fiber identifier name for the code of a
+// rewrite that goes in at pos: a file that imports no fiber package gets the
+// import added, and so does a file whose own name for the package means something
+// else at pos (see finish).
+func (env *ctxEnv) qual(pos token.Pos, name string) string {
 	env.usedFiber = true
-	return env.spell(name)
+	return env.prefixAt(pos, name) + name
 }
 
 // spell returns the file's spelling of the fiber identifier name for a message,
@@ -311,6 +319,56 @@ func (env *ctxEnv) prefix() string {
 		return env.alias + "."
 	}
 	return ctxQualifier(env.names)
+}
+
+// prefixAt is the qualifier of the fiber package for code at pos that spells
+// the member: a name of the file for the package that no declaration hides there,
+// else the second import that the file gets (see extraName).
+func (env *ctxEnv) prefixAt(pos token.Pos, member string) string {
+	if len(env.names) == 0 {
+		return env.prefix()
+	}
+	for _, name := range env.names {
+		if name != "." && !env.g.hiddenAt(name, pos) {
+			return name + "."
+		}
+	}
+	// a dot import names the package by its members
+	if env.dotImported() && !env.g.hiddenAt(member, pos) {
+		return ""
+	}
+	return env.extraName() + "."
+}
+
+// pkgAt returns the name that code written at pos uses for the standard package at
+// path, which is also its name: the file's own name unless a declaration hides it
+// there, and then a second import. The import goes in with the migrated source
+// (see finish) when the code uses it.
+func (env *ctxEnv) pkgAt(pos token.Pos, path string) string {
+	return env.pkgAs(pos, path, path, "std"+path)
+}
+
+// pkgAs is pkgAt for a package whose name is not its path: def is its name, aliases
+// are the names a second import may take.
+func (env *ctxEnv) pkgAs(pos token.Pos, path, def string, aliases ...string) string {
+	if env.speller == nil {
+		env.speller = newPkgSpeller(env.g, env.nameTaken)
+	}
+	return env.speller.at(pos, path, def, aliases...)
+}
+
+// extraName is the name of a second import of the fiber package, for the code
+// that goes where the names the file has for it are hidden by a declaration. It
+// is not used anywhere in the file, so nothing hides it.
+func (env *ctxEnv) extraName() string {
+	if env.extra == "" {
+		name := ctxFiberDefaultName + "v3"
+		for i := 2; env.nameTaken(name); i++ {
+			name = ctxFiberDefaultName + "v3_" + strconv.Itoa(i)
+		}
+		env.extra = name
+	}
+	return env.extra
 }
 
 // dotImported reports whether the file dot-imports fiber.
