@@ -36,7 +36,13 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 	},
 	{
 		pkg:     reviewMiddlewarePath("timeout"),
-		message: "timeout: a timed-out handler now answers 503 instead of 408 (return fiber.ErrRequestTimeout from Config.OnTimeout to keep 408), and the middleware returns without waiting for the handler, which should watch c.Context().Done().",
+		message: "timeout: the middleware returns as soon as the time is up, without waiting for the handler, which should watch c.Context().Done().",
+	},
+	{
+		// the migration gives every config it writes an OnTimeout that keeps the 408
+		pkg:     reviewMiddlewarePath("timeout"),
+		unless:  regexp.MustCompile(`\bOnTimeout\b`),
+		message: "timeout: a timed-out handler now answers 503 instead of 408 (return fiber.ErrRequestTimeout from Config.OnTimeout to keep 408).",
 	},
 	{
 		pkg:     reviewMiddlewarePath("cache"),

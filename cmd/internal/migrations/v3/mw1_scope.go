@@ -370,11 +370,12 @@ const mw1FiberIdent = "fiber"
 // mw1FiberCoreImport is the import path v3 code uses for the core package.
 const mw1FiberCoreImport = "github.com/gofiber/fiber/v3"
 
-// mw1UsesName reports whether the file mentions an identifier called name
-// anywhere (declared or used); it is how a generated identifier avoids a clash.
-func mw1UsesName(file *ast.File, name string) bool {
+// mw1UsesName reports whether the file, or any other node, mentions an
+// identifier called name anywhere (declared or used); it is how a generated
+// identifier avoids a clash.
+func mw1UsesName(root ast.Node, name string) bool {
 	found := false
-	ast.Inspect(file, func(n ast.Node) bool {
+	ast.Inspect(root, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && id.Name == name {
 			found = true
 		}
