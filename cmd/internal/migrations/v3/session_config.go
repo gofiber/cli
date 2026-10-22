@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"slices"
+	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -59,7 +60,7 @@ func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) st
 		switch n := n.(type) {
 		case *ast.CompositeLit:
 			if lit, ok := f.isConfigLit(n, stack); ok && !p.isV3Config(stack) {
-				p.configLit(lit)
+				p.configLit(lit, stack)
 			}
 		case *ast.CallExpr:
 			if call, name, ok := f.isStoreCall(n, stack); ok && name == mw3SessionNew && !mw3IsUseArgument(call, stack) {
@@ -120,10 +121,14 @@ func (p *mw3SessionConfigPass) v2Lifetime() string {
 }
 
 // configLit migrates a session.Config literal.
-func (p *mw3SessionConfigPass) configLit(lit *ast.CompositeLit) {
+func (p *mw3SessionConfigPass) configLit(lit *ast.CompositeLit, stack []ast.Node) {
 	g := p.f.g
 	if slices.ContainsFunc(lit.Elts, func(e ast.Expr) bool { _, keyed := e.(*ast.KeyValueExpr); return !keyed }) {
 		return
+	}
+
+	if kv := mw3Field(lit, "CookieSameSite"); kv != nil {
+		p.sameSite(kv, stack)
 	}
 
 	if kv := mw3Field(lit, "Expiration"); kv != nil {
@@ -136,6 +141,29 @@ func (p *mw3SessionConfigPass) configLit(lit *ast.CompositeLit) {
 		}
 	}
 	mw3AddElement(g, &p.edits, lit, p.idleTimeout())
+}
+
+// sameSite keeps the cookie v2 sent for a "disabled" SameSite. v2 knew only
+// strict, none and, for anything else, lax; v3 takes disabled for no attribute
+// at all, which is weaker than the cookie the application had.
+func (p *mw3SessionConfigPass) sameSite(kv *ast.KeyValueExpr, stack []ast.Node) {
+	g := p.f.g
+	disabled := false
+	if sel, ok := kv.Value.(*ast.SelectorExpr); ok && sel.Sel.Name == "CookieSameSiteDisabled" {
+		id, isIdent := sel.X.(*ast.Ident)
+		disabled = isIdent && slices.Contains(p.f.fiber, id.Name)
+	} else if value, ok := p.f.strings().value(kv.Value, stack); ok {
+		disabled = strings.EqualFold(value, "disabled")
+	}
+	if !disabled {
+		return
+	}
+
+	p.edits.replaceNode(g, kv.Value, `"Lax"`)
+	p.imports.releaseIn(g, kv.Value)
+	internal.Notef(p.fi, g.line(kv.Pos()),
+		`CookieSameSite %s sent SameSite=Lax in v2, where only strict and none were told apart; v3 would send no SameSite attribute, so it was set to "Lax" to keep the cookie you had. `+
+			`Use "Disabled" to leave the attribute out.`, g.text(kv.Value))
 }
 
 // newCall keeps the lifetime of a store made by session.New, whose config is

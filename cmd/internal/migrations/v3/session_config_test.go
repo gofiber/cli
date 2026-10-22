@@ -472,3 +472,97 @@ func fromLibrary() *session.Store {
 	assert.Equal(t, 9, res.notes[0].Line)
 	assert.Equal(t, 12, res.notes[1].Line)
 }
+
+// v2 told strict and none apart and sent lax for anything else, "disabled"
+// included; v3 would send no SameSite at all for it.
+func Test_MigrateSessionConfig_KeepsTheSameSiteV2Sent(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+const mode = "Disabled"
+
+var a = session.New(session.Config{Expiration: time.Hour, CookieSameSite: fiber.CookieSameSiteDisabled})
+
+var b = session.New(session.Config{Expiration: time.Hour, CookieSameSite: "disabled"})
+
+var c = session.New(session.Config{Expiration: time.Hour, CookieSameSite: mode})
+
+var d = session.New(session.Config{Expiration: time.Hour, CookieSameSite: fiber.CookieSameSiteStrictMode})
+
+var e = session.New(session.Config{Expiration: time.Hour, CookieSameSite: "None"})
+`, v3.MigrateSessionConfig)
+
+	assert.Equal(t, `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+const mode = "Disabled"
+
+var a = session.New(session.Config{IdleTimeout: time.Hour, CookieSameSite: "Lax"})
+
+var b = session.New(session.Config{IdleTimeout: time.Hour, CookieSameSite: "Lax"})
+
+var c = session.New(session.Config{IdleTimeout: time.Hour, CookieSameSite: "Lax"})
+
+var d = session.New(session.Config{IdleTimeout: time.Hour, CookieSameSite: fiber.CookieSameSiteStrictMode})
+
+var e = session.New(session.Config{IdleTimeout: time.Hour, CookieSameSite: "None"})
+`, got)
+	require.Len(t, res.notes, 3)
+	assert.Contains(t, res.notes[0].Message, "CookieSameSite fiber.CookieSameSiteDisabled sent SameSite=Lax in v2")
+
+	// A second run finds nothing left to do.
+	again, second := mw3RunOne(t, got, v3.MigrateSessionConfig)
+	assert.Equal(t, got, again)
+	assert.Empty(t, second.out)
+	assert.Empty(t, second.notes)
+}
+
+// The constant was the only use of the fiber import, which goes with it.
+func Test_MigrateSessionConfig_SameSiteDropsTheFiberImport(t *testing.T) {
+	t.Parallel()
+
+	got, res := mw3RunOne(t, `package main
+
+import (
+	"time"
+
+	f "github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New(session.Config{
+	Expiration:     time.Hour,
+	CookieSameSite: f.CookieSameSiteDisabled,
+})
+`, v3.MigrateSessionConfig)
+
+	assert.Equal(t, `package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2/middleware/session"
+)
+
+var store = session.New(session.Config{
+	IdleTimeout:    time.Hour,
+	CookieSameSite: "Lax",
+})
+`, got)
+	require.Len(t, res.notes, 1)
+	assert.Equal(t, 12, res.notes[0].Line)
+}
