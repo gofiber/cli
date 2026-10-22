@@ -69,7 +69,7 @@ func main() {
 }
 `)
 
-			contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
+			contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor, v3.MigrateJWTClaims)
 
 			content := readFile(t, file)
 			contribRequireParses(t, content)
@@ -82,7 +82,7 @@ func main() {
 
 			notes := internal.DrainNotes(dir)
 			require.Len(t, notes, 1)
-			assert.Contains(t, notes[0].Message, "golang-jwt/jwt v4")
+			assert.Contains(t, notes[0].Message, "github.com/golang-jwt/jwt/v4")
 		})
 	}
 }
@@ -165,7 +165,8 @@ var _ jwt.Claims
 	assert.Empty(t, internal.DrainNotes(dir))
 }
 
-// A file that never imports the standalone module keeps its golang-jwt import.
+// MigrateContribPackages moves the imports of the middleware and nothing else: the
+// golang-jwt import of a file moves with MigrateJWTClaims.
 func Test_MigrateContribPackages_GolangJWTVersionOfOtherFiles(t *testing.T) {
 	contribVersions(t, map[string]string{"jwt": "v1.2.6"})
 	dir := t.TempDir()

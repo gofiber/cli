@@ -404,9 +404,10 @@ var jwtLegacyAlgs = []string{
 }
 
 // jwtLegacy migrates what a file written for the standalone gofiber/jwt module
-// needs besides the path of its import: the key of the config, the golang-jwt
-// version and the message of the error for a missing token. It runs while the
-// import is moved, since afterwards nothing tells which module the file used.
+// needs besides the path of its import: the key of the config and the message of
+// the error for a missing token. It runs while the import is moved, since
+// afterwards nothing tells which module the file used. The JWT library of the
+// project moves with MigrateJWTClaims, in every file that uses it.
 func (f *contribFile) jwtLegacy() {
 	var legacy []contribImport
 	var names []string
@@ -424,7 +425,6 @@ func (f *contribFile) jwtLegacy() {
 		f.jwtLegacyConfig(c)
 	}
 	f.jwtErrors(legacy)
-	f.jwtLegacyImports()
 }
 
 // jwtLegacyConfig moves the key of a config of the standalone gofiber/jwt module.
@@ -461,17 +461,4 @@ func (f *contribFile) jwtLegacyAlg(e ast.Expr, pkg string) string {
 		return strconv.Quote(sel.Sel.Name)
 	}
 	return f.g.text(e)
-}
-
-// jwtLegacyImports moves the golang-jwt import of a file that used the standalone
-// module from v4 to v5: contrib/v3/jwt hands tokens and claims of v5 over.
-func (f *contribFile) jwtLegacyImports() {
-	for _, spec := range f.g.file.Imports {
-		if contribUnquote(spec.Path.Value) != "github.com/golang-jwt/jwt/v4" {
-			continue
-		}
-		f.edits.replaceNode(f.g, spec.Path, strconv.Quote("github.com/golang-jwt/jwt/v5"))
-		f.notef(spec.Pos(), "the standalone gofiber/jwt module used golang-jwt/jwt v4 and contrib/v3/jwt uses v5, "+
-			"so this import moved to v5 (jwt.StandardClaims is jwt.RegisteredClaims there)")
-	}
 }
