@@ -311,7 +311,24 @@ func (ix *appIndex) fiberImportPath(near *appFile) string {
 // appFiberV3Path is the import path of the fiber package a migrated project uses.
 const appFiberV3Path = "github.com/gofiber/fiber/v3"
 
-// apply adds the collected imports to content.
+// spec is the text of the import spec: the optional alias and the quoted path.
+func (r appImportReq) spec() string {
+	if r.alias != "" {
+		return r.alias + " " + strconv.Quote(r.path)
+	}
+	return strconv.Quote(r.path)
+}
+
+// appStdlibPath reports whether path is a package of the standard library: the
+// first element of the paths of everything else is a domain.
+func appStdlibPath(path string) bool {
+	first, _, _ := strings.Cut(path, "/")
+	return !strings.Contains(first, ".")
+}
+
+// apply adds the collected imports to content. A new import goes in front of
+// the first import of its own kind (standard library or not) so that it joins
+// that group; the later formatting sorts it into place.
 func (a *appImports) apply(content string) string {
 	if len(a.reqs) == 0 {
 		return content
@@ -324,35 +341,117 @@ func (a *appImports) apply(content string) string {
 
 	var specs strings.Builder
 	for _, req := range a.reqs {
-		specs.WriteString("\t") //nolint:errcheck // WriteString never returns an error
-		if req.alias != "" {
-			specs.WriteString(req.alias + " ") //nolint:errcheck // WriteString never returns an error
-		}
-		specs.WriteString(strconv.Quote(req.path) + "\n") //nolint:errcheck // WriteString never returns an error
-	}
-
-	var imports *ast.GenDecl
-	for _, d := range g.file.Decls {
-		if gd, isGen := d.(*ast.GenDecl); isGen && gd.Tok == token.IMPORT {
-			imports = gd
-			if gd.Lparen.IsValid() {
-				break
-			}
-		}
+		specs.WriteString("\t" + req.spec() + "\n") //nolint:errcheck // WriteString never returns an error
 	}
 
 	var edits editSet
-	switch {
-	case imports != nil && imports.Lparen.IsValid():
-		at := g.offset(imports.Lparen) + 1
-		edits.replace(at, at, "\n"+strings.TrimSuffix(specs.String(), "\n"))
-	case imports != nil:
-		edits.replaceNode(g, imports, "import (\n"+strings.TrimPrefix(g.text(imports), "import ")+"\n"+specs.String()+")")
-	default:
+	switch decl := appImportTarget(g.file); {
+	case decl == nil:
 		at := g.offset(g.file.Name.End())
+		for _, d := range g.file.Decls {
+			if gd, isGen := d.(*ast.GenDecl); isGen && gd.Tok == token.IMPORT {
+				at = g.offset(gd.End())
+			}
+		}
 		edits.replace(at, at, "\n\nimport (\n"+specs.String()+")")
+	case decl.Lparen.IsValid():
+		appInsertSpecs(g, &edits, decl, a.reqs)
+	default:
+		edits.replaceNode(g, decl, "import (\n\t"+strings.TrimPrefix(g.text(decl), "import ")+"\n"+specs.String()+")")
 	}
 	return edits.apply(content)
+}
+
+// appImportTarget returns the import declaration that new imports go into: the
+// first parenthesized one, else the first single one. `import "C"` is never
+// reshaped, the comment in front of it is the C code of cgo.
+func appImportTarget(file *ast.File) *ast.GenDecl {
+	var target *ast.GenDecl
+	for _, d := range file.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.IMPORT {
+			continue
+		}
+		if gd.Lparen.IsValid() {
+			return gd
+		}
+		if target == nil && !appIsCgoImport(gd) {
+			target = gd
+		}
+	}
+	return target
+}
+
+func appIsCgoImport(decl *ast.GenDecl) bool {
+	if len(decl.Specs) != 1 {
+		return false
+	}
+	spec, ok := decl.Specs[0].(*ast.ImportSpec)
+	return ok && spec.Path.Value == `"C"`
+}
+
+// appInsertSpecs adds the imports to the parenthesized declaration decl.
+func appInsertSpecs(g *goSource, edits *editSet, decl *ast.GenDecl, reqs []appImportReq) {
+	type insertion struct {
+		text strings.Builder
+		at   int
+	}
+	var inserts []*insertion
+
+	for _, req := range reqs {
+		at, head := appSpecsStart(g, decl, appStdlibPath(req.path))
+		var ins *insertion
+		for _, other := range inserts {
+			if other.at == at {
+				ins = other
+				break
+			}
+		}
+		if ins == nil {
+			ins = &insertion{at: at}
+			ins.text.WriteString(head) //nolint:errcheck // WriteString never returns an error
+			inserts = append(inserts, ins)
+		}
+		ins.text.WriteString("\t" + req.spec() + "\n") //nolint:errcheck // WriteString never returns an error
+	}
+	for _, ins := range inserts {
+		edits.replace(ins.at, ins.at, ins.text.String())
+	}
+}
+
+// appSpecsStart returns where a new import of the given kind goes in decl, and
+// the text that has to come before it. With an import of its own kind in the
+// declaration the new one goes in front of it, in the same group. Otherwise it
+// is a group of its own: first for the standard library, last for the rest.
+func appSpecsStart(g *goSource, decl *ast.GenDecl, stdlib bool) (at int, head string) {
+	for _, s := range decl.Specs {
+		spec, ok := s.(*ast.ImportSpec)
+		if !ok {
+			continue
+		}
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || appStdlibPath(path) != stdlib {
+			continue
+		}
+
+		first := spec.Pos()
+		if spec.Doc != nil {
+			first = spec.Doc.Pos() // the comment stays with its import
+		}
+		off := g.offset(first)
+		if start := appLineStart(g.src, off); strings.TrimSpace(g.src[start:off]) == "" {
+			return start, ""
+		}
+		break // it shares its line with something else
+	}
+
+	if !stdlib && decl.Rparen.IsValid() {
+		off := g.offset(decl.Rparen)
+		if start := appLineStart(g.src, off); strings.TrimSpace(g.src[start:off]) == "" {
+			return start, "\n"
+		}
+	}
+	return g.offset(decl.Lparen) + 1, "\n"
 }
 
 // constString evaluates e when it is a constant string made of literals, string
