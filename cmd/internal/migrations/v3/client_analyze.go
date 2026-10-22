@@ -37,6 +37,16 @@ func (f *clientFile) migrate(u *clientUnit) {
 		f.bailShared(u, reason)
 		return
 	}
+	if f.holdsBailed(u) && f.shimOK() {
+		// The code that is replaced holds a request that stays on the copy: its
+		// names cannot be changed inside the new code.
+		if f.dry {
+			f.bail(u, "it contains a request that stays on the copy")
+		} else {
+			f.bailShared(u, "it contains a request that stays on the copy of the Fiber v2 agent in "+clientShimFile+", so this request does too")
+		}
+		return
+	}
 	f.emit(u)
 }
 
@@ -59,6 +69,7 @@ func (f *clientFile) bail(u *clientUnit, reason clientUnsupported) {
 	line := f.line(u.rootNode())
 	if f.shimOK() {
 		f.shimNoted = true
+		f.markCopied(u)
 		f.notef(line, "%s; this request still runs on the copy of the Fiber v2 agent in %s", reason, clientShimFile)
 		return
 	}
@@ -71,7 +82,62 @@ func (f *clientFile) bail(u *clientUnit, reason clientUnsupported) {
 // because it shares its agent or its client with requests that cannot.
 func (f *clientFile) bailShared(u *clientUnit, note string) {
 	f.shimNoted = true
+	f.markCopied(u)
 	f.notef(f.line(u.rootNode()), "%s", note)
+}
+
+// markCopied records the fiber members of a request that stays on the copy.
+func (f *clientFile) markCopied(u *clientUnit) {
+	for _, n := range u.nodes() {
+		ast.Inspect(n, func(c ast.Node) bool {
+			if sel, ok := c.(*ast.SelectorExpr); ok && f.isFiberName(sel.X) {
+				f.copied[sel] = true
+			}
+			return true
+		})
+	}
+}
+
+// holdsBailed reports whether the code the migration would write anew for the
+// request holds a request that was kept as it is.
+func (f *clientFile) holdsBailed(u *clientUnit) bool {
+	found := false
+	for _, n := range u.nodes() {
+		ast.Inspect(n, func(c ast.Node) bool {
+			if sel, ok := c.(*ast.SelectorExpr); ok && (f.copied[sel] || f.reported[sel]) {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
+}
+
+// nodes returns the code of the request that the migration writes anew.
+func (u *clientUnit) nodes() []ast.Node {
+	var nodes []ast.Node
+	if u.root.sel != nil {
+		nodes = append(nodes, u.root.sel)
+	}
+	for _, it := range u.items {
+		nodes = append(nodes, it.replaced())
+	}
+	if u.create != nil {
+		nodes = append(nodes, u.create)
+	}
+	if u.retExpr != nil {
+		nodes = append(nodes, u.retExpr)
+	}
+	return nodes
+}
+
+// replaced returns the code of the statement that the migration writes anew: the
+// init statement of an if that sends the request, and otherwise the statement.
+func (it *clientItem) replaced() ast.Node {
+	if it.term != nil && it.term.ifStmt != nil && it.term.assign != nil {
+		return it.term.assign
+	}
+	return it.stmt
 }
 
 // markBailed records that the fiber members of the request are left to the

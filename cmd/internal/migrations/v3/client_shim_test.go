@@ -335,6 +335,164 @@ func unrelated(url string) {
 			},
 		},
 		{
+			name: "a_helper_result_that_goes_to_an_agent_parameter_is_followed",
+			files: map[string]string{
+				"agents.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newReq(url string) *fiber.Agent {
+	return fiber.Get(url).Set("Accept", "application/json")
+}
+
+func wrapped(url string) *fiber.Agent {
+	return newReq(url)
+}
+
+func send(a *fiber.Agent) ([]byte, error) {
+	_, body, errs := a.Bytes()
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return body, nil
+}
+`,
+				"main.go": `package main
+
+func fetch(url string) ([]byte, error) {
+	return send(wrapped(url))
+}
+`,
+			},
+			want: map[string]string{
+				"agents.go": `package main
+
+import "github.com/gofiber/fiber/v3/client"
+
+func newReq(url string) *client.Request {
+	return client.C().R().SetMethod("GET").SetURL(url).SetHeader("Accept", "application/json")
+}
+
+func wrapped(url string) *client.Request {
+	return newReq(url)
+}
+
+func send(a *client.Request) ([]byte, error) {
+	resp, err := a.Send()
+	if err != nil {
+		return nil, err
+	}
+	body := resp.Body()
+	return body, nil
+}
+`,
+				"main.go": `package main
+
+func fetch(url string) ([]byte, error) {
+	return send(wrapped(url))
+}
+`,
+			},
+		},
+		{
+			name: "a_helper_result_that_goes_to_a_method_is_not",
+			files: map[string]string{
+				"agents.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newReq(url string) *fiber.Agent {
+	return fiber.Get(url)
+}
+`,
+				"main.go": `package main
+
+type sender struct{}
+
+func (sender) send(a any) {}
+
+func fetch(s sender, url string) {
+	s.send(newReq(url))
+}
+`,
+			},
+			want: map[string]string{
+				"agents.go": `package main
+
+func newReq(url string) *fiberMigrateAgent {
+	return fiberMigrateGet(url)
+}
+`,
+			},
+			notes: []string{
+				"agents.go:6: " + clientShareNote,
+			},
+		},
+		{
+			name: "a_request_inside_a_migrated_one",
+			files: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func nested(u1, u2 string) {
+	if code, body, errs := fiber.Get(u1).Bytes(); len(errs) == 0 {
+		fmt.Println(code, string(body))
+		_, body2, errs2 := fiber.Get(u2).Host("virtual.example.com").Bytes()
+		fmt.Println(string(body2), errs2)
+	}
+}
+
+func inArgument(u1, u2 string) {
+	fmt.Println(fiber.Get(u1).Set("X-A", func() string {
+		_, b, _ := fiber.Get(u2).Host("h").String()
+		return b
+	}()).String())
+}
+`,
+			},
+			want: map[string]string{
+				"main.go": `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v3/client"
+)
+
+func nested(u1, u2 string) {
+	resp, err := client.Get(u1)
+	var code int
+	var body []byte
+	if err == nil {
+		code = resp.StatusCode()
+		body = resp.Body()
+	}
+	if err == nil {
+		fmt.Println(code, string(body))
+		_, body2, errs2 := fiberMigrateGet(u2).Host("virtual.example.com").Bytes()
+		fmt.Println(string(body2), errs2)
+	}
+}
+
+func inArgument(u1, u2 string) {
+	fmt.Println(fiberMigrateGet(u1).Set("X-A", func() string {
+		_, b, _ := fiberMigrateGet(u2).Host("h").String()
+		return b
+	}()).String())
+}
+`,
+			},
+			notes: []string{
+				"main.go:12: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+				"main.go:19: Host(): the v3 client cannot send a Host header that differs from the URL" + clientShimNote,
+			},
+		},
+		{
 			name: "form_files_outside_of_a_request",
 			files: map[string]string{
 				"main.go": `package main

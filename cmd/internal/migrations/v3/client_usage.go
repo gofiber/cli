@@ -69,6 +69,9 @@ type clientFile struct {
 	reported map[ast.Node]bool
 	intro    map[ast.Node]map[string]bool
 	errsGone map[ast.Node]map[string]bool
+	// copied are the fiber members of the requests that stay on the copy of the v2
+	// agent.
+	copied map[*ast.SelectorExpr]bool
 	// helperCalls are the calls of functions that return an agent, which a
 	// request was made of.
 	helperCalls map[*ast.CallExpr]bool
@@ -122,6 +125,7 @@ func clientMigrateContent(content string, fi internal.FileInfo, pkgs *clientPack
 		reported:    map[ast.Node]bool{},
 		intro:       map[ast.Node]map[string]bool{},
 		errsGone:    map[ast.Node]map[string]bool{},
+		copied:      map[*ast.SelectorExpr]bool{},
 		helperCalls: map[*ast.CallExpr]bool{},
 		viaClient:   map[*ast.SelectorExpr]bool{},
 	}

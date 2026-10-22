@@ -42,14 +42,8 @@ func (e *clientEmit) markHandled() {
 			return true
 		})
 	}
-	for _, it := range u.items {
-		mark(it.stmt)
-	}
-	if u.create != nil {
-		mark(u.create)
-	}
-	if u.retExpr != nil {
-		mark(u.retExpr)
+	for _, n := range u.nodes() {
+		mark(n)
 	}
 	for _, op := range u.allOps() {
 		for _, ff := range op.files {

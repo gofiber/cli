@@ -670,6 +670,13 @@ func Test_Agent_Response(t *testing.T) {
 		require.Len(t, errs, 1)
 		assert.Zero(t, code)
 		assert.Empty(t, str)
+
+		var out map[string]any
+		code, body, errs = fiberMigrateGet("http://127.0.0.1:1").Struct(&out)
+		require.Len(t, errs, 1, "there is nothing to decode")
+		assert.Zero(t, code)
+		assert.Empty(t, body)
+		assert.Nil(t, out)
 	})
 }
 
@@ -1049,4 +1056,92 @@ func Test_Agent_HostClient(t *testing.T) {
 	_, _, errs := a.Bytes()
 	require.Len(t, errs, 1)
 	assert.True(t, dialed.Load())
+}
+
+// brokenWriter is a multipart writer whose calls fail the way it was told to.
+type brokenWriter struct {
+	boundary, field, file, write, closing error
+}
+
+func (b brokenWriter) Boundary() string { return "boundary" }
+
+func (b brokenWriter) SetBoundary(string) error { return b.boundary }
+
+func (b brokenWriter) CreateFormFile(string, string) (io.Writer, error) {
+	if b.file != nil {
+		return nil, b.file
+	}
+	return failingWriter{err: b.write}, nil
+}
+
+func (b brokenWriter) WriteField(string, string) error { return b.field }
+
+func (b brokenWriter) Close() error { return b.closing }
+
+// failingWriter is an io.Writer that fails with its error.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func Test_Agent_MultipartErrors(t *testing.T) {
+	t.Parallel()
+
+	errBoundary := errors.New("boundary")
+	errField := errors.New("field")
+	errFile := errors.New("file")
+	errWrite := errors.New("write")
+	errClose := errors.New("close")
+
+	args := &fasthttp.Args{}
+	args.Set("k", "v")
+
+	tests := []struct {
+		name string
+		mw   brokenWriter
+		want []error
+	}{
+		{name: "boundary", mw: brokenWriter{boundary: errBoundary}, want: []error{errBoundary}},
+		{name: "field", mw: brokenWriter{field: errField}, want: []error{errField}},
+		{name: "file", mw: brokenWriter{file: errFile}, want: []error{errFile}},
+		{name: "content of the file", mw: brokenWriter{write: errWrite}, want: []error{errWrite}},
+		{name: "close", mw: brokenWriter{closing: errClose}, want: []error{errClose}},
+		{name: "all of them", mw: brokenWriter{field: errField, write: errWrite, closing: errClose}, want: []error{errField, errWrite, errClose}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := newRecorder(t, nil)
+			a := fiberMigratePost(rec.srv.URL)
+			a.mw = tt.mw
+			a.Boundary("custom")
+			a.FileData(&fiberMigrateFormFile{Fieldname: "f", Name: "n", Content: []byte("c")})
+			a.MultipartForm(args)
+
+			_, _, errs := a.Bytes()
+			assert.Equal(t, tt.want, errs, "a request with an error is not sent")
+			assert.Zero(t, rec.hits.Load())
+		})
+	}
+}
+
+func Test_Agent_StructOfAnAgentWithoutDecoder(t *testing.T) {
+	t.Parallel()
+
+	rec := newRecorder(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, err := io.WriteString(w, `{"name":"n"}`)
+		assert.NoError(t, err)
+	})
+
+	// An agent that no client made has no decoder.
+	a := &fiberMigrateAgent{req: &fasthttp.Request{}}
+	a.Request().SetRequestURI(rec.srv.URL)
+	require.NoError(t, a.Parse())
+
+	var out struct {
+		Name string `json:"name"`
+	}
+	_, _, errs := a.Struct(&out)
+	require.Empty(t, errs)
+	assert.Equal(t, "n", out.Name)
 }

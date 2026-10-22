@@ -130,20 +130,42 @@ func (f *clientFile) scanReferences() {
 }
 
 // isFollowedRef reports whether the identifier of a function that returns an
-// agent is not a use of the function the migration cannot follow: its
-// declaration, the name of a field or method, or a call whose result a request
-// was made of.
+// agent is a use of the function the migration follows: a call whose result a
+// request was made of, one that goes to a parameter of a function of the package
+// that takes an agent, or one that is returned by a function of the package that
+// returns an agent; or it only names the function (its declaration, a field or a
+// method).
 func (f *clientFile) isFollowedRef(id *ast.Ident, stack []ast.Node) bool {
+	if clientIsName(id, stack) {
+		return true
+	}
 	if len(stack) == 0 {
 		return false
 	}
-	switch parent := stack[len(stack)-1].(type) {
-	case *ast.FuncDecl:
-		return parent.Name == id
-	case *ast.SelectorExpr:
-		return parent.Sel == id
-	case *ast.CallExpr:
-		return parent.Fun == ast.Expr(id) && f.helperCalls[parent]
+	call, ok := stack[len(stack)-1].(*ast.CallExpr)
+	if !ok || call.Fun != ast.Expr(id) {
+		return false
+	}
+	return f.helperCalls[call] || f.pkgs.get(f.dir(), f.pkgName()).agentResultFollowed(id, stack) || f.returnedByAgentFunc(call, stack[:len(stack)-1])
+}
+
+// returnedByAgentFunc reports whether the call is the result a function of the
+// package returns, and the function returns an agent.
+func (f *clientFile) returnedByAgentFunc(call *ast.CallExpr, ancestors []ast.Node) bool {
+	if len(ancestors) == 0 {
+		return false
+	}
+	ret, ok := ancestors[len(ancestors)-1].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 || ret.Results[0] != ast.Expr(call) {
+		return false
+	}
+	for _, n := range slices.Backward(ancestors) {
+		switch fn := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.FuncDecl:
+			return fn.Recv == nil && clientReturnsAgent(fn.Type, f.fiber)
+		}
 	}
 	return false
 }
