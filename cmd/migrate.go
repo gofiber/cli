@@ -45,6 +45,10 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&excludeFiles, "exclude", nil, "Comma-separated list of files to exclude. Supports glob and regex patterns")
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		// The flags are fine: what can go wrong from here on is the project, and the
+		// message about it must not be buried under the list of flags.
+		cmd.SilenceUsage = true
+
 		tps := make([]ThirdPartyParam, 0, len(thirdParty))
 		for _, tp := range thirdParty {
 			parts := strings.SplitN(tp, "@", 2)
@@ -93,9 +97,9 @@ type ThirdPartyParam struct {
 }
 
 func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
-	currentVersionS, err := currentVersionFromFile(opts.CurrentVersionFile)
+	currentVersionS, err := currentVersionOf(opts.CurrentVersionFile)
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%s was not found in the current directory, run fiber migrate in the directory of the module to migrate: %w", opts.CurrentVersionFile, err)
+		return fmt.Errorf("%s was not found in the current directory or below it, run fiber migrate in the directory of the module to migrate: %w", opts.CurrentVersionFile, err)
 	}
 	if err != nil {
 		return fmt.Errorf("current fiber project version not found: %w", err)

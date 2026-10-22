@@ -658,7 +658,51 @@ func Test_Migrate_NoGoMod(t *testing.T) {
 	cmd := newMigrateCmd()
 	setupCmd()
 	defer teardownCmd()
-	_, err = runCobraCmd(cmd, "-t=3.0.0")
+	out, err := runCobraCmd(cmd, "-t=3.0.0")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "go.mod was not found in the current directory")
+	assert.NotContains(t, out, "Usage:", "an error about the project is no reason to list the flags")
+}
+
+// A repository of several modules is migrated from its root, which has no go.mod
+// of its own (a go.work holds the modules together): the oldest fiber version of
+// the modules below it is where the migration starts, and every module is moved.
+func Test_Migrate_RepositoryWithoutRootGoMod(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"go.work":               "go 1.22\n\nuse (\n\t./api\n\t./tools\n)\n",
+		"api/go.mod":            goModV2,
+		"api/main.go":           "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\nfunc main() { _ = fiber.New() }\n",
+		"tools/go.mod":          "module tools\n\ngo 1.22\n",
+		"tools/main.go":         "package main\n\nfunc main() {}\n",
+		"worker/go.mod":         "module worker\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v2 v2.40.0\n",
+		"worker/main.go":        "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\nfunc main() { _ = fiber.New() }\n",
+		"vendor/x/go.mod":       "module x\n\nrequire github.com/gofiber/fiber/v2 v2.1.0\n",
+		"node_modules/y/go.mod": "module y\n\nrequire github.com/gofiber/fiber/v2 v2.2.0\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	cmd := newMigrateCmd()
+	setupCmd()
+	defer teardownCmd()
+	out, err := runCobraCmd(cmd, "-t=3.0.0")
+	require.NoError(t, err)
+
+	// v2.0.6 of api is the oldest the walk finds (vendor and node_modules are not entered).
+	assert.Contains(t, out, "Migration from Fiber 2.0.6 to 3.0.0")
+	for _, module := range []string{"api", "worker"} {
+		assert.Contains(t, readFileTB(t, filepath.Join(dir, module, "go.mod")), "github.com/gofiber/fiber/v3 v3.0.0", module)
+		assert.Contains(t, readFileTB(t, filepath.Join(dir, module, "main.go")), "github.com/gofiber/fiber/v3", module)
+	}
+	assert.NotContains(t, readFileTB(t, filepath.Join(dir, "tools", "go.mod")), "fiber")
 }

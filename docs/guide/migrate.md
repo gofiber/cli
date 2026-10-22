@@ -9,6 +9,10 @@ The `fiber migrate` command upgrades an existing Fiber project to a newer
 It determines the current version from your `go.mod` file and applies any
 necessary migration steps.
 
+Run it in the directory of the module. In the root of a repository that has no
+`go.mod` of its own (several modules, with or without a `go.work`), it starts from the
+oldest Fiber version the modules below it require and migrates all of them.
+
 ## Usage
 
 ```bash
@@ -53,6 +57,15 @@ is idempotent, so a second run changes nothing that the first one already migrat
 - Where v3 has no faithful equivalent, the old code stays and a note says why. When
   dropping a setting would change what the program does without a compile error, the
   old setting stays on purpose, so that the build fails and points at it.
+- A setting that v3 has no field for, but that a few lines of code reproduce, gets those
+  lines. A token lookup with a prefix in front of the token (`AuthScheme` of the jwt
+  middleware, `TokenPrefix` of paseto, on a header other than `Authorization` or in a
+  cookie or the query) becomes an `extractors.FromCustom` that takes the prefix off the
+  way v2 did, and a session `KeyLookup` that is only known when the program runs becomes
+  a function that reads it the way the v2 constructor did.
+- A type that embeds `fiber.Ctx` and declares a method of the name a rewrite introduces
+  (a `Redirect(to string)` or `Bind(v any)` of your own) is migrated through the embedded
+  context: `c.Ctx.Redirect().Back("/")`.
 - Where an explicit v3 setting reproduces the v2 default, the migration writes it:
   `IdleTimeout: 24 * time.Hour` for sessions, `ByteRange: true` for `SendFile`,
   `FailOnTimeout: true` for `app.Test`, the v2 expiration and `Cache-Control` defaults
