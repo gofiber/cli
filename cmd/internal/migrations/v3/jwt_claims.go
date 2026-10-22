@@ -692,8 +692,14 @@ func (p *jwtClaimsPass) validMethod(fn *ast.FuncDecl, libs map[string]jwtLib) {
 		fn.Type.Params.NumFields() != 0 || fn.Type.Results.NumFields() != 1 || !isIdentNamed(fn.Type.Results.List[0].Type, "error") {
 		return
 	}
-	field := p.claimsEmbedded(importsReceiverType(fn.Recv.List[0].Type), libs)
+	typ := importsReceiverType(fn.Recv.List[0].Type)
+	field, declared := p.claimsEmbedded(typ, libs)
 	if field == "" {
+		if declared {
+			p.notef(fn.Pos(), "%s has a Valid() error method, which v5 does not call, and embeds no standard claims: if it is used as claims, "+
+				"note that jwt.Claims is a set of getters in v5 (GetExpirationTime, GetIssuedAt, GetNotBefore, GetIssuer, GetSubject, GetAudience): "+
+				"embed jwt.RegisteredClaims, which has them, and rename the method Validate() error", typ)
+		}
 		return
 	}
 
@@ -716,10 +722,11 @@ func (p *jwtClaimsPass) validMethod(fn *ast.FuncDecl, libs map[string]jwtLib) {
 }
 
 // claimsEmbedded returns the name of the field through which the struct type of the
-// file embeds the standard claims of a library, "" when it embeds none.
-func (p *jwtClaimsPass) claimsEmbedded(typ string, libs map[string]jwtLib) string {
+// file embeds the standard claims of a library, "" when it embeds none. declared
+// says that the file declares the type as a struct, so that "embeds none" is known.
+func (p *jwtClaimsPass) claimsEmbedded(typ string, libs map[string]jwtLib) (field string, declared bool) {
 	if typ == "" {
-		return ""
+		return "", false
 	}
 	for _, decl := range p.g.file.Decls {
 		gd, ok := decl.(*ast.GenDecl)
@@ -733,7 +740,7 @@ func (p *jwtClaimsPass) claimsEmbedded(typ string, libs map[string]jwtLib) strin
 			}
 			st, isStruct := ts.Type.(*ast.StructType)
 			if !isStruct {
-				return ""
+				return "", false
 			}
 			for _, field := range st.Fields.List {
 				sel, isSel := field.Type.(*ast.SelectorExpr)
@@ -742,13 +749,14 @@ func (p *jwtClaimsPass) claimsEmbedded(typ string, libs map[string]jwtLib) strin
 				}
 				if id, isID := sel.X.(*ast.Ident); isID {
 					if _, known := libs[id.Name]; known {
-						return sel.Sel.Name
+						return sel.Sel.Name, true
 					}
 				}
 			}
+			return "", true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // isStandardCheck reports whether the statement is

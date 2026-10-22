@@ -504,6 +504,51 @@ func valid(token *jwt.Token) error { return token.Claims.Valid() }
 	assert.Equal(t, 1, countOf(messages, "took the Verify methods"), "once per file")
 }
 
+// A claims type with a Valid() of its own that embeds no standard claims has no
+// rewrite: v5 asks the type for the getters of the registered claims.
+func Test_MigrateJWTClaims_ClaimsWithoutStandardClaims(t *testing.T) {
+	dir := jwtModule(t, map[string]string{
+		"main.go": jwtMainFile,
+		"helper/helper.go": `package helper
+
+import "github.com/golang-jwt/jwt/v4"
+
+const Issuer = "app"
+
+type custom struct {
+	Name string
+	Exp  int64
+}
+
+func (c custom) Valid() error { return nil }
+
+type withStandard struct {
+	Name string
+	jwt.StandardClaims
+}
+
+func (c withStandard) Valid() error { return c.StandardClaims.Valid() }
+
+func (c *elsewhere) Valid() error { return nil }
+
+var _ jwt.Claims = custom{}
+`,
+		"helper/elsewhere.go": `package helper
+
+type elsewhere struct{ Name string }
+`,
+	})
+
+	helper := readFile(t, filepath.Join(dir, "helper", "helper.go"))
+	assert.Contains(t, helper, "func (c custom) Valid() error { return nil }", "no rewrite for a type that has no standard claims")
+	assert.Contains(t, helper, "func (c withStandard) Validate() error { return nil }")
+
+	notes := jwtNotesAbout(dir, "has a Valid() error method")
+	require.Len(t, notes, 1, "the type declared in another file is not reported")
+	assert.Contains(t, notes[0], "custom has a Valid() error method, which v5 does not call, and embeds no standard claims")
+	assert.Contains(t, notes[0], "embed jwt.RegisteredClaims, which has them, and rename the method Validate() error")
+}
+
 // A name the file declares is no package: a variable called jwt does not make the
 // library of the file hide.
 func Test_MigrateJWTClaims_ALocalNamedLikeThePackage(t *testing.T) {
