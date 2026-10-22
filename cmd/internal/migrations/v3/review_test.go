@@ -157,7 +157,9 @@ func main() {
 }
 `})
 
-	assert.Empty(t, notes)
+	// Valid v3 code leaves nothing over; the only entry is the behavior note of the static middleware.
+	require.Len(t, notes, 1, "%v", notes)
+	assert.Contains(t, notes[0], "static: a directory without an index file answers 404 instead of 403")
 }
 
 func Test_Review_ClientCallsOnShadowedOrUnknownReceivers(t *testing.T) {
@@ -251,6 +253,26 @@ var _ = proxy.Config{}
 	assert.Contains(t, notes, "b.go:4: limiter: SkipFailedRequests and SkipSuccessfulRequests now judge the status a request ends with, errors included; in v2 only the response status counted, which is still 200 when a handler returns an error, so such requests now count as failed.")
 	assert.Contains(t, notes, "a.go:5: logger: the default Format changed to \"[${time}] ${ip} ${status} - ${latency} ${method} ${path} ${error}\"; set Format to keep the v2 layout.")
 	assert.Contains(t, notes, "a.go:6: proxy: Fiber v3 refuses upstreams that resolve to loopback or private addresses (SSRF protection), so proxying to localhost or an internal host panics at startup or answers 500. Allow them with proxy.WithSecurityPolicy(proxy.SecurityPolicy{AllowPrivateIPs: true}) or Config.SecurityPolicy.")
+}
+
+func Test_Review_StaticBehavior(t *testing.T) {
+	t.Parallel()
+
+	notes := reviewNotes(t, map[string]string{"main.go": `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/static"
+)
+
+func main() {
+	app := fiber.New()
+	app.Use("/", static.New("./public"))
+}
+`})
+
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "main.go:5: static: a directory without an index file answers 404 instead of 403")
 }
 
 func Test_Review_ContribBehaviorAndBrokenFiles(t *testing.T) {

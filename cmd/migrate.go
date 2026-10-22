@@ -37,7 +37,7 @@ func newMigrateCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&targetVersionS, "to", "t", "", "Migrate to a specific version. Default: latest")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force migration even if already on version")
-	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip running go mod tidy, download and vendor")
+	cmd.Flags().BoolVarP(&skipGoMod, "skip_go_mod", "s", false, "Skip the go.mod work: go mod tidy, download and vendor (vendor only runs for a project that has a vendor directory), and the go.mod edits for contrib modules")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringVar(&targetHash, "hash", "", "Commit hash for Fiber version")
 	cmd.Flags().StringSliceVar(&thirdParty, "third-party", nil, "Refresh third-party modules (contrib,storage,template). Use a comma-separated list like --third-party=contrib,storage and append @<commit> to pin a commit")
@@ -94,6 +94,9 @@ type ThirdPartyParam struct {
 
 func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 	currentVersionS, err := currentVersionFromFile(opts.CurrentVersionFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s was not found in the current directory, run fiber migrate in the directory of the module to migrate: %w", opts.CurrentVersionFile, err)
+	}
 	if err != nil {
 		return fmt.Errorf("current fiber project version not found: %w", err)
 	}

@@ -77,6 +77,10 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		message: "csrf: the default token lifetime (IdleTimeout, formerly Expiration) is 30 minutes instead of 1 hour, and unsafe requests with an invalid Sec-Fetch-Site header are rejected.",
 	},
 	{
+		pkg:     reviewMiddlewarePath("static"),
+		message: `static: a directory without an index file answers 404 instead of 403, the body of a missing file is "Not Found", and HEAD responses carry Cache-Control; check the clients and tests that depend on them.`,
+	},
+	{
 		pkg:     reviewContribPath("opa|opafiber"),
 		message: "opa: the v3 module evaluates policies as Rego v1; policies written for Rego v0 (for example `allow { ... }` without `if`) fail at startup. Convert them with `opa fmt --v0-v1`.",
 	},

@@ -646,3 +646,19 @@ func Test_Migrate_WithHash_RequireBlock(t *testing.T) {
 	gm := readFileTB(t, filepath.Join(dir, "go.mod"))
 	assert.Contains(t, gm, "github.com/gofiber/fiber/v3 v3.0.0-beta.5.0.20200102030405-abcdef123456")
 }
+
+func Test_Migrate_NoGoMod(t *testing.T) {
+	dir := t.TempDir()
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+	cmd := newMigrateCmd()
+	setupCmd()
+	defer teardownCmd()
+	_, err = runCobraCmd(cmd, "-t=3.0.0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "go.mod was not found in the current directory")
+}
