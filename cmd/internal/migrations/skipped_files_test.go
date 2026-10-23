@@ -138,3 +138,25 @@ func Test_DoMigration_NamesTheFilesItLeftAsTheyWere(t *testing.T) {
 	require.NoError(t, migrations.DoMigration(cmd, dir, semver.MustParse("2.52.0"), semver.MustParse("3.0.0"), true, false, nil, nil))
 	assert.NotContains(t, buf.String(), "Not migrated")
 }
+
+func Test_PrintSkippedFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := writeSkippedFixture(t)
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	migrations.PrintSkippedFiles(cmd, dir)
+	assert.Empty(t, buf.String(), "nothing to say about a run that skipped no file")
+
+	_, err := internal.ChangeFileContent(dir, breakA)
+	require.NoError(t, err)
+
+	migrations.PrintSkippedFiles(cmd, dir)
+	assert.Contains(t, buf.String(), "  a.go:")
+
+	buf.Reset()
+	migrations.PrintSkippedFiles(cmd, dir)
+	assert.Empty(t, buf.String(), "a file is named once")
+}

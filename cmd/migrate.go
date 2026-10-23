@@ -188,6 +188,8 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 			tpChanged = true
 		}
 	}
+	// the refresh of the third-party packages rewrites files too
+	migrations.PrintSkippedFiles(cmd, wd)
 	if tpChanged && !opts.SkipGoMod {
 		if err := internal.RunGoMod(wd); err != nil {
 			return fmt.Errorf("go mod: %w", err)

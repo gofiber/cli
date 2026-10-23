@@ -183,7 +183,7 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		}
 	}
 
-	printSkippedFiles(cmd, cwd)
+	PrintSkippedFiles(cmd, cwd)
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -192,9 +192,9 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	return nil
 }
 
-// printSkippedFiles names the files that a rewrite would have broken, which were left
+// PrintSkippedFiles names the files that a rewrite would have broken, which were left
 // as they were, so that they are not taken for migrated.
-func printSkippedFiles(cmd *cobra.Command, cwd string) {
+func PrintSkippedFiles(cmd *cobra.Command, cwd string) {
 	files := internal.DrainSkippedFiles(cwd)
 	if len(files) == 0 {
 		return
