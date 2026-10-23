@@ -128,8 +128,9 @@ type projectImport struct {
 	line int
 }
 
-// moduleImports returns the imports of the Go files of the module in dir, in the order of the walk. The files
-// of the modules below it, of vendor and of the directories the go command ignores are not part of it.
+// moduleImports returns the imports of the Go files of the module in dir, in the order of the walk, those of
+// the files of tests after those of the other files: the first import of a dependency is where the program uses
+// it. The files of the modules below it, of vendor and of the directories the go command ignores are not part of it.
 func moduleImports(root, dir string) []projectImport {
 	var out []projectImport
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // a directory that cannot be read has no imports to report
@@ -168,7 +169,18 @@ func moduleImports(root, dir string) []projectImport {
 		}
 		return nil
 	})
+	slices.SortStableFunc(out, func(a, b projectImport) int {
+		return boolOrder(strings.HasSuffix(a.file, "_test.go")) - boolOrder(strings.HasSuffix(b.file, "_test.go"))
+	})
 	return out
+}
+
+// boolOrder orders false before true.
+func boolOrder(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // depsPackage is a package that go list printed.

@@ -169,6 +169,26 @@ func Test_ReviewDependencies_NamesTheModuleThatReachesFiberV2ThroughAnother(t *t
 	assert.Contains(t, notes[0], "main.go:3: example.org/wrapper v1.2.0 is built for Fiber v2 (through example.org/legacy, whose package example.org/legacy imports github.com/gofiber/fiber/v2")
 }
 
+func Test_ReviewDependencies_TheFirstPlaceIsWhereTheProgramUsesIt(t *testing.T) {
+	dir := t.TempDir()
+	depsWrite(t, dir, "go.mod", depsGoMod)
+	// the walk reaches the test of the a package before the file of the z package
+	depsWrite(t, dir, "a/a_test.go", "package a\n\nimport _ \"github.com/gofiber/session/v2\"\n")
+	depsWrite(t, dir, "z/z.go", "package z\n\nimport (\n\t\"fmt\"\n\n\t_ \"github.com/gofiber/session/v2\"\n)\n\nvar _ = fmt.Sprint\n")
+	stubDepsGoList(t,
+		goListLine("github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v2", "v2.52.15", false)+
+			goListLine("github.com/gofiber/session/v2", "github.com/gofiber/session/v2", "v2.0.2", false, "github.com/gofiber/fiber/v2")+
+			goListLine("example.com/app/a [example.com/app/a.test]", "example.com/app", "", true, "github.com/gofiber/session/v2")+
+			goListLine("example.com/app/z", "example.com/app", "", true, "github.com/gofiber/session/v2"),
+		"", 0)
+
+	notes := depsNotes(t, dir, true)
+
+	require.Len(t, notes, 1, "%v", notes)
+	assert.Contains(t, notes[0], "z/z.go:6: github.com/gofiber/session/v2 v2.0.2 is built for Fiber v2")
+	assert.Contains(t, notes[0], "(also imported at a/a_test.go:3)")
+}
+
 func Test_ReviewDependencies_PackagesThatDoNotReachFiberV2AreNoDependenciesOnIt(t *testing.T) {
 	dir := t.TempDir()
 	depsWrite(t, dir, "go.mod", depsGoMod)
