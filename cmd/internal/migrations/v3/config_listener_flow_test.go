@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -831,4 +832,57 @@ func main() {
 	assert.Contains(t, main, `app.Listen(":3000", fibermigrate.ListenConfig(app))`)
 	require.Len(t, notes, 1)
 	assert.Contains(t, notes[0].Message, "main.Builder.cfg now holds a fibermigrate.Config")
+}
+
+// A field that a decoder of files or of the environment may fill is left alone: the
+// registry's config nests the settings of fiber.Config in an embedded struct, which
+// not every decoder reads through. Fields that no such decoder reaches are followed.
+func Test_MigrateConfigListenerFields_Flow_FieldsThatADecoderFills(t *testing.T) {
+	t.Parallel()
+
+	const program = `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Settings struct {
+	%[1]s fiber.Config %[2]s
+}
+
+func main() {
+	s := Settings{%[1]s: fiber.Config{DisableStartupMessage: true}}
+	fiber.New(s.%[1]s).Listen(":3000")
+}
+`
+	tests := []struct {
+		name   string
+		field  string
+		tag    string
+		reason string
+	}{
+		{name: "mapstructure", field: "Fiber", tag: "`mapstructure:\"fiber\"`", reason: "the field Fiber of Settings has a tag, so a decoder may fill it"},
+		{name: "yaml and json", field: "Fiber", tag: "`yaml:\"fiber\" json:\"fiber\"`", reason: "the field Fiber of Settings has a tag, so a decoder may fill it"},
+		{name: "json only", field: "Fiber", tag: "`json:\"fiber\"`"},
+		{name: "no tag", field: "Fiber"},
+		{name: "unexported", field: "fiber", tag: "`mapstructure:\"fiber\"`"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := fmt.Sprintf(program, tc.field, tc.tag)
+			dir := appSingle(t, src)
+
+			_, notes := shimMigrate(t, dir)
+
+			got := appRead(t, dir, "main.go")
+			if tc.reason != "" {
+				assert.Contains(t, got, "Settings{Fiber: fiber.Config{DisableStartupMessage: true}}", "the settings stay where they are")
+				require.NotEmpty(t, notes)
+				assert.Contains(t, strings.Join(shimNotes(notes), "\n"), tc.reason)
+				return
+			}
+			assert.Contains(t, got, tc.field+" fibermigrate.Config")
+			assert.Contains(t, got, "fibermigrate.New(s."+tc.field+")")
+		})
+	}
 }

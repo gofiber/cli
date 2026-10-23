@@ -3,6 +3,8 @@ package v3
 import (
 	"go/ast"
 	"slices"
+	"strconv"
+	"strings"
 )
 
 // scanVar follows the variable or parameter: the values it is given, and what the
@@ -296,6 +298,10 @@ func (fl *appFlow) scanField(td *appTypeDecl, name string, class appFlowClass) {
 		fl.failf(td.file, fld, "%s is embedded in %s", name, td.spec.Name.Name)
 		return
 	}
+	if class == flowConfig && appIsExported(name) && decodedByTag(fld.Tag) {
+		fl.failf(td.file, fld, "the field %s of %s has a tag, so a decoder may fill it, and not every decoder reads through the fiber.Config that fibermigrate.Config embeds", name, td.spec.Name.Name)
+		return
+	}
 	if !fl.retype(td.file, fld.Type, class) {
 		return
 	}
@@ -330,6 +336,26 @@ func (fl *appFlow) scanField(td *appTypeDecl, name string, class appFlowClass) {
 		}
 		fl.occurrence(s.file, sel, class)
 	}
+}
+
+// decodedByTag reports whether the tag of a field is one that a decoder of files or
+// of the environment reads (mapstructure, yaml, toml, env, ...). The JSON and XML
+// decoders of the standard library read the fields of an embedded struct as if they
+// were its own, so a tag of theirs alone is no reason.
+func decodedByTag(tag *ast.BasicLit) bool {
+	if tag == nil {
+		return false
+	}
+	text, err := strconv.Unquote(tag.Value)
+	if err != nil {
+		return true
+	}
+	for part := range strings.FieldsSeq(text) {
+		if key, _, ok := strings.Cut(part, ":"); ok && key != "json" && key != "xml" {
+			return true
+		}
+	}
+	return false
 }
 
 // fieldInLiteral follows what a struct literal gives to the field.
