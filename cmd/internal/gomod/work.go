@@ -36,6 +36,12 @@ func (w *WorkFile) RaiseGo(minimum string) bool {
 	})
 }
 
+// WorkPaths returns the go.work files below root in walk order. Directories named
+// vendor, node_modules and .git are not entered.
+func WorkPaths(root string) ([]string, error) {
+	return findFiles(root, WorkFileName)
+}
+
 // SyncWork raises the go line of every go.work file below root to the highest go
 // line of the modules it uses: the go command refuses a workspace whose go line
 // is lower than the one of a module in it, and the migrations raise the go line

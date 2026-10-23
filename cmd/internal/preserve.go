@@ -155,7 +155,7 @@ func lineMapper(oldLines, newLines []string) func(int) int {
 			case idx < h.aStart:
 				return idx + offset + 1
 			case idx < h.aEnd:
-				return h.bStart + replacedLine(oldLines[idx], idx-h.aStart, newLines[h.bStart:h.bEnd]) + 1
+				return h.bStart + replacedLine(oldLines[idx], idx-h.aStart, h.aEnd-h.aStart, newLines[h.bStart:h.bEnd]) + 1
 			}
 			offset = h.bEnd - h.aEnd
 		}
@@ -164,11 +164,17 @@ func lineMapper(oldLines, newLines []string) func(int) int {
 }
 
 // replacedLine says which of the lines that replaced a block of code stands for
-// line, which was the pos-th of the block: the one that has most of its words, if
-// that is most of them, otherwise the one at the same place in the new block (the
-// last, when the new block is shorter). It returns 0 when nothing replaced the line.
-func replacedLine(line string, pos int, replacement []string) int {
+// line, which was the pos-th of the block of size lines: the one that has most of
+// its words, if that is most of them, otherwise the one at the same place in the
+// new block (the last, when the new block is shorter). A block of one line that
+// became several is the construct it started, so the first line of the new block
+// stands for it, unless a line of it has almost all the words of the old one.
+func replacedLine(line string, pos, size int, replacement []string) int {
 	at := min(pos, max(len(replacement)-1, 0))
+	minScore := replacedLineSimilarity
+	if size == 1 {
+		minScore = replacedLineSingleSimilarity
+	}
 
 	words := lineWords(line)
 	if len(words) == 0 {
@@ -185,7 +191,7 @@ func replacedLine(line string, pos int, replacement []string) int {
 			}
 		}
 		score := float64(same) / float64(len(words))
-		if !long || score < replacedLineSimilarity {
+		if !long || score < minScore {
 			continue
 		}
 		if score > bestScore || (score == bestScore && abs(i-at) < abs(best-at)) {
@@ -199,8 +205,12 @@ func replacedLine(line string, pos int, replacement []string) int {
 }
 
 // replacedLineSimilarity is the share of the words of a line that another line
-// has to share for it to stand for the line.
-const replacedLineSimilarity = 0.6
+// has to share for it to stand for the line, and replacedLineSingleSimilarity the
+// share for a line that was a block of its own.
+const (
+	replacedLineSimilarity       = 0.6
+	replacedLineSingleSimilarity = 0.9
+)
 
 // lineWords returns the set of the identifiers and numbers of a line of code.
 func lineWords(line string) map[string]struct{} {

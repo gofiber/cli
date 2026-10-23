@@ -479,3 +479,33 @@ func Test_lineWords(t *testing.T) {
 	assert.Equal(t, map[string]struct{}{"log": {}, "Println": {}, "errs": {}, "42": {}, "_x": {}}, got)
 	assert.Empty(t, lineWords("\t}"))
 }
+
+func Test_lineMapper_ALineThatBecameABlockIsTheStartOfTheBlock(t *testing.T) {
+	t.Parallel()
+
+	oldLines := []string{
+		"store := session.NewStore(session.Config{",
+		"\tKeyLookup: lookup(\"header\", \"X-SID\"),",
+		"})",
+	}
+	newLines := []string{
+		"store := session.NewStore(session.Config{",
+		"\tExtractor: func(lookup string) extractors.Extractor {",
+		"\t\tswitch {",
+		"\t\t}",
+		"\t}(lookup(\"header\", \"X-SID\")),",
+		"})",
+	}
+
+	m := lineMapper(oldLines, newLines)
+	require.NotNil(t, m)
+	assert.Equal(t, 2, m(2), "the line the construct starts at, not the last line that has most of its words")
+	assert.Equal(t, 6, m(3))
+
+	// a line of the new block that has all the words of the old line is the one
+	oldLines = []string{"top", "\tx := f(a, b)", "bottom"}
+	newLines = []string{"top", "\tx := f(a, b, c)", "\tuse(x)", "bottom"}
+	m = lineMapper(oldLines, newLines)
+	require.NotNil(t, m)
+	assert.Equal(t, 2, m(2))
+}

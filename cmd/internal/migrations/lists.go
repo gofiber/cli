@@ -112,6 +112,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateStorageInterface,
 			v3migrations.MigrateTemplateVersions,
 			MigrateReplaceDirectives,
+			MigrateExternalModules,
 			v3migrations.MigrateSessionRelease,
 			v3migrations.MigrateSessionMethods,
 			v3migrations.MigrateKeyAuthConfig,
