@@ -340,3 +340,23 @@ func setup(app *fiber.App) {
 	assert.Contains(t, content, `app.Use(proxy.Balancer(proxy.Config{Servers: []string{"http://localhost:3002"}}))`)
 	assert.NotContains(t, content, "proxy.New")
 }
+
+// A file that holds no "proxy." because it gave the package another name is migrated too.
+func Test_MigrateRenamedIdentifiers_ProxyNewAliasedImport(t *testing.T) {
+	t.Parallel()
+
+	content, _ := migrateRenamed(t, `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	px "github.com/gofiber/fiber/v3/middleware/proxy"
+)
+
+func setup(app *fiber.App) {
+	app.Use(px.New(px.Config{Servers: []string{"http://localhost:3001"}}))
+}
+`)
+
+	assert.Contains(t, content, `app.Use(px.Balancer(px.Config{Servers: []string{"http://localhost:3001"}}))`)
+	assert.NotContains(t, content, "px.New")
+}

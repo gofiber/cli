@@ -26,11 +26,13 @@ var (
 )
 
 // renamedIdentifierHints are the texts a file holds when it may hold one of the identifiers
-// that MigrateRenamedIdentifiers changes. The other files are not parsed.
+// that MigrateRenamedIdentifiers changes. The other files are not parsed. A hint is the
+// identifier, or for proxy.New, which is no identifier of its own, the import path of the
+// package: a file may give the package another name.
 var renamedIdentifierHints = []string{
 	"ConstraintGuid", "HeaderFeaturePolicy", "IndexRune", "GenerateKey(", "DefaultLivenessEndpoint",
 	"DefaultReadinessEndpoint", "HealthChecker", "LimiterHandler", "FixedWindow", "SlidingWindow",
-	"ChartJsURL", "TlsConfig", ".Format(", "proxy.",
+	"ChartJsURL", "TlsConfig", ".Format(", `middleware/proxy"`,
 }
 
 // MigrateRenamedIdentifiers changes the identifiers of Fiber's packages that v3 renamed or
