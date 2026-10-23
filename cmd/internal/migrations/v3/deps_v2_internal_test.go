@@ -285,7 +285,7 @@ var _ = session.New
 	assert.Empty(t, *asked, "go.mod was not tidied: the go command is not run")
 	require.Len(t, notes, 2, "%v", notes)
 	for _, n := range notes {
-		assert.Contains(t, n, "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied by the migration, so the go command could not tell which packages reach Fiber v2: this comes from its go.mod in the module cache)")
+		assert.Contains(t, n, "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied by the migration, so it is not known which of its packages reach Fiber v2: this comes from its go.mod in the module cache)")
 	}
 	assert.Contains(t, notes[0]+notes[1], "main.go:4: github.com/ansrivas/fiberprometheus/v2 v2.6.1 requires")
 	assert.Contains(t, notes[0]+notes[1], "main.go:6: github.com/gofiber/session/v2 v2.0.2 requires")

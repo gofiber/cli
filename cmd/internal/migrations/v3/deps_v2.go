@@ -98,7 +98,7 @@ func reportDependency(root string, use *depsUse, fromCache bool) {
 	var why string
 	switch {
 	case fromCache:
-		why = "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied by the migration, so the go command could not tell which packages reach Fiber v2: this comes from its go.mod in the module cache)"
+		why = "requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2 (go.mod was not tidied by the migration, so it is not known which of its packages reach Fiber v2: this comes from its go.mod in the module cache)"
 	case use.via != "":
 		why = "is built for Fiber v2 (through " + use.via + ", whose package " + use.user + " imports github.com/gofiber/fiber/v2, which go.mod keeps as an indirect requirement because of it)"
 	default:
