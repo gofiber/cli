@@ -19,18 +19,23 @@ type FileInfo struct {
 	// pass numbers the call of the processor that the FileInfo was made for, see
 	// RelocateNotes. It is 0 for a FileInfo that was not made by ChangeFileContentInfo.
 	pass int
+	// returned says the lines of the notes and places made with the FileInfo are lines
+	// of the text that the processor returns, see Returned.
+	returned bool
 }
 
-// Place returns the place at line of the text that the processor was given, for a
-// note that names more than one place.
+// Returned returns the FileInfo for notes and places whose lines are lines of the
+// text that the processor returns, which differs from the one it was given by its
+// own edits, and not of the text it was given.
+func (fi FileInfo) Returned() FileInfo {
+	fi.returned = true
+	return fi
+}
+
+// Place returns the place at line of the file, for a note that names more than one
+// place.
 func (fi FileInfo) Place(line int) NotePlace {
-	return NotePlace{File: fi.Rel, Line: line, Pass: fi.pass}
-}
-
-// ReturnedPlace returns the place at line of the text that the processor returned,
-// not of the text it was given.
-func (fi FileInfo) ReturnedPlace(line int) NotePlace {
-	return NotePlace{File: fi.Rel, Line: line, Pass: fi.pass, Returned: true}
+	return NotePlace{File: fi.Rel, Line: line, Pass: fi.pass, Returned: fi.returned}
 }
 
 // NotePlace is a place of the migrated directory that a note is about.
@@ -144,22 +149,11 @@ func AddNote(root string, n Note) {
 // unknown; LineOf computes it from an offset into the file content.
 func Notef(fi FileInfo, line int, format string, args ...any) {
 	AddNote(fi.Root, Note{
-		File:    fi.Rel,
-		Line:    line,
-		Message: fmt.Sprintf(format, args...),
-		Pass:    fi.pass,
-	})
-}
-
-// NotefReturned is like Notef for a line of the text that the processor returns,
-// which differs from the one it was given by its own edits.
-func NotefReturned(fi FileInfo, line int, format string, args ...any) {
-	AddNote(fi.Root, Note{
 		File:     fi.Rel,
 		Line:     line,
 		Message:  fmt.Sprintf(format, args...),
 		Pass:     fi.pass,
-		Returned: true,
+		Returned: fi.returned,
 	})
 }
 

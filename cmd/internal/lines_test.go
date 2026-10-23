@@ -31,10 +31,11 @@ func linesProject(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// linesWhere returns the line of the file in dir that has the text.
-func linesWhere(t *testing.T, dir, name, text string) int {
+// linesOfCallB returns the line of the file in dir that calls fmt.Println("b").
+func linesOfCallB(t *testing.T, dir, name string) int {
 	t.Helper()
 
+	const text = `fmt.Println("b")`
 	content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name))) //nolint:gosec // a file of the temp project of this test
 	require.NoError(t, err)
 	for i, line := range strings.Split(string(content), "\n") {
@@ -52,15 +53,16 @@ func Test_RelocateNotes_FollowsTheRewriteOfThePassThatMadeTheNote(t *testing.T) 
 	t.Cleanup(func() { internal.AbandonRun(dir) })
 
 	_, err := internal.ChangeFileContentInfo(dir, func(content string, fi internal.FileInfo) string {
-		line := 1 + strings.Count(content[:strings.Index(content, `fmt.Println("b")`)], "\n")
-		internal.Notef(fi, line, "about b")
+		before, _, found := strings.Cut(content, `fmt.Println("b")`)
+		require.True(t, found)
+		internal.Notef(fi, 1+strings.Count(before, "\n"), "about b")
 		return linesAddImports(content)
 	})
 	require.NoError(t, err)
 
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 1)
-	assert.Equal(t, linesWhere(t, dir, "main.go", `fmt.Println("b")`), notes[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "main.go"), notes[0].Line)
 	assert.Equal(t, 12, notes[0].Line)
 }
 
@@ -88,7 +90,7 @@ func Test_RelocateNotes_FollowsTheRewritesThatCameAfter(t *testing.T) {
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 2)
 	assert.Equal(t, "about b", notes[0].Message)
-	assert.Equal(t, linesWhere(t, dir, "main.go", `fmt.Println("b")`), notes[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "main.go"), notes[0].Line)
 	assert.Equal(t, "about a", notes[1].Message)
 	assert.Equal(t, 10, notes[1].Line, "the line was the one of the rewritten file already")
 }
@@ -122,15 +124,16 @@ func Test_RelocateNotes_ReturnedLinesAreOfTheTextTheProcessorReturned(t *testing
 		out := linesAddImports(content)
 		// the line of the call in the text that is returned, which the formatter changes by one blank line
 		out = strings.Replace(out, "var _ = os.Args\n", "var _ = os.Args\n\n\n", 1)
-		line := 1 + strings.Count(out[:strings.Index(out, `fmt.Println("b")`)], "\n")
-		internal.NotefReturned(fi, line, "about b")
+		before, _, found := strings.Cut(out, `fmt.Println("b")`)
+		require.True(t, found)
+		internal.Notef(fi.Returned(), 1+strings.Count(before, "\n"), "about b")
 		return out
 	})
 	require.NoError(t, err)
 
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 1)
-	assert.Equal(t, linesWhere(t, dir, "main.go", `fmt.Println("b")`), notes[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "main.go"), notes[0].Line)
 }
 
 func Test_RelocateNotes_ReturnedLinesOfAPassThatDidNotRewriteAreOfTheGivenText(t *testing.T) {
@@ -139,7 +142,7 @@ func Test_RelocateNotes_ReturnedLinesOfAPassThatDidNotRewriteAreOfTheGivenText(t
 	t.Cleanup(func() { internal.AbandonRun(dir) })
 
 	_, err := internal.ChangeFileContentInfo(dir, func(content string, fi internal.FileInfo) string {
-		internal.NotefReturned(fi, 7, "about b")
+		internal.Notef(fi.Returned(), 7, "about b")
 		return content
 	})
 	require.NoError(t, err)
@@ -148,7 +151,7 @@ func Test_RelocateNotes_ReturnedLinesOfAPassThatDidNotRewriteAreOfTheGivenText(t
 
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 1)
-	assert.Equal(t, linesWhere(t, dir, "main.go", `fmt.Println("b")`), notes[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "main.go"), notes[0].Line)
 }
 
 func Test_RelocateNotes_TheOtherPlacesOfANoteFollowTheirOwnFiles(t *testing.T) {
@@ -184,12 +187,12 @@ func Test_RelocateNotes_TheOtherPlacesOfANoteFollowTheirOwnFiles(t *testing.T) {
 	internal.AddNote(dir, internal.Note{File: first.File, Line: first.Line, Pass: first.Pass, Message: "about b", More: more})
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 1)
-	assert.Equal(t, linesWhere(t, dir, "a.go", `fmt.Println("b")`), notes[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "a.go"), notes[0].Line)
 	require.Len(t, notes[0].More, 2)
 	assert.Equal(t, "b.go", notes[0].More[0].File)
-	assert.Equal(t, linesWhere(t, dir, "b.go", `fmt.Println("b")`), notes[0].More[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "b.go"), notes[0].More[0].Line)
 	assert.Equal(t, "c.go", notes[0].More[1].File)
-	assert.Equal(t, linesWhere(t, dir, "c.go", `fmt.Println("b")`), notes[0].More[1].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "c.go"), notes[0].More[1].Line)
 }
 
 func Test_RelocateNotes_CRLFFilesAreComparedLineByLine(t *testing.T) {
@@ -205,7 +208,7 @@ func Test_RelocateNotes_CRLFFilesAreComparedLineByLine(t *testing.T) {
 
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 1)
-	assert.Equal(t, linesWhere(t, dir, "main.go", `fmt.Println("b")`), notes[0].Line)
+	assert.Equal(t, linesOfCallB(t, dir, "main.go"), notes[0].Line)
 }
 
 func Test_RelocateNotes_NothingChangesOutsideOfARun(t *testing.T) {

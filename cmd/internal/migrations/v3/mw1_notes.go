@@ -41,7 +41,7 @@ func (r *mw1Reporter) flush(edits *editSet, applied, final string) {
 	added := strings.Count(final, "\n") - strings.Count(applied, "\n")
 	for _, p := range r.pending {
 		offset := mw1MappedOffset(edits.edits, p.offset)
-		internal.NotefReturned(r.fi, internal.LineOf(applied, offset)+added, "%s", p.message)
+		internal.Notef(r.fi.Returned(), internal.LineOf(applied, offset)+added, "%s", p.message)
 	}
 	r.pending = nil
 }

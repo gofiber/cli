@@ -10,17 +10,10 @@ type noteTally struct {
 	found bool
 }
 
-// add records a place of the finding, a line of the text the migration was given.
+// add records a place of the finding, a line of the text the migration was given (of
+// the text it returns for the FileInfo of fi.Returned()).
 func (t *noteTally) add(fi internal.FileInfo, line int) {
-	t.addPlace(fi.Place(line))
-}
-
-// addReturned records a place of the finding, a line of the text the migration returns.
-func (t *noteTally) addReturned(fi internal.FileInfo, line int) {
-	t.addPlace(fi.ReturnedPlace(line))
-}
-
-func (t *noteTally) addPlace(place internal.NotePlace) {
+	place := fi.Place(line)
 	if !t.found {
 		t.first, t.found = place, true
 		return
