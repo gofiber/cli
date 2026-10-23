@@ -231,30 +231,30 @@ var _ = jwtware.New(jwtware.Config{
 // https URLs.
 func Test_MigrateContribPackages_StandaloneJWTKeySetsThatStay(t *testing.T) {
 	tests := []struct {
-		name   string
-		config string
-		field  string
+		name string
+		// config is what the literal in the config of the program holds, below what follows the declaration.
+		config, below string
+		field         string
 	}{
-		{"a URL that may be empty next to a key", "KeySetURL: os.Getenv(\"JWKS_URL\"),\n\tSigningKey: []byte(\"secret\"),", "KeySetURL"},
-		{"a URL that may be empty next to a function", "KeySetURL: os.Getenv(\"JWKS_URL\"),\n\tKeyFunc: nil,", "KeySetURL"},
-		{"a relative URL", `KeySetURL: "/jwks.json",`, "KeySetURL"},
-		{"another scheme", `KeySetURL: "file:///etc/jwks.json",`, "KeySetURL"},
-		{"an empty URL", `KeySetURL: "",`, "KeySetURL"},
-		{"a relative URL in the list", `KeySetURLs: []string{"https://example.com/a.json", "b.json"},`, "KeySetURLs"},
-		{"set in a branch", "KeySetURLs: urls,\n\t// set below",
-			"KeySetURLs"},
+		{name: "a URL that may be empty next to a key", config: "KeySetURL: os.Getenv(\"JWKS_URL\"),\n\tSigningKey: []byte(\"secret\"),", field: "KeySetURL"},
+		{name: "a URL that may be empty next to a function", config: "KeySetURL: os.Getenv(\"JWKS_URL\"),\n\tKeyFunc: nil,", field: "KeySetURL"},
+		{name: "a relative URL", config: `KeySetURL: "/jwks.json",`, field: "KeySetURL"},
+		{name: "another scheme", config: `KeySetURL: "file:///etc/jwks.json",`, field: "KeySetURL"},
+		{name: "an empty URL", config: `KeySetURL: "",`, field: "KeySetURL"},
+		{name: "a relative URL in the list", config: `KeySetURLs: []string{"https://example.com/a.json", "b.json"},`, field: "KeySetURLs"},
+		{
+			name:   "set in a branch",
+			config: `SigningKey: []byte("secret"),`,
+			below: "\nfunc init() {\n\tcfg := jwtware.Config{SigningKey: []byte(\"secret\")}\n\tif len(urls) > 0 {\n\t\tcfg.KeySetURLs = urls\n\t}\n" +
+				"\t_ = jwtware.New(cfg)\n}\n",
+			field: "KeySetURLs",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			contribVersions(t, map[string]string{"jwt": "v1.2.6"})
 			dir := t.TempDir()
-			config := tt.config
-			setBelow := ""
-			if tt.name == "set in a branch" {
-				config = "SigningKey: []byte(\"secret\"),"
-				setBelow = "\nfunc init() {\n\tcfg := jwtware.Config{SigningKey: []byte(\"secret\")}\n\tif len(urls) > 0 {\n\t\tcfg.KeySetURLs = urls\n\t}\n\t_ = jwtware.New(cfg)\n}\n"
-			}
 			file := writeTempFile(t, dir, `package main
 
 import (
@@ -268,9 +268,9 @@ var urls = []string{"https://example.com/jwks.json"}
 var _ = os.Getenv
 
 var _ = jwtware.New(jwtware.Config{
-	`+config+`
+	`+tt.config+`
 })
-`+setBelow)
+`+tt.below)
 
 			contribMigrate(t, dir, v3.MigrateContribPackages, v3.MigrateJWTExtractor)
 

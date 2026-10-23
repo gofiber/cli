@@ -307,15 +307,15 @@ type mw2Package struct {
 // mw2Packages reads the packages of a project on demand and remembers them.
 type mw2Packages struct {
 	cache map[string]*mw2Package
-	// root is the directory the migration runs in, "" when the packages are read
-	// without the module around them: a name of another package is not followed then.
-	root string
 	// names holds the package clause of the directories asked for, modules the
 	// path of the module of a go.mod, and assignedIn the names that code of a
 	// module assigns to, by the root of the module.
 	names      map[string]string
 	modules    map[string]string
 	assignedIn map[string]map[string]bool
+	// root is the directory the migration runs in, "" when the packages are read
+	// without the module around them: a name of another package is not followed then.
+	root string
 }
 
 func newMW2Packages() *mw2Packages {
