@@ -53,8 +53,13 @@ func (s *sourceEdits) replace(n ast.Node, text string) {
 
 // insertAfter inserts text right behind the node.
 func (s *sourceEdits) insertAfter(n ast.Node, text string) {
-	end := s.offset(n.End())
-	s.edits = append(s.edits, textEdit{start: end, end: end, text: text})
+	s.insertAt(n.End(), text)
+}
+
+// insertAt inserts text at the position.
+func (s *sourceEdits) insertAt(pos token.Pos, text string) {
+	at := s.offset(pos)
+	s.edits = append(s.edits, textEdit{start: at, end: at, text: text})
 }
 
 // apply returns the content with the edits made. Of edits that overlap, the one that starts
