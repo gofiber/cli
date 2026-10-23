@@ -7,8 +7,8 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"strconv"
-	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -16,6 +16,22 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
+// tagKeyRenames are the keys of struct tags that a parser of v2 read and the binder of v3
+// reads under another name: params:"id" is uri:"id" for ParamsParser, and reqHeader:"X-Token"
+// is header:"X-Token" for ReqHeaderParser, whose values stayed empty when the tag kept the
+// old key. A key is a whole word of the tag, so mine:"..." is not changed.
+var tagKeyRenames = []struct {
+	re   *regexp.Regexp
+	skip *regexp.Regexp
+	to   string
+}{
+	{re: regexp.MustCompile(`(^|\s)params:"`), to: `${1}uri:"`},
+	// a field that has a header key already keeps it
+	{re: regexp.MustCompile(`(^|\s)reqHeader:"`), to: `${1}header:"`, skip: regexp.MustCompile(`(^|\s)header:"`)},
+}
+
+// MigrateParamsTagKeys renames the struct tag keys of the parsers that v3 binds under other
+// names (see tagKeyRenames).
 func MigrateParamsTagKeys(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, rewriteParamsTagKeys)
 	if err != nil {
@@ -44,11 +60,16 @@ func rewriteParamsTagKeys(content string) string {
 		}
 
 		tagLiteral, err := strconv.Unquote(field.Tag.Value)
-		if err != nil || !strings.Contains(tagLiteral, `params:"`) {
+		if err != nil {
 			return true
 		}
 
-		updatedTag := strings.ReplaceAll(tagLiteral, `params:"`, `uri:"`)
+		updatedTag := tagLiteral
+		for _, rename := range tagKeyRenames {
+			if rename.skip == nil || !rename.skip.MatchString(updatedTag) {
+				updatedTag = rename.re.ReplaceAllString(updatedTag, rename.to)
+			}
+		}
 		if updatedTag == tagLiteral {
 			return true
 		}

@@ -10,6 +10,7 @@ var contribModuleRenames = map[string]string{
 	"fibersentry":   "sentry",
 	"fiberzap":      "zap",
 	"fiberzerolog":  "zerolog",
+	"opafiber":      "opa",
 	"otelfiber":     "otel",
 }
 

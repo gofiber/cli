@@ -32,8 +32,13 @@ type Migration struct {
 var Migrations = []Migration{
 	{From: ">=1.0.0-0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
 	{
-		From: ">=2.0.0-0",
-		To:   "<4.0.0-0",
+		// The rewrites are for code written against Fiber v2 that is on its way to v3.
+		// On a project that is already on v3 they would change valid v3 code (c.Context()
+		// is the context of v3 there, not the fasthttp one of v2), and on the way to
+		// another release of v2 they would turn valid v2 code into code that does not
+		// build against v2.
+		From: ">=2.0.0-0 <3.0.0-0",
+		To:   ">=3.0.0-0 <4.0.0-0",
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
 			v3migrations.MigrateViewBind,
@@ -55,6 +60,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateShutdownHook,
 			v3migrations.MigrateListenMethods,
 			v3migrations.MigrateContextMethods,
+			v3migrations.MigrateSendFileConfig,
 			v3migrations.MigrateCORSConfig,
 			v3migrations.MigrateCSRFConfig,
 			v3migrations.MigrateMonitorImport,
@@ -84,6 +90,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateBasicauthConfig,
 			v3migrations.MigrateBasicauthStorePassword,
 			v3migrations.MigrateReqHeaderParser,
+			v3migrations.MigrateRenamedIdentifiers,
 			MigrateGoVersion("1.25"),
 		},
 	},
@@ -117,6 +124,8 @@ func migrationName(fn MigrationFn) string {
 func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool, includeFiles, excludeFiles []string) error {
 	internal.SetFileFilters(includeFiles, excludeFiles)
 	defer internal.SetFileFilters(nil, nil)
+	// Forget the files an earlier run in this directory left as they were.
+	internal.DrainSkippedFiles(cwd)
 	var errs []error
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
@@ -176,9 +185,25 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		}
 	}
 
+	PrintSkippedFiles(cmd, cwd)
+
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
 
 	return nil
+}
+
+// PrintSkippedFiles names the files that a rewrite would have broken, which were left
+// as they were, so that they are not taken for migrated.
+func PrintSkippedFiles(cmd *cobra.Command, cwd string) {
+	files := internal.DrainSkippedFiles(cwd)
+	if len(files) == 0 {
+		return
+	}
+
+	cmd.Println("Not migrated: a rewrite of these files produced code that does not parse, so they are left as they were:")
+	for _, f := range files {
+		cmd.Printf("  %s\n", f.Reason)
+	}
 }

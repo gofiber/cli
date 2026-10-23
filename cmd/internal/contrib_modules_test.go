@@ -40,6 +40,16 @@ func TestNormalizeContribModule(t *testing.T) {
 			want:   "zerolog",
 		},
 		{
+			name:   "opa legacy name with version suffix",
+			module: "opafiber/v2",
+			want:   "opa",
+		},
+		{
+			name:   "opa legacy name",
+			module: "opafiber",
+			want:   "opa",
+		},
+		{
 			name:   "unchanged module",
 			module: "monitor",
 			want:   "monitor",
@@ -60,4 +70,5 @@ func TestContribModuleAliases(t *testing.T) {
 	assert.ElementsMatch(t, []string{"otel", "otelfiber"}, ContribModuleAliases("otel"))
 	assert.ElementsMatch(t, []string{"i18n", "fiberi18n"}, ContribModuleAliases("i18n"))
 	assert.ElementsMatch(t, []string{"zerolog", "fiberzerolog"}, ContribModuleAliases("zerolog"))
+	assert.ElementsMatch(t, []string{"opa", "opafiber"}, ContribModuleAliases("opa"))
 }

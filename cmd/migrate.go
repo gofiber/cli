@@ -98,7 +98,10 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 		return fmt.Errorf("current fiber project version not found: %w", err)
 	}
 	currentVersionS = strings.TrimPrefix(currentVersionS, "v")
-	currentVersion := semver.MustParse(currentVersionS)
+	currentVersion, err := semver.NewVersion(currentVersionS)
+	if err != nil {
+		return fmt.Errorf("current fiber version %q in %s is not a valid version: %w", currentVersionS, opts.CurrentVersionFile, err)
+	}
 
 	if opts.TargetVersionS == "" {
 		opts.TargetVersionS, err = LatestFiberVersion()
@@ -161,6 +164,9 @@ func migrateRunE(cmd *cobra.Command, opts MigrateOptions) error {
 	if err != nil {
 		return fmt.Errorf("migration failed %w", err)
 	}
+	// The refresh of the third-party packages below rewrites files too; whatever it leaves
+	// as it was is named when the command ends, an error included.
+	defer migrations.PrintSkippedFiles(cmd, wd)
 
 	tpChanged := false
 	for _, tp := range opts.ThirdParty {
