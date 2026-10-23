@@ -255,7 +255,7 @@ The list has four kinds of entries:
   reported once per project, at the first import. A test of the project that compares a
   `Content-Type` or the body of a 404 gets an entry at the line of the comparison.
   A few rewrites report their own difference the same way: the error of `ParamsInt`
-  loses the `failed to convert: ` v2 put in front of it, the deprecated `timeout.New`
+  loses the `failed to convert:` prefix v2 put in front of it, the deprecated `timeout.New`
   of v2 only logged the error of its handler, `Redirect().Back` follows a `Referer`
   of the same origin only, each healthcheck probe is a route of its own (HEAD is
   answered, another method gets 405), and the v3 client adds `Accept: application/json`
