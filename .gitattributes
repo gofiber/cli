@@ -1,0 +1,4 @@
+# Go sources keep the line ends of Unix in every checkout. Some are embedded into the CLI and
+# written into the projects it migrates, and the tests compare them as they are; git on
+# Windows would convert them to \r\n.
+*.go text eol=lf

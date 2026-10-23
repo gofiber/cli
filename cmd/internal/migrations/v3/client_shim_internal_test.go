@@ -21,7 +21,7 @@ func Test_clientShim_EmbedsTheSourceFile(t *testing.T) {
 
 	disk, err := os.ReadFile(filepath.Join("agentshim", "agent.go"))
 	require.NoError(t, err)
-	assert.Equal(t, string(disk), clientShimSource, "the embedded text is the file of the agentshim package")
+	assert.Equal(t, shimUnixLines(string(disk)), clientShimSource, "the embedded text is the file of the agentshim package")
 }
 
 func Test_clientShim_ModuleFile(t *testing.T) {

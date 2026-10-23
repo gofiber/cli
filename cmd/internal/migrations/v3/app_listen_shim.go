@@ -39,6 +39,9 @@ import (
 //go:embed listenshim/listen.go
 var appShimEmbedded string
 
+// appShimSource is the source with the line ends of Unix.
+var appShimSource = shimUnixLines(appShimEmbedded)
+
 const (
 	// appShimFile is the file of the registry in the package of the module.
 	appShimFile = "listen.go"
@@ -70,7 +73,7 @@ func appShimModuleFile() moduleShimFile {
 	return moduleShimFile{
 		name:   appShimFile,
 		marker: appShimMarker,
-		source: appShimHeader + strings.Replace(appShimEmbedded, appShimPackage, "package "+moduleShimPkg, 1),
+		source: appShimHeader + strings.Replace(appShimSource, appShimPackage, "package "+moduleShimPkg, 1),
 	}
 }
 

@@ -28,8 +28,9 @@ func Test_HealthShimBuildsAgainstFiber(t *testing.T) {
 
 	tests, err := os.ReadFile(filepath.Join("healthshim", "health_test.go"))
 	require.NoError(t, err)
-	testSource := strings.Replace(string(tests), "package healthshim\n", "package "+moduleShimPkg+"\n", 1)
-	require.NotEqual(t, string(tests), testSource)
+	source := shimUnixLines(string(tests))
+	testSource := strings.Replace(source, "package healthshim\n", "package "+moduleShimPkg+"\n", 1)
+	require.NotEqual(t, source, testSource)
 
 	for _, version := range healthShimVersions {
 		t.Run(version, func(t *testing.T) {

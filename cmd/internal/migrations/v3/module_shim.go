@@ -32,6 +32,13 @@ const (
 	moduleShimMarker = `This file was added by "fiber migrate"`
 )
 
+// shimUnixLines returns the source of an embedded file with the line ends of Unix. A checkout
+// that converts them (git on Windows does, unless a .gitattributes says otherwise) embeds
+// the file with \r\n, and the package clause of the source is found by its \n.
+func shimUnixLines(embedded string) string {
+	return strings.ReplaceAll(embedded, "\r\n", "\n")
+}
+
 // moduleShimFile is one file of the package.
 type moduleShimFile struct {
 	// name is the name of the file in the directory of the package.
