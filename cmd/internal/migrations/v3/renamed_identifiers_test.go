@@ -318,3 +318,25 @@ func handler(c fiber.Ctx) error {
 	assert.Equal(t, migrated, readFile(t, file))
 	assert.Empty(t, second.String())
 }
+
+// proxy.New was the deprecated name of proxy.Balancer, which v3 dropped.
+func Test_MigrateRenamedIdentifiers_ProxyNew(t *testing.T) {
+	t.Parallel()
+
+	content, _ := migrateRenamed(t, `package main
+
+import (
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/proxy"
+)
+
+func setup(app *fiber.App) {
+	app.Use(proxy.New(proxy.Config{Servers: []string{"http://localhost:3001"}}))
+	app.Use(proxy.Balancer(proxy.Config{Servers: []string{"http://localhost:3002"}}))
+}
+`)
+
+	assert.Contains(t, content, `app.Use(proxy.Balancer(proxy.Config{Servers: []string{"http://localhost:3001"}}))`)
+	assert.Contains(t, content, `app.Use(proxy.Balancer(proxy.Config{Servers: []string{"http://localhost:3002"}}))`)
+	assert.NotContains(t, content, "proxy.New")
+}

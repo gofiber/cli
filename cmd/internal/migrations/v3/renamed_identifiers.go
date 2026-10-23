@@ -30,7 +30,7 @@ var (
 var renamedIdentifierHints = []string{
 	"ConstraintGuid", "HeaderFeaturePolicy", "IndexRune", "GenerateKey(", "DefaultLivenessEndpoint",
 	"DefaultReadinessEndpoint", "HealthChecker", "LimiterHandler", "FixedWindow", "SlidingWindow",
-	"ChartJsURL", "TlsConfig", ".Format(",
+	"ChartJsURL", "TlsConfig", ".Format(", "proxy.",
 }
 
 // MigrateRenamedIdentifiers changes the identifiers of Fiber's packages that v3 renamed or
@@ -46,8 +46,8 @@ var renamedIdentifierHints = []string{
 //     were: func(fiber.Ctx) bool and func(func(fiber.Ctx) bool) fiber.Handler.
 //   - limiter.LimiterHandler is limiter.Handler, and the New of the fixed and the sliding
 //     window takes a *limiter.Config.
-//   - the ChartJsURL of the monitor config is ChartJSURL, and the TlsConfig of the proxy
-//     config is TLSConfig.
+//   - proxy.New, the deprecated name of proxy.Balancer, is proxy.Balancer; the ChartJsURL
+//     of the monitor config is ChartJSURL, and the TlsConfig of the proxy config is TLSConfig.
 //   - c.Format(body) of a context, which negotiated the content type of the body in v2, is
 //     c.AutoFormat(body): Format takes ResFmt handlers in v3.
 func MigrateRenamedIdentifiers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
@@ -148,6 +148,10 @@ func (r *identifierRenamer) selector(sel *ast.SelectorExpr) {
 	case r.is(sel.X, r.limiter):
 		if sel.Sel.Name == "LimiterHandler" {
 			r.src.replace(sel.Sel, "Handler")
+		}
+	case r.is(sel.X, r.proxy):
+		if sel.Sel.Name == "New" {
+			r.src.replace(sel.Sel, "Balancer")
 		}
 	}
 }
