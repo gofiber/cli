@@ -39,7 +39,7 @@ func Test_DoMigration_Verbose(t *testing.T) {
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "Skipping migration from >=1.0.0-0 to >=0.0.0-0")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to >=3.0.0-0 <4.0.0-0")
 	})
 }
 
@@ -67,7 +67,7 @@ require github.com/valyala/fasthttp v1.0.0`
 		require.NoError(t, migrations.DoMigration(cmd, dir, curr, target, true, true, nil, nil))
 		out := buf.String()
 		assert.Contains(t, out, "MigrateGoPkgs: no changes")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to >=3.0.0-0 <4.0.0-0")
 	})
 
 	t.Run("changes", func(t *testing.T) {
@@ -92,7 +92,7 @@ require github.com/valyala/fasthttp v1.0.0`
 		out := buf.String()
 		assert.Contains(t, out, "Migrating Go packages")
 		assert.Contains(t, out, "MigrateGoPkgs: changed")
-		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to <4.0.0-0")
+		assert.Contains(t, out, "Skipping migration from >=2.0.0-0 <3.0.0-0 to >=3.0.0-0 <4.0.0-0")
 	})
 }
 
@@ -140,6 +140,56 @@ func handler(c fiber.Ctx) error {
 			require.NoError(t, err)
 			if tc.rewritten {
 				assert.Contains(t, string(content), "c.RequestCtx()")
+			} else {
+				assert.Equal(t, source, string(content))
+			}
+		})
+	}
+}
+
+// The same rewrites turn valid v2 code into code that does not build against v2, so a project
+// that goes from one release of v2 to another does not get them. It still gets the new
+// version, which is what the first list is for.
+func Test_DoMigration_V2ListNeedsAV3Target(t *testing.T) {
+	const source = `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func handler(c *fiber.Ctx) error {
+	return c.SendFile("a.txt", true)
+}
+`
+
+	tests := []struct {
+		name      string
+		target    string
+		rewritten bool
+	}{
+		{name: "v3", target: "3.0.0", rewritten: true},
+		{name: "another release of v2", target: "2.52.1", rewritten: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			main := filepath.Join(dir, "main.go")
+			goMod := filepath.Join(dir, "go.mod")
+			require.NoError(t, os.WriteFile(main, []byte(source), 0o600))
+			require.NoError(t, os.WriteFile(goMod, []byte("module test\n\nrequire github.com/gofiber/fiber/v2 v2.52.0\n"), 0o600))
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			require.NoError(t, migrations.DoMigration(cmd, dir,
+				semver.MustParse("2.52.0"), semver.MustParse(tc.target), true, false, nil, nil))
+
+			content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			mod, err := os.ReadFile(goMod) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			assert.Contains(t, string(mod), tc.target, "the new version is required either way")
+			if tc.rewritten {
+				assert.Contains(t, string(content), "fiber.SendFile{")
 			} else {
 				assert.Equal(t, source, string(content))
 			}

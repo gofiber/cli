@@ -32,11 +32,13 @@ type Migration struct {
 var Migrations = []Migration{
 	{From: ">=1.0.0-0", To: ">=0.0.0-0", Functions: []MigrationFn{MigrateGoPkgs}},
 	{
-		// The rewrites are for code written against Fiber v2: on a project that is
-		// already on v3 they would change valid v3 code (c.Context() is the context of
-		// v3 there, not the fasthttp one of v2).
+		// The rewrites are for code written against Fiber v2 that is on its way to v3.
+		// On a project that is already on v3 they would change valid v3 code (c.Context()
+		// is the context of v3 there, not the fasthttp one of v2), and on the way to
+		// another release of v2 they would turn valid v2 code into code that does not
+		// build against v2.
 		From: ">=2.0.0-0 <3.0.0-0",
-		To:   "<4.0.0-0",
+		To:   ">=3.0.0-0 <4.0.0-0",
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
 			v3migrations.MigrateViewBind,
