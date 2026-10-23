@@ -173,6 +173,82 @@ func switchedOff() *fiber.App {
 	}
 }
 
+func Test_MigrateTrustedProxyConfig_CheckComputedFromAnExpression(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type settings struct{ Trusted []string }
+
+func fromSettings(s settings) *fiber.App {
+	return fiber.New(fiber.Config{
+		ProxyHeader:             fiber.HeaderXForwardedFor,
+		EnableTrustedProxyCheck: len(s.Trusted) > 0,
+		TrustedProxies:          s.Trusted,
+	})
+}
+
+func withoutHeader(s settings) *fiber.App {
+	return fiber.New(fiber.Config{EnableTrustedProxyCheck: len(s.Trusted) > 0, TrustedProxies: s.Trusted})
+}
+`)
+
+	appRun(t, dir, v3.MigrateTrustedProxyConfig)
+
+	content := appRead(t, dir, "main.go")
+	assert.Contains(t, content, "TrustProxy:       len(s.Trusted) > 0,", "the expression is kept")
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1, "%v", notes)
+	assert.Equal(t, 9, notes[0].Line, "at the ProxyHeader")
+	assert.Contains(t, notes[0].Message, "whenever it is false, v2 trusted the ProxyHeader and the X-Forwarded-* headers of every client")
+	assert.Contains(t, notes[0].Message, "an empty list of TrustedProxies usually makes it false")
+}
+
+func Test_MigrateTrustedProxyConfig_IPValidationWalksTheHeaderFromTheRight(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func validated() *fiber.App {
+	return fiber.New(fiber.Config{
+		ProxyHeader:             fiber.HeaderXForwardedFor,
+		EnableTrustedProxyCheck: true,
+		TrustedProxies:          []string{"10.0.0.0/8"},
+		EnableIPValidation:      true,
+	})
+}
+
+func withoutAList() *fiber.App {
+	return fiber.New(fiber.Config{ProxyHeader: fiber.HeaderXForwardedFor, EnableTrustedProxyCheck: true, EnableIPValidation: true})
+}
+
+func withoutValidation() *fiber.App {
+	return fiber.New(fiber.Config{ProxyHeader: fiber.HeaderXForwardedFor, EnableTrustedProxyCheck: true, TrustedProxies: []string{"10.0.0.0/8"}})
+}
+
+func validationSwitchedOff() *fiber.App {
+	return fiber.New(fiber.Config{ProxyHeader: fiber.HeaderXForwardedFor, EnableTrustedProxyCheck: true, TrustedProxies: []string{"10.0.0.0/8"}, EnableIPValidation: false})
+}
+
+func noHeader() *fiber.App {
+	return fiber.New(fiber.Config{EnableTrustedProxyCheck: true, TrustedProxies: []string{"10.0.0.0/8"}, EnableIPValidation: true})
+}
+`)
+
+	appRun(t, dir, v3.MigrateTrustedProxyConfig)
+
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 1, "%v", notes)
+	assert.Equal(t, 10, notes[0].Line, "at EnableIPValidation")
+	assert.Contains(t, notes[0].Message, "c.IP() walks the header from the right in v3 and returns the first address that is not a trusted proxy")
+	assert.Contains(t, notes[0].Message, `v2 returned the first valid address from the left`)
+	assert.Contains(t, appRead(t, dir, "main.go"), "EnableIPValidation:", "the field exists in v3")
+}
+
 func Test_MigrateTrustedProxyConfig_ExistingTrustProxyConfig(t *testing.T) {
 	t.Parallel()
 

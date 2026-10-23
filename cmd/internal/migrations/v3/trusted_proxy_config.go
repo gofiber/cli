@@ -88,37 +88,71 @@ func appMigrateProxyLiteral(f *appFile, edits *editSet, lit *ast.CompositeLit) {
 		}
 	}
 
-	trusts := f.literalTrustsProxies(lit)
-	if _, header := appKeyedElement(lit, appFieldProxyHeader); header != nil && !trusts && !appIsEmptyString(header.Value) {
+	trust := f.literalTrust(lit)
+	_, header := appKeyedElement(lit, appFieldProxyHeader)
+	hasHeader := header != nil && !appIsEmptyString(header.Value)
+	switch {
+	case hasHeader && trust == appTrustOff:
 		internal.Notef(f.fi, g.line(header.Pos()), appProxyHeaderNote)
+	case hasHeader && trust == appTrustMaybe:
+		internal.Notef(f.fi, g.line(header.Pos()), appProxyMaybeNote)
 	}
-	if proxies != nil && !trusts {
+	if proxies != nil && trust == appTrustOff {
 		internal.Notef(f.fi, g.line(proxies.Pos()), appProxyListNote)
+	}
+	if _, validation := appKeyedElement(lit, appFieldIPValidation); validation != nil && hasHeader && proxies != nil && trust != appTrustOff && !isIdentNamed(validation.Value, appLitFalse) {
+		internal.Notef(f.fi, g.line(validation.Pos()), appProxyValidationNote)
 	}
 }
 
+// appFieldIPValidation is the field that makes c.IP() pick a valid address of the proxy header.
+const appFieldIPValidation = "EnableIPValidation"
+
 const (
+	appProxyMaybeNote = "TrustProxy takes the value the trusted proxy check had, which this config computes: whenever it is false, v2 trusted the ProxyHeader and the X-Forwarded-* headers of every client " +
+		"(an empty list of TrustedProxies usually makes it false), and v3 trusts none, so c.IP() is the proxy's address and c.Scheme(), c.Host() and c.BaseURL() ignore the headers"
+	appProxyValidationNote = "with EnableIPValidation and a list of trusted proxies, c.IP() walks the header from the right in v3 and returns the first address that is not a trusted proxy; " +
+		"v2 returned the first valid address from the left, which the client can choose, so a header such as \"203.0.113.7, 10.0.0.1\" now gives 10.0.0.1 where it gave 203.0.113.7"
 	appProxyHeaderNote = "v2 trusted the ProxyHeader and the X-Forwarded-* headers of every client; v3 only trusts them from a proxy listed in TrustProxyConfig, " +
 		"so c.IP() is the proxy's address, and c.Scheme(), c.Host() and c.BaseURL() ignore the headers, until TrustProxy is true and TrustProxyConfig names your proxies (Proxies, Loopback, Private)"
 	appProxyListNote = "v2 ignored TrustedProxies unless EnableTrustedProxyCheck was true (every client was trusted otherwise); " +
 		"v3 only uses TrustProxyConfig when TrustProxy is true, which this config does not set"
 )
 
-// literalTrustsProxies reports whether the config turns the trusted proxy check
-// on: the literal sets it, or the variable that holds the literal is assigned
-// it.
-func (f *appFile) literalTrustsProxies(lit *ast.CompositeLit) bool {
+// appTrust says whether a config turns the trusted proxy check on.
+type appTrust int
+
+const (
+	// appTrustOff is a check that is never set, or set to false.
+	appTrustOff appTrust = iota
+	// appTrustOn is a check the literal sets to true, or that the variable holding
+	// the literal is assigned.
+	appTrustOn
+	// appTrustMaybe is a check set from an expression: it can be false when the
+	// program runs, as for len(trusted) > 0 with no trusted proxy.
+	appTrustMaybe
+)
+
+// literalTrust tells whether the config turns the trusted proxy check on.
+func (f *appFile) literalTrust(lit *ast.CompositeLit) appTrust {
 	for _, key := range []string{appFieldEnableProxyCheck, appFieldTrustProxy} {
 		if _, kv := appKeyedElement(lit, key); kv != nil {
-			return !isIdentNamed(kv.Value, appLitFalse)
+			switch {
+			case isIdentNamed(kv.Value, appLitFalse):
+				return appTrustOff
+			case isIdentNamed(kv.Value, "true"):
+				return appTrustOn
+			default:
+				return appTrustMaybe
+			}
 		}
 	}
 
 	src := f.sourceOfLiteral(lit)
-	if src.node == nil {
-		return false
+	if src.node != nil && src.assigns(appFieldEnableProxyCheck, appFieldTrustProxy) {
+		return appTrustOn
 	}
-	return src.assigns(appFieldEnableProxyCheck, appFieldTrustProxy)
+	return appTrustOff
 }
 
 // appLitFalse is the predeclared identifier false.
@@ -197,7 +231,7 @@ func (f *appFile) assignedWithoutTrust(sel *ast.SelectorExpr) bool {
 	src := &appListenSource{file: b.file, node: b.node, scope: b.scope, name: id.Name}
 	if lit, isLit := b.init.(*ast.CompositeLit); isLit {
 		src.lit = lit
-		if b.file.literalTrustsProxies(lit) {
+		if b.file.literalTrust(lit) != appTrustOff {
 			return false
 		}
 	}

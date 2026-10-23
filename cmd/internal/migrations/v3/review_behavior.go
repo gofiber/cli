@@ -12,13 +12,29 @@ type reviewBehaviorRule struct {
 	// uses, when set, must also match the text of the file for the rule to apply.
 	uses *regexp.Regexp
 	// unless, when set, switches the rule off for files whose text matches it.
-	unless  *regexp.Regexp
+	unless *regexp.Regexp
+	// when, when set, must also hold for the file: for a condition that the text
+	// cannot state, such as a field of one type's literal (see review_when.go).
+	when    func(rf *reviewFile) bool
 	message string
+	// tests adds the test files next to the file that use httptest to the message,
+	// for a change that fails in tests first (see reviewFile.httptestNote).
+	tests bool
 }
 
 // reviewMiddlewarePath matches the import path of a built-in middleware, at v2 or v3.
 func reviewMiddlewarePath(name string) *regexp.Regexp {
 	return regexp.MustCompile(`^github\.com/gofiber/fiber/v[23]/middleware/` + name + `$`)
+}
+
+// reviewCorePkgRe matches the import path of the core package of Fiber v3.
+var reviewCorePkgRe = regexp.MustCompile(`^github\.com/gofiber/fiber/v3$`)
+
+// reviewRangeNote is the change in how a Range header with several ranges is answered, which the
+// static middleware and SendFile share once ByteRange is set.
+func reviewRangeNote(what string) string {
+	return what + ": with ByteRange, a Range header that asks for several ranges (bytes=0-1,3-4) or names another unit than bytes is ignored and the whole file answers 200, " +
+		"where v2 answered 416; a single range and a range that cannot be satisfied behave as before."
 }
 
 // reviewContribPath matches the import path of a contrib module, before or after its
@@ -31,8 +47,14 @@ func reviewContribPath(names string) *regexp.Regexp {
 // with the user. Each message states what changed and what to do about it.
 var reviewBehaviorRules = []reviewBehaviorRule{
 	{
-		pkg:     reviewMiddlewarePath("proxy"),
-		message: "proxy: Fiber v3 refuses upstreams that resolve to loopback or private addresses (SSRF protection), so proxying to localhost or an internal host panics at startup or answers 500. Allow them with proxy.WithSecurityPolicy(proxy.SecurityPolicy{AllowPrivateIPs: true}) or Config.SecurityPolicy.",
+		pkg: reviewMiddlewarePath("proxy"),
+		message: "proxy: Fiber v3 refuses upstreams that resolve to loopback or private addresses (SSRF protection), so proxying to localhost or an internal host panics at startup or answers 500. Allow them with proxy.WithSecurityPolicy(proxy.SecurityPolicy{AllowPrivateIPs: true}) or Config.SecurityPolicy. " +
+			"The middleware differs from v2 in five more ways: Balancer, Forward, DomainForward and BalancerForward set X-Real-IP to the peer address on every upstream request (v2 did it for BalancerForward only); " +
+			"the hop-by-hop headers (Connection and every header it names, Keep-Alive, Proxy-Authenticate, Proxy-Authorization, TE, Trailer, Transfer-Encoding, Upgrade) are removed from the request and the response, so a WebSocket upgrade does not pass unless SecurityPolicy.KeepHopByHopHeaders is set; " +
+			"DomainForward matches the Host with or without its port and calls Next for another host (v2 answered an empty 200); " +
+			"a Balancer server with a path (http://backend:8080/api) panics with ErrUpstreamNotOrigin (v2 ignored the path); " +
+			"a request path with %2F or // is answered with 400 by Balancer, BalancerForward and DomainForward (v2 forwarded it as it was, SecurityPolicy.AllowAmbiguousSlashes allows it).",
+		tests: true,
 	},
 	{
 		pkg:     reviewMiddlewarePath("timeout"),
@@ -98,7 +120,7 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 	},
 	{
 		pkg:     reviewMiddlewarePath("static"),
-		message: `static: a directory without an index file answers 404 instead of 403, the body of a missing file is "Not Found", and HEAD responses carry Cache-Control; check the clients and tests that depend on them.`,
+		message: `static: a directory without an index file answers 404 instead of 403, the body of a missing file is "Not Found", HEAD responses carry Cache-Control, and a path with an encoded NUL byte (%00) answers 404 instead of 400 "Are you a hacker?"; check the clients and tests that depend on them.`,
 	},
 	{
 		pkg:     reviewContribPath("opa|opafiber"),
@@ -112,5 +134,63 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 		pkg: reviewContribPath("sentry|fibersentry"),
 		message: "sentry: the v3 module requires sentry-go v0.50 or newer. What it removed is rewritten or reported where the code uses it (Scope.SetExtra, Event.Extra, sentry.Logger, the logs and metrics options); " +
 			"what it changed without a compile error is that transactions are grouped by their parameterized path (0.47) and that captured panics no longer have the frames of sentry.Recover (0.49), so issues and transactions may regroup after the upgrade.",
+	},
+	{
+		pkg:     reviewContribPath("jwt"),
+		message: `jwt: a request the middleware rejects now carries a WWW-Authenticate challenge, Bearer realm="Restricted", with error="invalid_token" and an error_description for a token that failed verification, which v2 did not send; set Config.Realm to change the realm. An ErrorHandler that writes the header itself keeps its value.`,
+	},
+	{
+		pkg:     reviewMiddlewarePath("cors"),
+		message: `cors: the list headers (Access-Control-Allow-Methods, Access-Control-Allow-Headers and Access-Control-Expose-Headers) are joined with ", " instead of ",", and Access-Control-Max-Age is sent on preflight responses only, where v2 sent it on every CORS response; check the clients and tests that match the exact values.`,
+	},
+	{
+		pkg:     reviewMiddlewarePath("compress"),
+		message: "compress: the encoding is picked by the weights of the client's Accept-Encoding among br, zstd, gzip and deflate, so a client that accepts zstd now gets Content-Encoding: zstd (v2 on an older fasthttp sent the body uncompressed), and Vary: Accept-Encoding is added to every response that passes through, also to the ones it leaves uncompressed (v2 added it to compressed ones only).",
+	},
+	{
+		pkg:     reviewMiddlewarePath("etag"),
+		message: "etag: a request with If-None-Match: * is answered with 304 Not Modified, where v2 answered 200 with the body.",
+	},
+	{
+		pkg: reviewMiddlewarePath("static"),
+		when: func(rf *reviewFile) bool {
+			return rf.literalHasKey(reviewV3Prefix+"middleware/static", "Config", "ByteRange")
+		},
+		message: reviewRangeNote("static"),
+	},
+	{
+		pkg:     reviewCorePkgRe,
+		when:    func(rf *reviewFile) bool { return rf.literalHasKey(reviewCorePath, "SendFile", "ByteRange") },
+		message: reviewRangeNote("SendFile"),
+	},
+	{
+		pkg:     reviewCorePkgRe,
+		when:    func(rf *reviewFile) bool { return rf.callsCtxMethod("Download", "Attachment") },
+		message: `Download and Attachment: a file name with non-ASCII characters is sent as filename="<name>" and filename*=UTF-8''<percent-encoded name> in Content-Disposition, where v2 sent only the percent-encoded name in filename="..."; check the clients and tests that read the header.`,
+	},
+	{
+		// the text only matters to code that shows or compares it: a test that names the text of v2
+		pkg:     reviewCorePkgRe,
+		uses:    regexp.MustCompile(`\btimeout error\b`),
+		message: `app.Test: a timeout is reported as os.ErrDeadlineExceeded, whose text is "i/o timeout", where v2 returned "test: timeout error 10ms"; compare with errors.Is(err, os.ErrDeadlineExceeded) instead of the text.`,
+	},
+	{
+		pkg: regexp.MustCompile(`^github\.com/gofiber/fiber/v3/client$`),
+		message: `client: errors of the transport are worded by the fasthttp that Fiber v3 requires and by the new client: a refused connection reads "error when dialing host:port: dial tcp ..." (the v2 Agent returned "dial tcp ..."), ` +
+			`a timeout of the client reads "timeout or cancel" (v2: "timeout") and a response over the size limit reads "fasthttp: body size exceeds the given limit" (v2: without the prefix); ` +
+			`a program that prints or compares err.Error() shows or breaks on the new texts, errors.Is with client.ErrTimeoutOrCancel does not.`,
+	},
+	{
+		pkg:     reviewMiddlewarePath("session"),
+		uses:    regexp.MustCompile(`\.Destroy\(`),
+		message: "session: Destroy expires the cookie with max-age=0, where v2 set an expires date; a client or test that reads expires from the Set-Cookie header has to read max-age.",
+	},
+	{
+		pkg: reviewMiddlewarePath("csrf"),
+		when: func(rf *reviewFile) bool {
+			return rf.literalHasKey(reviewV3Prefix+"middleware/csrf", "Config", "ErrorHandler")
+		},
+		message: `csrf: the errors the middleware hands to Config.ErrorHandler have new texts ("csrf: token not found" where v2 said "missing csrf token in header", "csrf: token invalid" where it said "csrf token invalid"), ` +
+			"so a handler or test that puts err.Error() into the response shows them; match with errors.Is(err, csrf.ErrTokenNotFound) and csrf.ErrTokenInvalid instead.",
 	},
 }

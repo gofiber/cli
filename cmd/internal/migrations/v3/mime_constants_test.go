@@ -32,8 +32,12 @@ func handler(c *fiber.Ctx) error {
 	return c.SendString("console.log(1)")
 }
 `,
-			msg:   "Migrating MIME constants",
-			notes: []string{"main.go:6: fiber.MIMEApplicationJavaScriptCharsetUTF8 is now MIMETextJavaScriptCharsetUTF8", "main.go:7: fiber.MIMEApplicationJavaScript is now MIMETextJavaScript"},
+			msg: "Migrating MIME constants",
+			notes: []string{
+				"main.go:6: fiber.MIMEApplicationJavaScriptCharsetUTF8 is now MIMETextJavaScriptCharsetUTF8: the media type is text/javascript, it was application/javascript",
+				"main.go:7: fiber.MIMEApplicationJavaScript is now MIMETextJavaScript: the media type is text/javascript, it was application/javascript; " +
+					`a .js file served by the static handler is "text/javascript; charset=utf-8", which this constant does not equal: compare it with MIMETextJavaScriptCharsetUTF8`,
+			},
 		},
 		{
 			name: "aliased import and a note for each kind only once",

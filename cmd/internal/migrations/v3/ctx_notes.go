@@ -28,10 +28,12 @@ var ctxPlainMediaLiterals = []string{"application/json", "application/xml", "tex
 // MigrateCtxBehaviorNotes points at the places where the behavior of a response
 // changed in a way that tests tend to pin, which no rewrite can follow: the body
 // v2 answered an unmatched route with, and the exact Content-Type a test
-// expects. It does not change any file.
+// expects. It looks at the tests that import fiber and at those that reach an app
+// of the module through a package that does. It does not change any file.
 func MigrateCtxBehaviorNotes(_ *cobra.Command, cwd string, _, _ *semver.Version) error {
+	run := newCtxRun()
 	_, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
-		ctxBehaviorNotes(content, fi)
+		ctxBehaviorNotes(content, fi, run)
 		return content
 	})
 	if err != nil {
@@ -40,22 +42,34 @@ func MigrateCtxBehaviorNotes(_ *cobra.Command, cwd string, _, _ *semver.Version)
 	return nil
 }
 
-func ctxBehaviorNotes(content string, fi internal.FileInfo) {
+func ctxBehaviorNotes(content string, fi internal.FileInfo, run *ctxRun) {
 	notFound := strings.Contains(content, "Cannot ")
 	isTest := strings.HasSuffix(fi.Rel, "_test.go")
 	if !notFound && !isTest {
 		return
 	}
+	var g *goSource
+	var ok bool
 	names := fiberNames(content)
-	if len(names) == 0 {
-		return
+	if len(names) > 0 {
+		g, ok = parseFile(fi, content)
+	} else {
+		// A test reaches the app through a helper of the module that returns it or
+		// serves it, and has no fiber import of its own: it sees the same responses.
+		if !isTest || !run.reachesContexts(fi, ctxImportsOf(content)) {
+			return
+		}
+		// the migrations said when the file does not parse
+		g, ok = parseSource(content)
 	}
-	g, ok := parseFile(fi, content)
 	if !ok {
 		return
 	}
 
-	g.walk(func(n ast.Node, _ []ast.Node) bool {
+	// The media types a table of cases expects: reported when the test reads a Content-Type.
+	var expected []*ast.BasicLit
+	readsContentType := false
+	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.BasicLit:
 			if notFound && x.Kind == token.STRING {
@@ -65,10 +79,14 @@ func ctxBehaviorNotes(content string, fi internal.FileInfo) {
 						value)
 				}
 			}
+			if isTest && ctxIsExpectedMediaType(x, stack) {
+				expected = append(expected, x)
+			}
 		case *ast.CallExpr:
 			if isTest && !ctxIsPrefixCheck(x) && ctxIsContentTypeAssertion(x.Args, names) {
 				internal.Notef(fi, g.line(x.Pos()), ctxCharsetMessage)
 			}
+			readsContentType = readsContentType || (isTest && ctxReadsContentType(x, names))
 		case *ast.BinaryExpr:
 			if isTest && (x.Op == token.EQL || x.Op == token.NEQ) && ctxIsContentTypeAssertion([]ast.Expr{x.X, x.Y}, names) {
 				internal.Notef(fi, g.line(x.Pos()), ctxCharsetMessage)
@@ -76,6 +94,53 @@ func ctxBehaviorNotes(content string, fi internal.FileInfo) {
 		}
 		return true
 	})
+	if readsContentType {
+		for _, lit := range expected {
+			internal.Notef(fi, g.line(lit.Pos()), ctxCharsetMessage)
+		}
+	}
+}
+
+// ctxIsExpectedMediaType reports whether lit is a plain media type that stands as a row of a table or a
+// field of a case, which a test compares with the Content-Type it read: not one a request is made with.
+func ctxIsExpectedMediaType(lit *ast.BasicLit, stack []ast.Node) bool {
+	if lit.Kind != token.STRING {
+		return false
+	}
+	if value, err := strconv.Unquote(lit.Value); err != nil || !slices.Contains(ctxPlainMediaLiterals, value) {
+		return false
+	}
+
+	// The element of a composite literal, or the value of one of its fields.
+	parents := stack
+	if len(parents) > 0 {
+		if kv, ok := parents[len(parents)-1].(*ast.KeyValueExpr); ok && kv.Value == lit {
+			parents = parents[:len(parents)-1]
+		}
+	}
+	if len(parents) == 0 {
+		return false
+	}
+	if _, ok := parents[len(parents)-1].(*ast.CompositeLit); !ok {
+		return false
+	}
+
+	// The header of a request, as in http.Header{"Content-Type": {"application/json"}}.
+	for _, parent := range slices.Backward(parents[max(0, len(parents)-3):]) {
+		switch x := parent.(type) {
+		case *ast.KeyValueExpr:
+			if key, isLit := x.Key.(*ast.BasicLit); isLit {
+				if name, err := strconv.Unquote(key.Value); err == nil && strings.EqualFold(name, "Content-Type") {
+					return false
+				}
+			}
+		case *ast.CompositeLit:
+			if sel, isSel := x.Type.(*ast.SelectorExpr); isSel && sel.Sel.Name == clientFieldHeader {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ctxCharsetMessage is the note for an exact comparison of a Content-Type.

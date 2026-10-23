@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
@@ -26,10 +27,16 @@ type Migration struct {
 	// Review, when set, runs after every migration and the go.mod work, if the
 	// migration applied. It changes nothing: it records notes about what the
 	// migrations could not finish or could not make behave the same.
-	Review    func(cwd string)
-	From      string
-	To        string
-	Functions []MigrationFn
+	Review func(cwd string)
+	// Dependencies, when set, runs after the go.mod work and before Review, if the
+	// migration applied. tidied says that go.mod was tidied by it: false when the
+	// go.mod work was skipped or failed. It looks at the dependencies of the
+	// project, which only a tidied go.mod and a module cache that holds them can
+	// tell, and records notes.
+	Dependencies func(cwd string, tidied bool)
+	From         string
+	To           string
+	Functions    []MigrationFn
 }
 
 // Migrations is a list of all migrations
@@ -45,9 +52,10 @@ var Migrations = []Migration{
 	{
 		// v2 to v3. A project that is already on v3 must not get the v2 rewrites
 		// again, and a v2 target must not get v3 code.
-		From:   ">=2.0.0-0 <3.0.0-0",
-		To:     ">=3.0.0-0 <4.0.0-0",
-		Review: v3migrations.Review,
+		From:         ">=2.0.0-0 <3.0.0-0",
+		To:           ">=3.0.0-0 <4.0.0-0",
+		Review:       v3migrations.Review,
+		Dependencies: v3migrations.ReviewDependencies,
 		Functions: []MigrationFn{
 			v3migrations.MigrateHandlerSignatures,
 			v3migrations.MigrateViewBind,
@@ -190,9 +198,14 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	defer internal.SetFileFilters(nil, nil)
 	// Whatever an earlier run in this process left behind is not ours to report.
 	internal.DrainNotes(cwd)
+	// The files are formatted as they are rewritten; the text the author wrote is
+	// put back where no migration changed it once they all ran.
+	internal.BeginRun(cwd)
+	defer internal.AbandonRun(cwd)
 	var errs []error
 	var notes []internal.Note
 	var reviews []func(cwd string)
+	var dependencies []func(cwd string, tidied bool)
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
 		var err error
@@ -217,6 +230,9 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		if m.Review != nil {
 			reviews = append(reviews, m.Review)
 		}
+		if m.Dependencies != nil {
+			dependencies = append(dependencies, m.Dependencies)
+		}
 
 		for _, fn := range m.Functions {
 			name := migrationName(fn)
@@ -230,16 +246,30 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		}
 	}
 
+	moved, err := internal.FinishRun(cwd)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("restore the formatting: %w", err))
+	}
+	notes = followLines(notes, moved)
+
+	tidied := false
 	if !skipGoMod {
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
+			internal.AddNote(cwd, internal.Note{Message: goModFailedNote})
 		}
 		if err := MigrateDependencies(cmd, cwd, origDeps, target); err != nil {
 			errs = append(errs, fmt.Errorf("migrate dependencies: %w", err))
 		}
 		if err := internal.RunGoMod(cwd); err != nil {
 			errs = append(errs, fmt.Errorf("go mod: %w", err))
+			internal.AddNote(cwd, internal.Note{Message: goModFailedNote})
+		} else {
+			tidied = true
 		}
+	}
+	for _, review := range dependencies {
+		review(cwd, tidied)
 	}
 	for _, review := range reviews {
 		review(cwd)
@@ -255,8 +285,24 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 	return nil
 }
 
+// goModFailedNote says what state go.mod is in when the go command failed.
+const goModFailedNote = "go mod tidy failed (see its output above), so go.mod and go.sum hold the edits of the migration (the requirements moved to the v3 modules, " +
+	"the raised go directive and requirements) but are not tidied; fix the cause and run go mod tidy and go mod download"
+
+// followLines gives the notes the line numbers of the files as they are after the
+// formatting of the author was put back (see internal.FinishRun).
+func followLines(notes []internal.Note, moved map[string]func(line int) int) []internal.Note {
+	for i, n := range notes {
+		if remap, ok := moved[filepath.ToSlash(n.File)]; ok && n.Line > 0 {
+			notes[i].Line = remap(n.Line)
+		}
+	}
+	return notes
+}
+
 // printNotes tells the user what the migrations left for them to look at. The
-// same finding reported by several migrations is only listed once.
+// same finding reported by several migrations is only listed once, and the notes
+// of one line are one item: the first is the line, the others follow it.
 func printNotes(cmd *cobra.Command, notes []internal.Note) {
 	type key struct {
 		file    string
@@ -284,9 +330,22 @@ func printNotes(cmd *cobra.Command, notes []internal.Note) {
 		)
 	})
 
-	cmd.Printf("\n%d %s to review by hand:\n", len(unique), pluralize(len(unique), "item", "items"))
+	// The notes are sorted by place, so those of one line are next to each other.
+	var items [][]internal.Note
 	for _, n := range unique {
-		cmd.Printf("  %s\n", n)
+		if last := len(items) - 1; last >= 0 && n.File != "" && n.Line > 0 && items[last][0].File == n.File && items[last][0].Line == n.Line {
+			items[last] = append(items[last], n)
+			continue
+		}
+		items = append(items, []internal.Note{n})
+	}
+
+	cmd.Printf("\n%d %s to review by hand:\n", len(items), pluralize(len(items), "item", "items"))
+	for _, item := range items {
+		cmd.Printf("  %s\n", item[0])
+		for _, n := range item[1:] {
+			cmd.Printf("      also: %s\n", internal.Note{Migration: n.Migration, Message: n.Message})
+		}
 	}
 }
 

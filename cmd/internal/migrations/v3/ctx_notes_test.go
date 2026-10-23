@@ -84,6 +84,181 @@ func TestNotFound(t *testing.T) {
 			notes: []string{"main_test.go:15: Fiber v3 answers an unmatched route", "main_test.go:18: Fiber v3 answers an unmatched route"},
 		},
 		{
+			name: "a test that reaches the app through a helper package of the module",
+			file: "svc/svc_test.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc_test
+
+import (
+	"io"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"example.com/app/svc"
+)
+
+func TestContentTypes(t *testing.T) {
+	app := svc.New()
+	resp, _ := app.Test(httptest.NewRequest("GET", "/json", nil))
+	if resp.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("content type %q", resp.Header.Get("Content-Type"))
+	}
+	if resp.Header.Get("Content-Type") == "text/plain; charset=utf-8" {
+		t.Error("kept")
+	}
+}
+
+func TestNotFound(t *testing.T) {
+	resp, _ := svc.New().Test(httptest.NewRequest("GET", "/nope", nil))
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "Cannot GET /nope") {
+		t.Fatal("body")
+	}
+}
+`,
+			notes: []string{"svc/svc_test.go:15: Fiber v3 adds", "svc/svc_test.go:26: Fiber v3 answers an unmatched route"},
+		},
+		{
+			name: "the media types a table of cases expects",
+			file: "svc/svc_test.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"example.com/app/svc"
+)
+
+func TestContentTypes(t *testing.T) {
+	app := svc.New()
+	cases := []struct{ path, want string }{
+		{"/json", "application/json"},
+		{"/ping", "text/plain; charset=utf-8"},
+		{path: "/xml", want: "application/xml"},
+	}
+	byPath := map[string]string{"/html": "text/html"}
+	for _, tc := range cases {
+		req := httptest.NewRequest("POST", tc.path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header = http.Header{"Content-Type": {"application/json"}}
+		resp, _ := app.Test(req)
+		if got := resp.Header.Get("Content-Type"); got != tc.want {
+			t.Errorf("content type %q, want %q", got, tc.want)
+		}
+	}
+	_ = byPath
+}
+`,
+			notes: []string{"svc/svc_test.go:15: Fiber v3 adds", "svc/svc_test.go:17: Fiber v3 adds", "svc/svc_test.go:19: Fiber v3 adds"},
+		},
+		{
+			name: "a table of media types in a test that reads no Content-Type",
+			file: "svc/svc_test.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc_test
+
+import (
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"example.com/app/svc"
+)
+
+func TestRequests(t *testing.T) {
+	app := svc.New()
+	for _, ctype := range []string{"application/json", "text/html"} {
+		req := httptest.NewRequest("POST", "/x", strings.NewReader("{}"))
+		req.Header.Set("Content-Type", ctype)
+		_, _ = app.Test(req)
+	}
+}
+`,
+		},
+		{
+			name: "a test of the package that has another file with the app",
+			file: "svc/svc_test.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc
+
+import (
+	"net/http/httptest"
+	"testing"
+)
+
+func TestPackage(t *testing.T) {
+	resp, _ := New().Test(httptest.NewRequest("GET", "/json", nil))
+	if resp.Header.Get("Content-Type") != "application/json" {
+		t.Error("type")
+	}
+}
+`,
+			notes: []string{"svc/svc_test.go:10: Fiber v3 adds"},
+		},
+		{
+			name: "a test of a package that cannot reach fiber stays silent",
+			file: "util/util_test.go",
+			others: map[string]string{"util/util.go": `package util
+
+func Name() string { return "x" }
+`},
+			in: `package util_test
+
+import (
+	"net/http/httptest"
+	"testing"
+
+	"example.com/app/util"
+)
+
+func TestOther(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if rec.Header().Get("Content-Type") != "application/json" || util.Name() == "Cannot GET /x" {
+		t.Error("x")
+	}
+}
+`,
+		},
+		{
+			name: "a file that is no test and has no fiber import stays silent",
+			file: "svc/helper.go",
+			others: map[string]string{"svc/svc.go": `package svc
+
+import "github.com/gofiber/fiber/v2"
+
+func New() *fiber.App { return fiber.New() }
+`},
+			in: `package svc
+
+const missing = "Cannot GET /x"
+`,
+		},
+		{
 			name: "files without a fiber import",
 			file: "main_test.go",
 			in: `package main

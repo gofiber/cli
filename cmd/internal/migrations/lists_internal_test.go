@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -11,8 +12,11 @@ import (
 	"testing"
 
 	semver "github.com/Masterminds/semver/v3"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gofiber/cli/cmd/internal"
 )
 
 // selectedMigrations returns the names of the migration functions that run when
@@ -196,4 +200,37 @@ func isMigrationShape(ft *ast.FuncType) bool {
 		params += max(len(f.Names), 1)
 	}
 	return result.Name == "error" && params == 4
+}
+
+func Test_printNotes_OneItemPerLine(t *testing.T) {
+	t.Parallel()
+
+	notes := []internal.Note{
+		{File: "b.go", Line: 3, Message: "third"},
+		{File: "a.go", Line: 12, Migration: "MigrateConfigListenerFields", Message: "first, from a migration"},
+		{File: "a.go", Line: 12, Message: "second, from the review"},
+		{File: "a.go", Line: 12, Message: "second, from the review"},
+		{File: "a.go", Line: 40, Message: "other line"},
+		{File: "", Message: "project wide"},
+		{File: "", Message: "project wide, other"},
+		{File: "c.go", Message: "file wide"},
+		{File: "c.go", Message: "file wide, other"},
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	printNotes(cmd, notes)
+
+	assert.Equal(t, `
+7 items to review by hand:
+  project wide
+  project wide, other
+  a.go:12: MigrateConfigListenerFields: first, from a migration
+      also: second, from the review
+  a.go:40: other line
+  b.go:3: third
+  c.go: file wide
+  c.go: file wide, other
+`, buf.String(), "the two notes of a.go:12 are one item, the identical one is dropped, notes without a line stay apart")
 }

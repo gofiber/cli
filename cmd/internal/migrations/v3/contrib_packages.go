@@ -401,7 +401,7 @@ func (r *contribRun) rewriteImports(content string, fi internal.FileInfo) string
 func (r *contribRun) writeGoMods(mods []*contribGoMod) (bool, error) {
 	changed := false
 	for _, mod := range mods {
-		updated := r.rewriteGoMod(mod)
+		updated := r.raiseOtelFamily(mod, r.rewriteGoMod(mod))
 		if updated == mod.content {
 			continue
 		}

@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -96,11 +97,47 @@ func fiberModuleDirs(root string) ([]string, error) {
 	return dirs, nil
 }
 
+// maxCommandOutput is how much of the output of a go command is kept to explain a failure.
+const maxCommandOutput = 1 << 16
+
+// tail keeps the last maxCommandOutput bytes written to it.
+type tail struct{ data []byte }
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.data = append(t.data, p...)
+	if len(t.data) > maxCommandOutput {
+		t.data = t.data[len(t.data)-maxCommandOutput:]
+	}
+	return len(p), nil
+}
+
+// runCmd runs the command with its output on the terminal. When it fails, the
+// error says what the output explains (see goFailureHint).
 func runCmd(cmd *exec.Cmd) error {
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var out tail
+	cmd.Stdout = io.MultiWriter(os.Stdout, &out)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &out)
 	if err := cmd.Run(); err != nil {
+		if hint := goFailureHint(string(out.data)); hint != "" {
+			return fmt.Errorf("failed to run %s: %w (%s)", cmd.String(), err, hint)
+		}
 		return fmt.Errorf("failed to run %s: %w", cmd.String(), err)
 	}
 	return nil
+}
+
+// reOtelSkew matches the message of the go command for a package that the
+// OpenTelemetry module of go.mod no longer has: the modules of the family were
+// raised one by one, and one of them still wants a package an older release of
+// another had.
+var reOtelSkew = regexp.MustCompile(`does not contain package go\.opentelemetry\.io/otel`)
+
+// goFailureHint explains the failure of a go command from its output, "" when
+// the output says nothing the migration knows.
+func goFailureHint(output string) string {
+	if reOtelSkew.MatchString(output) {
+		return "the OpenTelemetry modules of go.mod are on different releases, and they have to be on one: " +
+			"raise them together, for example go get go.opentelemetry.io/otel@latest go.opentelemetry.io/otel/sdk@latest and the exporters you use at their latest release, then run go mod tidy"
+	}
+	return ""
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -155,7 +156,7 @@ func Test_DoMigration_ReportsWhatItCouldNotMigrate(t *testing.T) {
 	require.NoError(t, os.WriteFile(broken, fmt.Appendf(nil, handler, "second", "(nil"), 0o600))
 	require.NoError(t, os.WriteFile(later, fmt.Appendf(nil, handler, "third", "nil"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
-		[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
 
 	var buf bytes.Buffer
 	cmd := &cobra.Command{}
@@ -183,7 +184,7 @@ func Test_DoMigration_NoNotesNoReport(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
-		[]byte("module test\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v3 v3.6.1\n"), 0o600))
 
 	var buf bytes.Buffer
 	cmd := &cobra.Command{}
@@ -191,4 +192,168 @@ func Test_DoMigration_NoNotesNoReport(t *testing.T) {
 	require.NoError(t, migrations.DoMigration(cmd, dir,
 		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
 	assert.NotContains(t, buf.String(), "review by hand")
+}
+
+// The files are formatted while the migrations rewrite them, and the author's text is put back where no
+// migration changed it: the comment that is not formatted, the order of the imports and the line endings.
+func Test_DoMigration_KeepsWhatTheAuthorWrote(t *testing.T) {
+	source := `package main
+
+import (
+	"os"
+	"github.com/gofiber/fiber/v2"
+)
+
+//Handler says hi.
+func Handler(c *fiber.Ctx) error {
+	_ = os.Args
+	return c.SendString("hi")
+}
+
+//Other is not touched.
+func Other(a   int) int { return a }
+`
+	want := strings.NewReplacer("github.com/gofiber/fiber/v2", "github.com/gofiber/fiber/v3", "c *fiber.Ctx", "c fiber.Ctx").Replace(source)
+
+	for _, tc := range []struct {
+		name    string
+		newline string
+	}{
+		{name: "LF", newline: "\n"},
+		{name: "CRLF", newline: "\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			main := filepath.Join(dir, "main.go")
+			require.NoError(t, os.WriteFile(main, []byte(strings.ReplaceAll(source, "\n", tc.newline)), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			require.NoError(t, migrations.DoMigration(cmd, dir,
+				semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+			content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			assert.Equal(t, strings.ReplaceAll(want, "\n", tc.newline), string(content))
+
+			// a second run changes nothing
+			var again bytes.Buffer
+			cmd.SetOut(&again)
+			require.NoError(t, migrations.DoMigration(cmd, dir,
+				semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+			secondContent, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+			require.NoError(t, err)
+			assert.Equal(t, string(content), string(secondContent))
+		})
+	}
+}
+
+// A note points at the line the file has when the run is over, also when putting the author's text back moved it.
+func Test_DoMigration_NotesFollowTheLinesOfTheRestoredFile(t *testing.T) {
+	// the author wrote two blank lines before the handler, the formatter keeps one
+	source := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.Download(\"report.txt\")\n}\n"
+	dir := t.TempDir()
+	main := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(main, []byte(source), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, migrations.DoMigration(cmd, dir,
+		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+	content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "\n\n\n\nfunc Handler(c fiber.Ctx) error {", "the blank lines of the author are back")
+	lines := strings.Split(string(content), "\n")
+	found := false
+	for line := range strings.SplitSeq(buf.String(), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "main.go:") || !strings.Contains(line, "no longer serves byte ranges") {
+			continue
+		}
+		// "main.go:N: ..." must name the line of the file that has the call the note is about
+		number := strings.SplitN(strings.TrimSpace(line), ":", 3)[1]
+		n, convErr := strconv.Atoi(number)
+		require.NoError(t, convErr, line)
+		assert.Contains(t, lines[n-1], "c.Download(", "the note %q points at line %d: %q", line, n, lines[n-1])
+		found = true
+	}
+	assert.True(t, found, "a note about the byte ranges of Download: %s", buf.String())
+}
+
+// When go mod tidy fails, go.mod holds the edits of the migration and is not tidied: the report says so, and
+// names the cause the go command printed when the migration knows it.
+func Test_DoMigration_GoModFailureIsExplained(t *testing.T) {
+	dir := t.TempDir()
+	fiberGoMod := filepath.Join(dir, "fiber.mod")
+	require.NoError(t, os.WriteFile(fiberGoMod, []byte("module github.com/gofiber/fiber/v3\n\ngo 1.26.0\n"), 0o600))
+	t.Cleanup(stubFiberDownload(t, fiberGoMod))
+	t.Cleanup(stubFailingGoMod(t, "go: finding module for package go.opentelemetry.io/otel/exporters/otlp/internal/envconfig\n"+
+		"module go.opentelemetry.io/otel/exporters/otlp@latest found (v0.20.1), but does not contain package go.opentelemetry.io/otel/exporters/otlp/internal/envconfig"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	err := migrations.DoMigration(cmd, dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), false, false, nil, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the OpenTelemetry modules of go.mod are on different releases, and they have to be on one")
+	out := buf.String()
+	assert.Contains(t, out, "1 item to review by hand:", "the note is there once, although the go command failed twice")
+	assert.Contains(t, out, "go mod tidy failed (see its output above), so go.mod and go.sum hold the edits of the migration")
+}
+
+// A dependency that is built for Fiber v2 is looked for in the go.mod files of the module cache when the
+// migration did not tidy go.mod: with --skip_go_mod, and when go mod tidy failed.
+func Test_DoMigration_DependenciesAreJudgedFromTheModuleCacheWhenGoModIsNotTidied(t *testing.T) {
+	const want = "example.org/legacy v1.0.0 requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2"
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T)
+		skip  bool
+	}{
+		{name: "with --skip_go_mod", skip: true, setup: func(*testing.T) {}},
+		{name: "when go mod tidy fails", setup: func(t *testing.T) {
+			t.Helper()
+			t.Cleanup(stubFailingGoMod(t, "go: updates to go.mod needed"))
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cache := t.TempDir()
+			t.Setenv("GOMODCACHE", cache)
+			mod := filepath.Join(cache, "cache", "download", "example.org", "legacy", "@v", "v1.0.0.mod")
+			require.NoError(t, os.MkdirAll(filepath.Dir(mod), 0o750))
+			require.NoError(t, os.WriteFile(mod, []byte("module example.org/legacy\n\ngo 1.20\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+			fiberGoMod := filepath.Join(dir, "fiber.mod")
+			require.NoError(t, os.WriteFile(fiberGoMod, []byte("module github.com/gofiber/fiber/v3\n\ngo 1.26.0\n"), 0o600))
+			t.Cleanup(stubFiberDownload(t, fiberGoMod))
+			tc.setup(t)
+
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nimport _ \"example.org/legacy\"\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module test\n\ngo 1.26.0\n\nrequire (\n\tgithub.com/gofiber/fiber/v2 v2.52.15\n\texample.org/legacy v1.0.0\n)\n"), 0o600))
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			cmd.Flags().Bool("skip_go_mod", tc.skip, "")
+			_ = migrations.DoMigration(cmd, dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), tc.skip, false, nil, nil)
+
+			assert.Contains(t, buf.String(), "main.go:3: "+want)
+			assert.Contains(t, buf.String(), "go.mod was not tidied by the migration")
+		})
+	}
 }

@@ -133,3 +133,174 @@ func Test_ChangeFileContentInfo_PassesTheFile(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "pkg", "a.go"), seen[0].Path)
 	assert.Equal(t, filepath.Join("pkg", "a.go"), seen[0].Rel)
 }
+
+// runChange begins a run, applies the processors one after the other as the migrations of a run do and finishes it.
+func runChange(t *testing.T, dir string, processors ...func(string) string) map[string]func(int) int {
+	t.Helper()
+
+	internal.BeginRun(dir)
+	t.Cleanup(func() { internal.AbandonRun(dir) })
+	for _, processor := range processors {
+		_, err := internal.ChangeFileContent(dir, processor)
+		require.NoError(t, err)
+	}
+	moved, err := internal.FinishRun(dir)
+	require.NoError(t, err)
+	return moved
+}
+
+func replacing(old, replacement string) func(string) string {
+	return func(content string) string { return strings.ReplaceAll(content, old, replacement) }
+}
+
+func Test_FinishRun_KeepsTheLineEndingsOfTheFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	crlf := writeGoFile(t, dir, "crlf.go", "package a\r\n\r\nvar x = 1\r\n\r\nvar s = `a\r\nb`\r\n")
+	lf := writeGoFile(t, dir, "lf.go", "package a\n\nvar x = 1\n")
+	mixed := writeGoFile(t, dir, "mixed.go", "package a\r\n\r\nvar x = 1\nvar y = 1\nvar z = 1\n")
+
+	runChange(t, dir, replacing("x = 1", "x = 2"))
+
+	assert.Equal(t, "package a\r\n\r\nvar x = 2\r\n\r\nvar s = `a\r\nb`\r\n", readGoFile(t, crlf), "every line of a CRLF file ends with CRLF")
+	assert.Equal(t, "package a\n\nvar x = 2\n", readGoFile(t, lf))
+	assert.Equal(t, "package a\r\n\r\nvar x = 2\nvar y = 1\nvar z = 1\n", readGoFile(t, mixed), "most lines end with LF, so the lines the migration wrote do; the others keep theirs")
+}
+
+func Test_FinishRun_KeepsTheFormattingOfTheLinesNoMigrationChanged(t *testing.T) {
+	t.Parallel()
+
+	source := `package a
+
+import (
+	"strings"
+	"fmt"
+)
+
+//Hello says hello.
+func Hello(name string) string {
+	fields := map[string]int{
+		"a": 1,
+		"bbb": 2,
+	}
+	return fmt.Sprint(name, fields,   strings.ToUpper(name))
+}
+
+//Bye says bye.
+func Bye() string { return "bye" }
+`
+	dir := t.TempDir()
+	path := writeGoFile(t, dir, "a.go", source)
+	crlf := writeGoFile(t, dir, "crlf.go", strings.ReplaceAll(source, "\n", "\r\n"))
+
+	// two migrations in a row, the second reads what the first wrote
+	runChange(t, dir, replacing(`return "bye"`, `return "goodbye"`), replacing("goodbye", "good bye"))
+
+	want := strings.ReplaceAll(source, `return "bye"`, `return "good bye"`)
+	assert.Equal(t, want, readGoFile(t, path), "the unformatted lines no migration touched stay as they were: the comments, the import order, the spacing")
+	assert.Equal(t, strings.ReplaceAll(want, "\n", "\r\n"), readGoFile(t, crlf), "and so do the line endings")
+}
+
+func Test_FinishRun_TheMigratedLinesAreFormatted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeGoFile(t, dir, "a.go", `package a
+
+//Hello says hello.
+func Hello() int {
+	return 1
+}
+`)
+
+	runChange(t, dir, func(content string) string {
+		// the migration writes a badly indented block, and an import it needs
+		content = strings.ReplaceAll(content, "return 1", "if true {\nreturn 2\n\t}\n\treturn 1")
+		return strings.ReplaceAll(content, "package a\n", "package a\n\nimport \"strings\"\n\nvar _ = strings.ToUpper\n")
+	})
+
+	got := readGoFile(t, path)
+	assert.Contains(t, got, "\tif true {\n\t\treturn 2\n\t}\n", "the inserted code is formatted")
+	assert.Contains(t, got, "import \"strings\"\n\nvar _ = strings.ToUpper\n")
+	assert.Contains(t, got, "//Hello says hello.", "the author's comment, a few lines away, is not")
+}
+
+func Test_FinishRun_AnImportTheMigrationDroppedStaysDropped(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeGoFile(t, dir, "a.go", `package a
+
+import (
+	"os"
+	"fmt"
+)
+
+func Hello() { fmt.Println(os.Args) }
+`)
+
+	runChange(t, dir, replacing("fmt.Println(os.Args)", "println(1)"))
+
+	// both imports are unused now and the formatter drops them: that is the migration's change
+	assert.Equal(t, "package a\n\nfunc Hello() { println(1) }\n", readGoFile(t, path))
+}
+
+func Test_FinishRun_FollowsTheLinesOfTheNotes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeGoFile(t, dir, "a.go", `package a
+
+var a = 1
+
+
+var b = 2
+
+var c = 3
+`)
+	same := writeGoFile(t, dir, "same.go", "package a\n\nvar x = 1\n")
+
+	moved := runChange(t, dir, replacing("c = 3", "c = 4"))
+
+	remap, ok := moved["a.go"]
+	require.True(t, ok, "the second blank line came back, so the lines moved")
+	assert.Equal(t, 3, remap(3))
+	assert.Equal(t, 7, remap(6), "var b: the formatter had removed a blank line, the author's text has it")
+	assert.Equal(t, 9, remap(8), "var c")
+	assert.NotContains(t, moved, "same.go")
+	assert.Equal(t, "package a\n\nvar x = 1\n", readGoFile(t, same))
+}
+
+func Test_FinishRun_WithoutBeginRunTheFilesStayFormatted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeGoFile(t, dir, "a.go", "package a\r\n\r\n//Hello says hello.\r\nvar x = 1\r\n")
+
+	_, err := internal.ChangeFileContent(dir, replacing("x = 1", "x = 2"))
+	require.NoError(t, err)
+	moved, err := internal.FinishRun(dir)
+	require.NoError(t, err)
+
+	assert.Empty(t, moved)
+	assert.Equal(t, "package a\n\n// Hello says hello.\nvar x = 2\n", readGoFile(t, path), "what the formatter wrote is kept when no run recorded the original")
+}
+
+func Test_FinishRun_LeavesAFileAloneThatIsNoLongerFormatted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeGoFile(t, dir, "a.go", "package a\n\n//Hello says hello.\nvar x = 1\n")
+
+	internal.BeginRun(dir)
+	t.Cleanup(func() { internal.AbandonRun(dir) })
+	_, err := internal.ChangeFileContent(dir, replacing("x = 1", "x = 2"))
+	require.NoError(t, err)
+	// something else writes it afterwards, unformatted
+	require.NoError(t, os.WriteFile(path, []byte("package a\n\n// Hello says hello.\nvar   x = 3\n"), 0o600))
+
+	_, err = internal.FinishRun(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "package a\n\n// Hello says hello.\nvar   x = 3\n", readGoFile(t, path))
+}
