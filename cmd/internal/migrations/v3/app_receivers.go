@@ -36,8 +36,16 @@ const (
 )
 
 // appMaxDepth bounds how far the resolvers follow declarations, which also
-// keeps them from looping on cyclic ones.
+// keeps them from looping on cyclic ones. A chain of calls such as
+// a.Builder().With(x).With(y).Build() takes several steps for each link.
 const appMaxDepth = 24
+
+// appMaxOriginDepth bounds how far originsOf follows the values back to the
+// fiber.New calls. Each function that returns an app and each variable that is
+// assigned one can lead to several others, and functions that call each other
+// lead back to themselves, so the work grows with the power of the depth: it
+// stays where it was while the resolvers of a chain of calls got deeper.
+const appMaxOriginDepth = 10
 
 // appRouterMethods are the methods of an app or router that return the router
 // again, so that app.Group("/a").Get(...) is still a router.
@@ -236,6 +244,10 @@ func (f *appFile) typeSpecKind(spec *ast.TypeSpec, depth int) appKind {
 
 	switch t := spec.Type.(type) {
 	case *ast.StructType:
+		if !f.ix.enter(spec) {
+			return appKindNone // it embeds itself, through other types
+		}
+		defer f.ix.leave(spec)
 		for _, fld := range t.Fields.List {
 			if len(fld.Names) == 0 {
 				if k := f.typeKind(fld.Type, depth); k == appKindApp || k == appKindRouter {
@@ -902,7 +914,7 @@ func (o *appOrigins) merge(other appOrigins) {
 // originsOf follows the value of the idx-th result of e back to the fiber.New
 // calls it can come from.
 func (f *appFile) originsOf(e ast.Expr, idx, depth int) appOrigins {
-	if depth > appMaxDepth {
+	if depth > appMaxOriginDepth {
 		return appOrigins{}
 	}
 

@@ -24,6 +24,7 @@ type appIndex struct {
 	files    map[string]*appFile
 	pkgs     map[appPkgKey]*appPackage
 	fields   map[appFieldKey]appOrigins
+	active   map[*ast.TypeSpec]struct{}
 	root     string
 	mods     []appModule
 	all      []*appFile
@@ -54,8 +55,24 @@ func newAppIndex(root string) *appIndex {
 		files:  map[string]*appFile{},
 		pkgs:   map[appPkgKey]*appPackage{},
 		fields: map[appFieldKey]appOrigins{},
+		active: map[*ast.TypeSpec]struct{}{},
 	}
 }
+
+// enter marks the declaration of a type as being looked into and reports false
+// when it already is: types that embed each other through pointers lead back to
+// themselves, and following that round again for as deep as the resolvers go takes
+// the time of the power of the depth. Whoever gets true calls leave when done.
+func (ix *appIndex) enter(spec *ast.TypeSpec) bool {
+	if _, busy := ix.active[spec]; busy {
+		return false
+	}
+	ix.active[spec] = struct{}{}
+	return true
+}
+
+// leave ends the look into the declaration that enter marked.
+func (ix *appIndex) leave(spec *ast.TypeSpec) { delete(ix.active, spec) }
 
 // appFile is a parsed Go file together with what the app migrations need to
 // know about it.

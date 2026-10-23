@@ -418,6 +418,10 @@ func structHolding(td *appTypeDecl, name string, depth int) *appTypeDecl {
 	if appStructField(st, name) != nil {
 		return td
 	}
+	if !td.file.ix.enter(td.spec) {
+		return nil // it embeds itself, through other types
+	}
+	defer td.file.ix.leave(td.spec)
 	for _, fld := range st.Fields.List {
 		if len(fld.Names) > 0 {
 			continue
