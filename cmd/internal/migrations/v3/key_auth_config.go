@@ -98,11 +98,11 @@ type mw2KeyAuthRewriter struct {
 	done map[ast.Stmt]bool
 	// extractors is the identifier of the extractors package in the output.
 	extractors string
-	fi         internal.FileInfo
 	edits      editSet
 	// names are the identifiers the file binds to the keyauth package, fiber those it binds to the core package.
 	names []string
 	fiber []string
+	fi    internal.FileInfo
 	// needsFiber is set when the output names fiber.Ctx in a file that does not import the core package.
 	needsFiber bool
 }

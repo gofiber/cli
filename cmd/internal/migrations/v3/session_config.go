@@ -43,9 +43,9 @@ var mw3SessionV3Fields = []string{"IdleTimeout", "AbsoluteTimeout", "Extractor",
 // mw3SessionConfigPass is the rewrite of one file by MigrateSessionConfig.
 type mw3SessionConfigPass struct {
 	f       *mw3SessionFile
-	fi      internal.FileInfo
 	imports mw3ImportEdits
 	edits   editSet
+	fi      internal.FileInfo
 }
 
 func mw3SessionConfigContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {

@@ -16,8 +16,8 @@ import (
 // imports it adds move the code below them.
 type mw1Reporter struct {
 	g       *goSource
-	fi      internal.FileInfo
 	pending []mw1PendingNote
+	fi      internal.FileInfo
 }
 
 type mw1PendingNote struct {

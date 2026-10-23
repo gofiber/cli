@@ -85,11 +85,11 @@ type hcMigration struct {
 	// is copied into a rewritten statement, and as edits of their own elsewhere.
 	renames editSet
 	edits   editSet
-	fi      internal.FileInfo
 	names   []string
 	// v2Configs are the healthcheck.Config literals that still have fields of v2,
 	// split holds the ones that were taken apart.
 	v2Configs  []*ast.CompositeLit
+	fi         internal.FileInfo
 	needsFiber bool
 	// fiberUsed is set when a rename writes a type of the core package.
 	fiberUsed bool

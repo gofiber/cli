@@ -70,7 +70,6 @@ func contribNames(g *goSource, short string) []string {
 
 // contribFile is a Go file being rewritten by one of the contrib migrations.
 type contribFile struct {
-	fi     internal.FileInfo
 	g      *goSource
 	idents map[string]bool
 	// extractors and fiber are the names of the fiber extractors package and of
@@ -78,6 +77,7 @@ type contribFile struct {
 	extractors string
 	fiber      string
 	edits      editSet
+	fi         internal.FileInfo
 }
 
 func newContribFile(g *goSource, fi internal.FileInfo) *contribFile {

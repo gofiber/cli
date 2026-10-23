@@ -60,12 +60,12 @@ type mw3Pkg struct {
 	owner *mw3Pkgs
 	// session is what the package says about the fiber session middleware.
 	session mw3SessionFacts
-	// fi is a file of the directory: it tells which module the package is in.
-	fi   internal.FileInfo
-	dir  string
-	name string
+	dir     string
+	name    string
 	// files are the files of the package, read when first needed.
 	files []mw3PkgFile
+	// fi is a file of the directory: it tells which module the package is in.
+	fi internal.FileInfo
 	// declsRead and sessionRead tell which kinds of fact were read.
 	filesRead   bool
 	declsRead   bool

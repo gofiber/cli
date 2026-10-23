@@ -99,8 +99,7 @@ func importsMigrateUtils(content string, fi internal.FileInfo) string {
 
 // importsUtilsMigration rewrites the uses of the Fiber utils package in one file.
 type importsUtilsMigration struct {
-	g  *goSource
-	fi internal.FileInfo
+	g *goSource
 	// atomic is the identifier of sync/atomic in the file, empty when it is not
 	// imported.
 	atomic string
@@ -113,6 +112,7 @@ type importsUtilsMigration struct {
 	// it is also dot imported.
 	names      []string
 	edits      editSet
+	fi         internal.FileInfo
 	dot        bool
 	addRequire bool
 }

@@ -107,13 +107,13 @@ func mw3SessionSourceContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) st
 // mw3SessionSourcePass is the rewrite of one file by mw3SessionSourceContent.
 type mw3SessionSourcePass struct {
 	f    *mw3SessionFile
-	fi   internal.FileInfo
 	mode *mw3SourceMode
 	// twice are the Source types of a type switch that has a case string as well:
 	// the two would be one case.
 	twice   map[*ast.SelectorExpr]struct{}
 	imports mw3ImportEdits
 	edits   editSet
+	fi      internal.FileInfo
 }
 
 // typeName returns the text that takes the place of session.Source: string, or the

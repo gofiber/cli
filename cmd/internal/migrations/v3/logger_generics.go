@@ -82,13 +82,13 @@ func migrateLoggerGenericsContent(content string, fi internal.FileInfo, loggers 
 type mw2LoggerRewriter struct {
 	g       *goSource
 	loggers *mw2Loggers
-	fi      internal.FileInfo
 	stdName string
 	edits   editSet
 	// names are the identifiers the file binds to the log package.
 	names []string
 	// imports are the imports the output needs.
 	imports []mw2Import
+	fi      internal.FileInfo
 }
 
 func (r *mw2LoggerRewriter) visit(n ast.Node, stack []ast.Node) bool {

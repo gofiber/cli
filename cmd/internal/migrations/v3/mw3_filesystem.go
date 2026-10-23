@@ -72,10 +72,7 @@ type mw3FSPass struct {
 	litCalls map[*ast.CompositeLit][]*ast.CallExpr
 	// prefix is the PathPrefix of the config a call takes, the first argument
 	// of its static.New.
-	prefix  map[*ast.CallExpr]string
-	edits   editSet
-	imports mw3ImportEdits
-	fi      internal.FileInfo
+	prefix map[*ast.CallExpr]string
 	// static is the identifier the file uses for the static package afterwards,
 	// osName, stringsName and fiberName those of the packages the output needs.
 	static      string
@@ -83,6 +80,8 @@ type mw3FSPass struct {
 	fsName      string
 	stringsName string
 	fiberName   string
+	imports     mw3ImportEdits
+	edits       editSet
 	refs        []mw3FSRef
 	stored      []mw3FSStored
 	assigns     []mw3FSAssign
@@ -91,6 +90,7 @@ type mw3FSPass struct {
 	names []string
 	http  []string
 	fiber []string
+	fi    internal.FileInfo
 	dot   bool
 }
 

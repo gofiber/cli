@@ -91,8 +91,6 @@ type appShimModule struct {
 	root string
 	// path is the import path of the package of the registry.
 	path string
-	// fi is a file of the module, which the registry is added through.
-	fi internal.FileInfo
 	// exposed are the exported names of packages that other modules can import,
 	// which the apps of the registry leave the module through.
 	exposed []string
@@ -109,6 +107,8 @@ type appShimModule struct {
 	starts []*appStartInfo
 	// values are the methods that start an app, used as values.
 	values []*appValueInfo
+	// fi is a file of the module, which the registry is added through.
+	fi internal.FileInfo
 	// checked and available say whether the package could be added, once that was asked.
 	checked   bool
 	available bool

@@ -56,11 +56,11 @@ func migrateLimiterContent(content string, fi internal.FileInfo) string {
 // mw2LimiterRewriter rewrites the limiter API of one file.
 type mw2LimiterRewriter struct {
 	g     *goSource
-	fi    internal.FileInfo
 	edits editSet
 	// names are the identifiers the file binds to the limiter package, fiber those it binds to the core package.
 	names []string
 	fiber []string
+	fi    internal.FileInfo
 }
 
 func (r *mw2LimiterRewriter) visit(n ast.Node, stack []ast.Node) bool {

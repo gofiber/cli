@@ -31,11 +31,11 @@ type mw3SessionReadsPass struct {
 	f *mw3SessionFile
 	// handled are the reads that another rewrite has taken care of.
 	handled map[*ast.SelectorExpr]struct{}
-	fi      internal.FileInfo
-	// folds are the reads that are a string the program shows, not yet decided.
-	folds   []mw3Fold
 	imports mw3ImportEdits
-	edits   editSet
+	// folds are the reads that are a string the program shows, not yet decided.
+	folds []mw3Fold
+	edits editSet
+	fi    internal.FileInfo
 }
 
 // mw3Fold is a read of the lookup of a config that is the string the program

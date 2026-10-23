@@ -1,12 +1,14 @@
 package v3
 
-import "github.com/gofiber/cli/cmd/internal"
+import (
+	"github.com/gofiber/cli/cmd/internal"
+)
 
 // noteTally collects the places of one finding that the project is told about
 // once: the note is at the first place and names the others (internal.Note.More).
 type noteTally struct {
-	first internal.NotePlace
 	more  []internal.NotePlace
+	first internal.NotePlace
 	found bool
 }
 

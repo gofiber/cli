@@ -127,10 +127,10 @@ type jwtClaimsRun struct {
 
 // jwtModule is what the run knows of one Go module.
 type jwtModule struct {
+	// libs are the libraries the files used, in the order they were found.
+	libs []string
 	// first is the first file moved, and line its first import.
 	first internal.FileInfo
-	// libs are the libraries the files used, in the order they were found.
-	libs  []string
 	line  int
 	files int
 	// moved is set when the module imports the jwt middleware of v3, and embeds
@@ -305,8 +305,8 @@ type jwtClaimsPass struct {
 	// said holds the reports made already, by kind.
 	said    map[string]bool
 	imports []jwtImport
-	fi      internal.FileInfo
 	edits   editSet
+	fi      internal.FileInfo
 }
 
 // run moves the imports and rewrites the use of the packages.

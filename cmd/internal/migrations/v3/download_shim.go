@@ -63,9 +63,9 @@ func downloadShimModuleFile() moduleShimFile {
 
 // downloadShim is what a file knows about the Download of the package of its module.
 type downloadShim struct {
-	fi internal.FileInfo
 	// path is the import path of the module package.
 	path string
+	fi   internal.FileInfo
 	// tried says the module was asked for the file, ok that it has it.
 	tried, ok bool
 }

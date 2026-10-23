@@ -77,17 +77,17 @@ func (ix *appIndex) leave(spec *ast.TypeSpec) { delete(ix.active, spec) }
 // appFile is a parsed Go file together with what the app migrations need to
 // know about it.
 type appFile struct {
-	ix     *appIndex
-	g      *goSource
-	parent map[ast.Node]ast.Node
-	pkg    *appPackage
-	// fi describes the file for notes; walked is false for files that were only
-	// read to understand the project, which a migration must not change.
-	fi      internal.FileInfo
+	ix      *appIndex
+	g       *goSource
+	parent  map[ast.Node]ast.Node
+	pkg     *appPackage
 	path    string
 	names   []string
 	imports []appImportSpec
-	walked  bool
+	// fi describes the file for notes; walked is false for files that were only
+	// read to understand the project, which a migration must not change.
+	fi     internal.FileInfo
+	walked bool
 }
 
 // appImportSpec is one import of a file.

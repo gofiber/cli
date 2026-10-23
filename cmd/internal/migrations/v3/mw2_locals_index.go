@@ -89,9 +89,9 @@ type mw2LocalsFile struct {
 	path string
 	// rel is the path relative to the migrated directory.
 	rel string
-	fi  internal.FileInfo
 	// fiber are the identifiers the file binds to the core package.
 	fiber  []string
+	fi     internal.FileInfo
 	hasEnv bool
 }
 

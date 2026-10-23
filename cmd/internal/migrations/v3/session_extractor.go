@@ -73,13 +73,13 @@ func MigrateSessionExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 
 // mw3SessionExtractorPass is the rewrite of one file by MigrateSessionExtractor.
 type mw3SessionExtractorPass struct {
-	f  *mw3SessionFile
-	fi internal.FileInfo
+	f *mw3SessionFile
 	// handled are the lookup fields that an assignment took care of.
 	handled map[*ast.SelectorExpr]struct{}
 	imports mw3ImportEdits
 	strs    mw3Strings
 	edits   editSet
+	fi      internal.FileInfo
 }
 
 // mw3Site is a place of the file: the position of a node and its ancestors (see

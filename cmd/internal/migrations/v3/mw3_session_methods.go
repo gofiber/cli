@@ -51,7 +51,6 @@ func MigrateSessionMethods(cmd *cobra.Command, cwd string, _, _ *semver.Version)
 // mw3SessionMethodsPass is the rewrite of one file by MigrateSessionMethods.
 type mw3SessionMethodsPass struct {
 	f     *mw3SessionFile
-	fi    internal.FileInfo
 	types *mw3StoreTypes
 	// env tells which types are the request context of Fiber: an alias of it, a
 	// struct that embeds it, here or in another package of the module. It is built
@@ -62,6 +61,7 @@ type mw3SessionMethodsPass struct {
 	added    map[*ast.FuncType]string
 	imports  mw3ImportEdits
 	edits    editSet
+	fi       internal.FileInfo
 	envReady bool
 }
 

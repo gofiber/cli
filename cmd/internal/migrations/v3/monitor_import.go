@@ -84,9 +84,9 @@ func mw3MonitorContent(src string, fi internal.FileInfo) string {
 type mw3MonitorPass struct {
 	g     *goSource
 	edits *editSet
-	fi    internal.FileInfo
 	// names are the identifiers the file binds to the monitor package.
 	names []string
+	fi    internal.FileInfo
 }
 
 // isMember reports whether e is monitor.member.

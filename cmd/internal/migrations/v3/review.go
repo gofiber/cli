@@ -66,9 +66,9 @@ type reviewFile struct {
 	packages map[string]string
 	// env tells the types of the declarations of the file, built when first needed.
 	env *ctxEnv
-	fi  internal.FileInfo
 	// core are the identifiers the file binds to the core fiber package.
 	core []string
+	fi   internal.FileInfo
 }
 
 func (r *reviewer) scan(content string, fi internal.FileInfo) {

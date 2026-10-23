@@ -136,15 +136,15 @@ func timeoutOnTimeoutHandled(fiber string) string {
 
 // timeoutRewrite is the state of the rewrite of one file.
 type timeoutRewrite struct {
+	g         *goSource
+	swallowed *timeoutSwallowed
 	// onTimeout is the field every config gets.
 	onTimeout string
 	// onTimeoutHandled is the field every config gets instead when the project has an
 	// ErrorHandler; empty otherwise.
 	onTimeoutHandled string
-	g                *goSource
-	fi               internal.FileInfo
-	swallowed        *timeoutSwallowed
 	edits            editSet
+	fi               internal.FileInfo
 	// rewrote is set once a call has been given a config that refers to the core
 	// package.
 	rewrote bool

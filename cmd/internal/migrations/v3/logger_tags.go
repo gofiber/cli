@@ -75,10 +75,10 @@ func migrateLoggerTagsContent(content string, fi internal.FileInfo, index *mw2Lo
 type mw2TagRewriter struct {
 	g     *goSource
 	index *mw2LocalsIndex
-	fi    internal.FileInfo
 	edits editSet
 	// names are the identifiers the file binds to the logger package.
 	names []string
+	fi    internal.FileInfo
 }
 
 func (r *mw2TagRewriter) visit(n ast.Node, _ []ast.Node) bool {

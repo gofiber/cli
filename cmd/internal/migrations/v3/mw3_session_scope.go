@@ -107,9 +107,9 @@ type mw3SessionFile struct {
 	env  *mw3Env
 	// declared are the names the file declares anywhere, read when first asked for.
 	declared map[string]struct{}
-	fi       internal.FileInfo
 	names    []string
 	fiber    []string
+	fi       internal.FileInfo
 }
 
 // mw3OpenSessionFile parses src when it imports the fiber session middleware.
