@@ -341,8 +341,8 @@ func Test_DoMigration_DependenciesAreJudgedFromTheModuleCacheWhenGoModIsNotTidie
 	const want = "example.org/legacy v1.0.0 requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2"
 
 	tests := []struct {
-		name  string
 		setup func(t *testing.T)
+		name  string
 		skip  bool
 	}{
 		{name: "with --skip_go_mod", skip: true, setup: func(*testing.T) {}},
@@ -373,7 +373,12 @@ func Test_DoMigration_DependenciesAreJudgedFromTheModuleCacheWhenGoModIsNotTidie
 			cmd := &cobra.Command{}
 			cmd.SetOut(&buf)
 			cmd.Flags().Bool("skip_go_mod", tc.skip, "")
-			_ = migrations.DoMigration(cmd, dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), tc.skip, false, nil, nil)
+			err := migrations.DoMigration(cmd, dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), tc.skip, false, nil, nil)
+			if tc.skip {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err, "go mod tidy failed")
+			}
 
 			assert.Contains(t, buf.String(), "main.go:3: "+want)
 			assert.Contains(t, buf.String(), "go.mod was not tidied by the migration")

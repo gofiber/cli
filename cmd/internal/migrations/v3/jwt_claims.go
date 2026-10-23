@@ -121,8 +121,8 @@ func MigrateJWTClaims(cmd *cobra.Command, cwd string, _, _ *semver.Version) erro
 
 // jwtClaimsRun is one run of MigrateJWTClaims.
 type jwtClaimsRun struct {
-	indexes moduleIndexes
 	byRoot  map[string]*jwtModule
+	indexes moduleIndexes
 }
 
 // jwtModule is what the run knows of one Go module.

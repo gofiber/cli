@@ -118,7 +118,7 @@ func timeoutOnTimeout(fiber string) string {
 // second to the router: the ErrorHandler runs once, as in v2, and the error is
 // returned in both cases for the middleware around the timeout.
 func timeoutOnTimeoutHandled(fiber string) string {
-	ctx, errName := "c", "err"
+	ctx, errName := "c", nameErr
 	if fiber == ctx {
 		ctx = "ctx"
 	}
@@ -308,7 +308,7 @@ func isCompositeLiteral(e ast.Expr) bool {
 
 // config writes the timeout.Config that takes the place of the duration (and of
 // the errors) of a call, a field to a line.
-func (rw *timeoutRewrite) config(pkg, timeout, errs, onTimeout string) string {
+func (*timeoutRewrite) config(pkg, timeout, errs, onTimeout string) string {
 	fields := []string{"Timeout: " + timeout}
 	if errs != "" {
 		fields = append(fields, "Errors: "+errs)

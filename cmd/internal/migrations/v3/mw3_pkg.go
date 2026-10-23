@@ -28,11 +28,11 @@ type mw3Pkgs struct {
 	// defaults tells, by module, whether the program changes the lookup of
 	// session.ConfigDefault.
 	defaults map[string]bool
+	// ctx tells which types are the request context of Fiber, made when first asked.
+	ctx *ctxRun
 	// indexes give the view of the whole module, for the facts that reach into
 	// other packages of it.
 	indexes moduleIndexes
-	// ctx tells which types are the request context of Fiber, made when first asked.
-	ctx *ctxRun
 }
 
 func newMw3Pkgs() *mw3Pkgs {

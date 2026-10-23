@@ -61,15 +61,15 @@ var sentryTypeKinds = map[string]sentryKind{
 // and sentryContribFuncKinds those of the Fiber middleware.
 var (
 	sentryFuncKinds = map[string]sentryKind{
-		"CurrentHub":        sentryHub,
-		"NewHub":            sentryHub,
-		"GetHubFromContext": sentryHub,
-		"NewScope":          sentryScope,
-		"PushScope":         sentryScope,
-		"NewEvent":          sentryEvent,
+		"CurrentHub":          sentryHub,
+		"NewHub":              sentryHub,
+		nameGetHubFromContext: sentryHub,
+		"NewScope":            sentryScope,
+		"PushScope":           sentryScope,
+		"NewEvent":            sentryEvent,
 	}
 	sentryContribFuncKinds = map[string]sentryKind{
-		"GetHubFromContext":     sentryHub,
+		nameGetHubFromContext:   sentryHub,
 		"MustGetHubFromContext": sentryHub,
 	}
 )

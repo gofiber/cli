@@ -441,7 +441,7 @@ func (e *clientEmit) handlerText(h *clientParseCheck, errName string) string {
 // exists says the name is declared in the scope of the statement.
 func (f *clientFile) pickErr(l clientList, idx int, extra []ast.Node, avoid map[string]bool) (name string, exists bool) {
 	rest := l.stmts[min(idx+1, len(l.stmts)):]
-	for _, cand := range []string{"err", "clientErr"} {
+	for _, cand := range []string{nameErr, "clientErr"} {
 		if avoid[cand] {
 			continue
 		}

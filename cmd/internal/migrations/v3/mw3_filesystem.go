@@ -568,7 +568,7 @@ func (p *mw3FSPass) subFS(kv *ast.KeyValueExpr, fsys string, stack []ast.Node) s
 		dir = p.stringsQualifier() + ".Trim(" + dir + ", \"/\")"
 	}
 
-	sub, err := "sub", "err"
+	sub, err := "sub", nameErr
 	if regexp.MustCompile(`\bsub\b`).MatchString(fsys) {
 		sub = "subFS"
 	}

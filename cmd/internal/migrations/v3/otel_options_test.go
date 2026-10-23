@@ -100,8 +100,8 @@ func Test_MigrateOtelOptions_ImportSpellings(t *testing.T) {
 
 			file := res.file()
 			assert.NotContains(t, file, "WithServerName")
-			assert.Contains(t, file, fmt.Sprintf("%s.WithCustomAttributes(func(fiber.Ctx) []attribute.KeyValue {", tt.pkg))
-			assert.Contains(t, file, fmt.Sprintf("%s.WithCustomMetricAttributes(func(fiber.Ctx) []attribute.KeyValue {", tt.pkg))
+			assert.Contains(t, file, tt.pkg+".WithCustomAttributes(func(fiber.Ctx) []attribute.KeyValue {")
+			assert.Contains(t, file, tt.pkg+".WithCustomMetricAttributes(func(fiber.Ctx) []attribute.KeyValue {")
 			assert.Contains(t, file, `attribute.String("http.server_name", name)`)
 			assert.Empty(t, res.notes)
 		})

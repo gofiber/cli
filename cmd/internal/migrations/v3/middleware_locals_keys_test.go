@@ -1,6 +1,7 @@
 package v3_test
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -201,9 +202,7 @@ func Test_MigrateMiddlewareLocals_KeysThatAreNamesOfTheModule(t *testing.T) {
 				"internal/auth/mw.go":     strings.Replace(localsAuth, "%s", tt.config, 1),
 				"internal/handlers/me.go": strings.Replace(localsHandlers, "%s", tt.read, 1),
 			}
-			for name, content := range tt.files {
-				files[name] = content
-			}
+			maps.Copy(files, tt.files)
 			// the same package, imported by the name a project may give it
 			if strings.Contains(tt.read, "authn.") {
 				files["internal/handlers/me.go"] = strings.Replace(files["internal/handlers/me.go"], `"example.com/app/internal/auth"`, `authn "example.com/app/internal/auth"`, 1)

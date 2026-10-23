@@ -397,7 +397,7 @@ func contribComparesError(stack []ast.Node) bool {
 // others goes with them, that is what the note is about.
 var jwtLegacyOnly = []string{
 	"SigningKeys", "KeyRefreshSuccessHandler", "KeyRefreshErrorHandler",
-	"KeyRefreshInterval", "KeyRefreshRateLimit", "KeyRefreshTimeout", "KeyRefreshUnknownKID", "KeySetURL", "KeySetURLs",
+	"KeyRefreshInterval", "KeyRefreshRateLimit", "KeyRefreshTimeout", "KeyRefreshUnknownKID", "KeySetURL", nameKeySetURLs,
 }
 
 // jwtKeySetCompanions are the settings that change what a key set does in the
@@ -482,19 +482,19 @@ func (f *contribFile) jwtLegacyConfig(c *contribConfig) {
 // contrib/v3/jwt refuses an empty URL) or that cannot be a URL of v3 (absolute,
 // http or https) is left for the user.
 func (f *contribFile) jwtLegacyKeySets(c *contribConfig) string {
-	one, many := c.get("KeySetURL"), c.get("KeySetURLs")
+	one, many := c.get("KeySetURL"), c.get(nameKeySetURLs)
 	if (one == nil) == (many == nil) {
 		return ""
 	}
 	field, slot := "KeySetURL", one
 	if one == nil {
-		field, slot = "KeySetURLs", many
+		field, slot = nameKeySetURLs, many
 	}
 	if !c.settled(field) || slices.ContainsFunc(jwtKeySetCompanions, func(other string) bool { return c.get(other) != nil }) {
 		return ""
 	}
 
-	if field == "KeySetURLs" {
+	if field == nameKeySetURLs {
 		if lit, ok := slot.value.(*ast.CompositeLit); ok && !jwtAbsoluteURLs(lit) {
 			return ""
 		}

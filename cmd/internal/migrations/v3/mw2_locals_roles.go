@@ -122,7 +122,7 @@ var mw2Roles = []*mw2Role{
 		// private type. The package is called fibersentry at v2 and sentry at v3, and
 		// the files that read the hub import sentry-go as sentry.
 		re: sentryContribPath, pkg: mw2PkgSentry, addPath: sentryContribV3Import, alias: mw2PkgFiberSentry, nameOf: mw2SentryName,
-		defaultKey: "sentry-hub", reader: "GetHubFromContext", kind: mw2KindPointer, pointers: []string{"Hub"},
+		defaultKey: "sentry-hub", reader: nameGetHubFromContext, kind: mw2KindPointer, pointers: []string{"Hub"},
 	},
 }
 
@@ -197,7 +197,7 @@ func (kr *mw2KeyResolver) key(e ast.Expr, stack []ast.Node) (mw2Key, bool) {
 
 // local reports whether e names a variable of a function: a parameter, a result, a
 // local, which a package level name of the same spelling does not stand for.
-func (kr *mw2KeyResolver) local(e ast.Expr, stack []ast.Node) bool {
+func (*mw2KeyResolver) local(e ast.Expr, stack []ast.Node) bool {
 	found := false
 	ast.Inspect(e, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok {
