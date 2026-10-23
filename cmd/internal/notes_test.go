@@ -1,6 +1,7 @@
 package internal_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,6 +31,24 @@ func Test_Notes_AreKeptPerRootAndDeduplicated(t *testing.T) {
 
 	other := internal.DrainNotes(rootB)
 	assert.Len(t, other, 1)
+}
+
+// A note names its file with forward slashes whatever the platform joined the path with, and
+// the same file spelled either way is one note.
+func Test_Notes_NameTheFileWithForwardSlashes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fi := internal.FileInfo{Root: root, Path: filepath.Join(root, "pkg", "sub", "file.go"), Rel: filepath.Join("pkg", "sub", "file.go")}
+
+	internal.Notef(fi, 3, "message")
+	internal.AddNote(root, internal.Note{File: "pkg/sub/file.go", Line: 3, Message: "message"})
+
+	got := internal.DrainNotes(root)
+	if assert.Len(t, got, 1) {
+		assert.Equal(t, "pkg/sub/file.go", got[0].File)
+		assert.Equal(t, "pkg/sub/file.go:3: message", got[0].String())
+	}
 }
 
 func Test_Note_String(t *testing.T) {

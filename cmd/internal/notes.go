@@ -61,8 +61,8 @@ const notePlacesShown = 5
 // Note is a message a migration leaves for the user: a construct it could not
 // migrate safely, a file it had to skip, or a behavior change worth reviewing.
 type Note struct {
-	// File is relative to the migrated directory, empty when the note is not
-	// tied to a file.
+	// File is relative to the migrated directory and written with forward slashes
+	// (AddNote converts it), empty when the note is not tied to a file.
 	File string
 	// Migration is the name of the migration that raised the note. It is filled
 	// in by the caller of DrainNotes.
@@ -128,6 +128,8 @@ var (
 // (same file, line and message) is only kept once.
 func AddNote(root string, n Note) {
 	key := filepath.Clean(root)
+	// The file is named with forward slashes on every platform, as String prints it.
+	n.File = filepath.ToSlash(n.File)
 	if n.Pass == 0 {
 		// A note that was not made with the FileInfo of a pass is taken to be about the
 		// file as it is now.
