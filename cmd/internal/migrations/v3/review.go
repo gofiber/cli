@@ -67,6 +67,9 @@ type reviewFile struct {
 }
 
 func (r *reviewer) scan(content string, fi internal.FileInfo) {
+	if strings.Contains(content, moduleShimMarker) {
+		return // a file the migrations added
+	}
 	if !strings.Contains(content, "github.com/gofiber/") {
 		r.scanModuleContexts(content, fi)
 		return
@@ -224,7 +227,7 @@ func (rf *reviewFile) checkCall(call *ast.CallExpr, stack []ast.Node) {
 	name := sel.Sel.Name
 
 	switch {
-	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && len(call.Args) > 0 && !isStringLiteral(call.Args[0]) && rf.isCtxMethod(sel, stack):
+	case (name == mw3SendFile || name == "Download") && !rf.r.fileNameSeen && rf.sendsDynamicFile(call, sel, stack):
 		rf.r.fileNameSeen = true
 		rf.notef(sel.Sel.Pos(), "%s takes the file name literally in Fiber v3 instead of percent-decoding it, so a name taken from a route parameter keeps its %%XX escapes unless fiber.Config{UnescapePath: true} is set; decode it and make sure it stays inside the directory you serve", name)
 	case slices.Contains(reviewRemovedMethods[reviewCorePath+".Ctx"], name) && rf.isCtxMethod(sel, stack):

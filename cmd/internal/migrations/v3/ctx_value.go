@@ -80,6 +80,11 @@ type ctxValueBuilder struct {
 	recv  ctxValueRecv
 }
 
+// qual spells the member of the fiber package where the literal goes in.
+func (b *ctxValueBuilder) qual(member string) string {
+	return b.env.qual(b.sel.Pos(), member)
+}
+
 // newValueBuilder prepares the literal for the method value sel, whose ancestors
 // are stack. members are the members of the context that the body of the literal
 // calls: a type that embeds the context and declares one of them hands the
@@ -104,12 +109,12 @@ func (env *ctxEnv) newValueBuilder(sel *ast.SelectorExpr, stack []ast.Node, memb
 	id, isIdent := ast.Unparen(sel.X).(*ast.Ident)
 	switch {
 	case env.isCtxType(sel.X, stack):
-		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(ctxTypeCtx), expr: true}
+		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(sel.Pos(), ctxTypeCtx), expr: true}
 	case isIdent && hidden == "" && ctxVariableStable(id.Name, id.Pos(), stack):
 		namer[id.Name] = true
 		b.recv = ctxValueRecv{name: id.Name}
 	default:
-		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(ctxTypeCtx), path: env.embeddedCtxOf(sel.X, stack), bound: true}
+		b.recv = ctxValueRecv{name: namer.fresh("c"), typ: env.qual(sel.Pos(), ctxTypeCtx), path: env.embeddedCtxOf(sel.X, stack), bound: true}
 	}
 	return b
 }
@@ -170,15 +175,15 @@ func (b *ctxValueBuilder) redirect(method string) ctxValue {
 	default:
 		route, args := b.name("routeName"), b.name("params")
 		cfg, queries, ok := b.name("cfg"), b.name("queries"), b.name("ok")
-		params = []string{route + " " + ctxLitString, args + " " + b.env.qual("Map")}
+		params = []string{route + " " + ctxLitString, args + " " + b.qual("Map")}
 		// v2 took the query string from the "queries" entry of the params
 		setup = fmt.Sprintf("%[1]s := %[2]s{Params: %[3]s}\nif %[4]s, %[5]s := %[3]s[\"queries\"].(map[string]string); %[5]s {\n%[1]s.Queries = %[4]s\n}\n",
-			cfg, b.env.qual("RedirectConfig"), args, queries, ok)
+			cfg, b.qual("RedirectConfig"), args, queries, ok)
 		call = route + ", " + cfg
 	}
 
 	body := fmt.Sprintf("%[1]s := %[2]s\nif len(%[3]s) > 0 {\n%[1]s = %[3]s[0]\n}\n%[4]sreturn %[5]s.Redirect().Status(%[1]s).%[6]s(%[7]s)",
-		code, b.env.qual(ctxStatusFound), status, setup, b.recv.name, target.method, call)
+		code, b.qual(ctxStatusFound), status, setup, b.recv.name, target.method, call)
 	return ctxValue{params: append(params, status+" "+ctxLitInts), results: ctxLitError, body: body}
 }
 
@@ -200,7 +205,7 @@ return %[1]s, nil`, value, err, strconvName, b.recv.name, key, defaults, fmtName
 // query writes QueryInt, QueryFloat and QueryBool.
 func (b *ctxValueBuilder) query(helper ctxHelper) ctxValue {
 	key, defaults := b.name("key"), b.name("defaultValue")
-	body := fmt.Sprintf("return %s[%s](%s, %s, %s...)", b.env.qual(helper.fn), helper.typ, b.recv.name, key, defaults)
+	body := fmt.Sprintf("return %s[%s](%s, %s, %s...)", b.qual(helper.fn), helper.typ, b.recv.name, key, defaults)
 	return ctxValue{params: []string{key + " " + ctxLitString, defaults + " ..." + helper.typ}, results: helper.typ, body: body}
 }
 
@@ -220,7 +225,7 @@ func (b *ctxValueBuilder) rangeOf() ctxValue {
 	size := b.name("size")
 	return ctxValue{
 		params:  []string{size + " " + ctxLitInt},
-		results: "(" + b.env.qual(ctxTypeRange) + ", error)",
+		results: "(" + b.qual(ctxTypeRange) + ", error)",
 		body:    fmt.Sprintf("return %s.Range(int64(%s))", b.recv.name, size),
 	}
 }
@@ -231,11 +236,19 @@ func (b *ctxValueBuilder) allParams() ctxValue {
 	return ctxValue{results: "map[string]string", body: ctxAllParamsBody(b.recv.name, params, name)}
 }
 
+// download writes Download, which is a call of the Download of the module package
+// (shim is its name here): v3 sends the file without the byte ranges v2 served.
+func (b *ctxValueBuilder) download(shim string) ctxValue {
+	file, filename := b.name("file"), b.name("filename")
+	body := fmt.Sprintf("return %s.Download(%s, %s, %s...)", shim, b.recv.name, file, filename)
+	return ctxValue{params: []string{file + " " + ctxLitString, filename + " ..." + ctxLitString}, results: ctxLitError, body: body}
+}
+
 // sendFile writes SendFile: the compress flag moves into the config, which also
 // asks for the byte ranges v2 always served.
 func (b *ctxValueBuilder) sendFile() ctxValue {
 	file, compress, cfg := b.name("file"), b.name("compress"), b.name("cfg")
 	body := fmt.Sprintf("%[1]s := %[2]s{ByteRange: true}\nif len(%[3]s) > 0 {\n%[1]s.Compress = %[3]s[0]\n}\nreturn %[4]s.SendFile(%[5]s, %[1]s)",
-		cfg, b.env.qual("SendFile"), compress, b.recv.name, file)
+		cfg, b.qual("SendFile"), compress, b.recv.name, file)
 	return ctxValue{params: []string{file + " " + ctxLitString, compress + " ...bool"}, results: ctxLitError, body: body}
 }

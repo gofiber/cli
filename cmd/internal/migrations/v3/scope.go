@@ -85,7 +85,10 @@ func defaultImportName(path string) string {
 type goSource struct {
 	fset *token.FileSet
 	file *ast.File
-	src  string
+	// scopes is where the declarations inside the functions hide a name, read when
+	// first asked for (see hiddenAt).
+	scopes *localScopes
+	src    string
 }
 
 // parseSource parses src. ok is false when src is not valid Go.

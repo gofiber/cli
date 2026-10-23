@@ -202,22 +202,48 @@ type appImports struct {
 	reqs []appImportReq
 }
 
-// qualifier returns the prefix that names the package at path in f ("static.",
-// "staticmw.", or "" for a dot import) and records the import when f does not
-// have it yet. preferred is the name for a new import; when it is taken
-// another one is derived from it.
+// appAnywhere is the position of code whose rewrite cannot say where it goes in:
+// a declaration inside a function anywhere in the file counts as hiding a name.
+const appAnywhere token.Pos = -1
+
+// hiddenAt reports whether a declaration inside a function hides the name at pos,
+// and not what it means at the level of the file.
+func (f *appFile) hiddenAt(name string, pos token.Pos) bool {
+	if pos == appAnywhere {
+		return f.g.declaresLocally(name)
+	}
+	return f.g.hiddenAt(name, pos)
+}
+
+// qualifier is qualifierAt for code that can go in anywhere in the file.
 func (a *appImports) qualifier(f *appFile, path, preferred string) string {
+	return a.qualifierAt(f, appAnywhere, path, preferred)
+}
+
+// qualifierAt returns the prefix that names the package at path in code that goes
+// in at pos ("static.", "staticmw.", or "" for a dot import) and records the
+// import when f does not have it yet, or has it under names that a declaration
+// hides at pos (func start(fiber *fiber.App) {...} cannot name the package):
+// then the package is imported a second time under a name nothing in the file
+// uses. preferred is the name for a new import; when it is taken another one is
+// derived from it.
+func (a *appImports) qualifierAt(f *appFile, pos token.Pos, path, preferred string) string {
+	hidden := false
 	for _, imp := range f.imports {
 		if imp.path != path || imp.name == "_" {
 			continue
 		}
-		switch imp.name {
-		case ".":
+		name := imp.name
+		if name == "" {
+			name = defaultImportName(path)
+		}
+		switch {
+		case name == ".":
 			return ""
-		case "":
-			return defaultImportName(path) + "."
+		case !f.hiddenAt(name, pos):
+			return name + "."
 		default:
-			return imp.name + "."
+			hidden = true
 		}
 	}
 	for _, req := range a.reqs {
@@ -226,24 +252,50 @@ func (a *appImports) qualifier(f *appFile, path, preferred string) string {
 		}
 	}
 
-	name := preferred
-	for i := 0; f.nameTaken(name) || a.requested(name); i++ {
-		switch i {
-		case 0:
-			name = preferred + "mw"
-		case 1:
-			name = preferred + "pkg"
-		default:
-			name = preferred + strconv.Itoa(i)
-		}
-	}
-
+	name := a.newName(f, path, preferred, hidden)
 	req := appImportReq{path: path}
 	if name != defaultImportName(path) {
 		req.alias = name
 	}
 	a.reqs = append(a.reqs, req)
 	return name + "."
+}
+
+// newName picks the name of a new import of the package at path: preferred, or the
+// first name derived from it that nothing in f or in the imports requested so far
+// has. second says that f imports the package already, under names that are hidden
+// where the new import is used.
+func (a *appImports) newName(f *appFile, path, preferred string, second bool) string {
+	taken := func(name string) bool { return f.nameTaken(name) || a.requested(name) }
+	derived := func(i int) string {
+		switch {
+		case reFiberCorePath.MatchString(path):
+			// fiberv3, fiberv3_2, ...
+			if i == 0 {
+				return preferred + "v3"
+			}
+			return preferred + "v3_" + strconv.Itoa(i+1)
+		case i == 0:
+			return preferred + "mw"
+		case i == 1:
+			return preferred + "pkg"
+		default:
+			return preferred + strconv.Itoa(i)
+		}
+	}
+
+	name := preferred
+	if second {
+		name = derived(0)
+	}
+	for i := 0; taken(name); i++ {
+		if second {
+			name = derived(i + 1)
+			continue
+		}
+		name = derived(i)
+	}
+	return name
 }
 
 func appRequestedName(req appImportReq) string {
@@ -262,14 +314,17 @@ func (a *appImports) requested(name string) bool {
 	return false
 }
 
-// fiberQualifierFor returns the prefix that names the fiber package in f,
-// importing the package when f does not. The import path is the one the rest of
-// the package uses.
+// fiberQualifier is fiberQualifierAt for code that can go in anywhere in the file.
 func (a *appImports) fiberQualifier(f *appFile) string {
-	if prefix, ok := f.fiberQualifier(); ok {
-		return prefix
-	}
-	return a.qualifier(f, f.fiberImportPath(), "fiber")
+	return a.fiberQualifierAt(f, appAnywhere)
+}
+
+// fiberQualifierAt returns the prefix that names the fiber package in f for code
+// that goes in at pos, importing the package when f does not, or when a
+// declaration hides its names there (see qualifierAt). The import path is the one
+// the rest of the package uses.
+func (a *appImports) fiberQualifierAt(f *appFile, pos token.Pos) string {
+	return a.qualifierAt(f, pos, f.fiberImportPath(), "fiber")
 }
 
 // fiberImportPath finds the path under which f, or failing that the rest of the

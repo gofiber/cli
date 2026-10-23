@@ -1026,3 +1026,41 @@ func main() {
 	assert.Contains(t, notes[1].Message, "(the config is assigned to s.cfg, at line 26 of main.go)")
 	assert.Contains(t, notes[2].Message, "(the config is passed to newApp, at line 34 of main.go)")
 }
+
+// A value that goes to the calls that start the app cannot use a package that a variable of the
+// function around a call hides: the settings stay with the app, where the package is visible.
+func Test_MigrateConfigListenerFields_ValueUsesAPackageAVariableHides(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import "github.com/gofiber/fiber/v2"
+
+type Server struct{ app *fiber.App }
+
+func NewServer() *Server {
+	return &Server{app: fiber.New(fiber.Config{
+		EnablePrintRoutes: true,
+		Network:           fiber.NetworkTCP4,
+	})}
+}
+
+func (s *Server) Run(addr string) error {
+	fiber := addr
+	return s.app.Listen(fiber)
+}
+
+func (s *Server) RunTLS(addr, certFile, keyFile string) error {
+	fiber := certFile
+	return s.app.ListenTLS(addr, fiber, keyFile)
+}
+`)
+
+	appRun(t, dir, v3.MigrateConfigListenerFields)
+
+	content := appRead(t, dir, "main.go")
+	assert.Contains(t, content, "fibermigrate.NewApp(fiber.Config{}, fiber.ListenConfig{EnablePrintRoutes: true, ListenerNetwork: fiber.NetworkTCP4})")
+	assert.Contains(t, content, "s.app.Listen(fiber, fibermigrate.ListenConfig(s.app))")
+	assert.Contains(t, content, "s.app.Listen(addr, fibermigrate.ListenConfig(s.app, fiberv3.ListenConfig{CertFile: fiber, CertKeyFile: keyFile}))")
+	assert.NotRegexp(t, `Listen\([^\n]*, fiber\.ListenConfig\{[^}]*NetworkTCP4`, content, "no call that starts the app takes the setting")
+}

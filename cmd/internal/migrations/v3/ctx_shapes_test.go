@@ -140,7 +140,11 @@ import (
 
 func handler(c *fiber.Ctx) error {
 	id := func() (int, error) {
-		return strconv.Atoi(c.Params("id"))
+		value, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return 0, err
+		}
+		return value, nil
 	}
 	page := func() (int, error) {
 		return fiber.Params[int](c, "page", 1), error(nil)

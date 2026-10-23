@@ -86,7 +86,10 @@ func (o *Own) QueryInt(key string, defaultValue ...int) int { return 0 }
 
 func handler(p *Plain, h *Hiding, d *Deep) (total int, err error) {
 	a, errA := strconv.Atoi(p.Params("a"))
-	b, _ := strconv.Atoi(h.Ctx.Params("b"))
+	if errA != nil {
+		a = 0
+	}
+	b := fiber.Params[int](h.Ctx, "b")
 	c, _ := fiber.Params[int](d.Hiding.Ctx, "c", 3), error(nil)
 	return a + b + c, errA
 }
@@ -162,7 +165,8 @@ func handler(p *Plain, h *Hiding, d *Deep) (int, int, float64, bool) {
 	return fiber.Query[int](p.Ctx, "a"), fiber.Query[int](h.Ctx, "b", 2), fiber.Query[float64](d.Hiding.Ctx, "c"), fiber.Query[bool](d.Hiding.Ctx, "d", true)
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "the getters through a wrapper that has them itself are its own",
@@ -299,7 +303,8 @@ func handler(p *Plain, h *Hiding, d *Deep, o *Own) {
 	_, _, _, _, _ = a, b, c, e, f
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "the getters through a wrapper in a value that is called at once",

@@ -168,6 +168,13 @@ func (f *appFile) valueProblem(e ast.Expr, target *appFile, at ast.Node, imps *a
 				return "it uses the package " + name + ", which that file imports under another name"
 			}
 		}
+		return ""
+	}
+	// a variable of the code around the call can have the name of a package the value uses
+	for _, name := range needs.imports {
+		if target.hiddenAt(name, at.Pos()) {
+			return "it uses the package " + name + ", which a variable of that name hides where that call is"
+		}
 	}
 	return ""
 }

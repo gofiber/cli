@@ -502,7 +502,7 @@ func (pl *appPlanner) moveToVariable(src *appListenSource, linked []*appStartInf
 		return appImports{reqs: slices.Clone(pl.plan.fileOf(file).imps.reqs)}
 	}
 	srcImports := importsOf(f)
-	declText := name + " := " + srcImports.fiberQualifier(f) + "ListenConfig{" + strings.Join(held, ", ") + "}"
+	declText := name + " := " + srcImports.fiberQualifierAt(f, decl.End()) + "ListenConfig{" + strings.Join(held, ", ") + "}"
 	imports[f] = srcImports
 	at := g.offset(decl.End())
 	work.removal.replace(at, at, "\n"+declText)

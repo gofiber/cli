@@ -77,11 +77,11 @@ func appMigrateTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 // appTestConfigFor returns the fiber.TestConfig that stands for the timeout arg of
 // app.Test in milliseconds.
 func appTestConfigFor(f *appFile, arg ast.Expr, imps *appImports) string {
-	cfg := imps.fiberQualifier(f) + "TestConfig"
+	cfg := imps.fiberQualifierAt(f, arg.Pos()) + "TestConfig"
 	if appIsNegativeNumber(arg) {
 		return cfg + "{Timeout: 0, FailOnTimeout: false}"
 	}
-	timeQ := imps.qualifier(f, "time", "time")
+	timeQ := imps.qualifierAt(f, arg.Pos(), "time", "time")
 	return cfg + "{Timeout: " + timeQ + "Duration(" + f.g.text(arg) + ") * " + timeQ + "Millisecond, FailOnTimeout: true}"
 }
 
@@ -118,8 +118,8 @@ func (f *appFile) spreadTestConfig(edits *editSet, imps *appImports, call *ast.C
 	name := f.freshName(call, "testConfig", taken[decl])
 	taken[decl][name] = true
 
-	cfg := imps.fiberQualifier(f) + "TestConfig"
-	timeQ := imps.qualifier(f, "time", "time")
+	cfg := imps.fiberQualifierAt(f, stmt.Pos()) + "TestConfig"
+	timeQ := imps.qualifierAt(f, stmt.Pos(), "time", "time")
 	ms := g.text(spread)
 	edits.replace(g.offset(stmt.Pos()), g.offset(stmt.Pos()),
 		name+" := "+cfg+"{Timeout: "+timeQ+"Second, FailOnTimeout: true}\n"+

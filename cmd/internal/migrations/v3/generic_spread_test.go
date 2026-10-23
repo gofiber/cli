@@ -300,7 +300,7 @@ func handler(c *Ctx, defaults []int) (int, error) {
 			notes: []string{"ParamsInt without a default value"},
 		},
 		{
-			name: "a strconv that a variable hides is reported",
+			name: "a strconv that a variable hides is imported a second time under another name",
 			in: `package main
 
 import (
@@ -315,7 +315,32 @@ func handler(c *fiber.Ctx, defaults []int) (int, error) {
 	return c.ParamsInt("id", defaults...)
 }
 `,
-			notes: []string{"main.go:12: c.ParamsInt was removed in Fiber v3"},
+			want: `package main
+
+import (
+	"strconv"
+	stdstrconv "strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func handler(c *fiber.Ctx, defaults []int) (int, error) {
+	strconv := strconv.Itoa(1)
+	_ = strconv
+	return func() (int, error) {
+		value, err := stdstrconv.Atoi(c.Params("id"))
+		if err != nil {
+			if len(defaults) > 0 {
+				return defaults[0], nil
+			}
+			return 0, err
+		}
+		return value, nil
+	}()
+}
+`,
+			msg:   "Migrating generic helpers",
+			notes: []string{"ParamsInt without a default value"},
 		},
 	})
 }

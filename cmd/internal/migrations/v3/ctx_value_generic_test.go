@@ -64,7 +64,8 @@ func parserOf(c *fiber.Ctx) parser {
 	}}
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "ParamsInt keeps the error of v2, with the text in front of it",
@@ -197,7 +198,7 @@ func handler(c *Ctx) int {
 			msg: "Migrating generic helpers",
 		},
 		{
-			name: "a package name that a variable hides is reported",
+			name: "a package name that a variable hides is imported a second time under another name",
 			in: `package main
 
 import "github.com/gofiber/fiber/v2"
@@ -210,18 +211,31 @@ func handler(c *fiber.Ctx, strconv string) {
 `,
 			want: `package main
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"fmt"
+	stdstrconv "strconv"
+
+	"github.com/gofiber/fiber/v2"
+)
 
 func handler(c *fiber.Ctx, strconv string) {
-	get := c.ParamsInt
+	get := func(key string, defaultValue ...int) (int, error) {
+		value, err := stdstrconv.Atoi(c.Params(key))
+		if err != nil {
+			if len(defaultValue) > 0 {
+				return defaultValue[0], nil
+			}
+			return 0, fmt.Errorf("failed to convert: %w", err)
+		}
+		return value, nil
+	}
 	page := func(key string, defaultValue ...int) int {
 		return fiber.Query[int](c, key, defaultValue...)
 	}
 	_, _ = get, page
 }
 `,
-			msg:   "Migrating generic helpers",
-			notes: []string{"main.go:6: c.ParamsInt was removed in Fiber v3 and is used as a value, but strconv or fmt is declared here"},
+			msg: "Migrating generic helpers",
 		},
 		{
 			name: "receivers that are evaluated where the value is made",
@@ -267,7 +281,8 @@ func handler(c *fiber.Ctx, s *server) {
 	_, _, _ = page, ratio, flag
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "receivers that are calls of function values",
@@ -335,7 +350,8 @@ func handler(c *fiber.Ctx, s *server, param func() *fiber.Ctx) int {
 	return fiber.Query[int](get(), "page", 1)
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "receivers whose type comes from the results of a call, an interface or a generic function",
@@ -480,6 +496,9 @@ type Page struct{ *Context }
 
 func calls(c *Context, p *Page) (int, int, float64, bool, error) {
 	id, err := strconv.Atoi(c.Ctx.Params("id"))
+	if err != nil {
+		id = 0
+	}
 	n, _ := fiber.Params[int](p.Context.Ctx, "id", 3), error(nil)
 	return id + n, fiber.Query[int](p.Context.Ctx, "n", 1), fiber.Query[float64](c.Ctx, "f"), fiber.Query[bool](p.Context.Ctx, "b"), err
 }
@@ -504,7 +523,7 @@ func values(c *Context, p *Page) (func(string, ...int) (int, error), func(string
 }
 `,
 			msg:   "Migrating generic helpers",
-			notes: []string{"main.go:20: ParamsInt without a default value is strconv.Atoi(c.Params(key)) now"},
+			notes: []string{"main.go:20: ParamsInt without a default value is strconv.Atoi(c.Params(key)) now", "QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "a wrapper that declares the getter itself keeps it",

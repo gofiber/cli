@@ -3,6 +3,8 @@ package v3
 import (
 	"go/ast"
 	"go/parser"
+	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -637,9 +639,61 @@ func Test_ctxIsFiberType(t *testing.T) {
 func Test_ctxEnv_qual(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "fiber.Ctx", (&ctxEnv{names: []string{"fiber"}}).qual("Ctx"))
-	assert.Equal(t, "f.Ctx", (&ctxEnv{names: []string{"f"}}).qual("Ctx"))
-	assert.Equal(t, "f.Ctx", (&ctxEnv{names: []string{".", "f"}}).qual("Ctx"))
-	assert.Equal(t, "Ctx", (&ctxEnv{names: []string{"."}}).qual("Ctx"))
-	assert.Equal(t, "fiber.Ctx", (&ctxEnv{}).qual("Ctx"))
+	g, ok := parseSource("package p\n")
+	require.True(t, ok)
+	qual := func(env *ctxEnv) string {
+		env.g = g
+		return env.qual(token.NoPos, "Ctx")
+	}
+
+	assert.Equal(t, "fiber.Ctx", qual(&ctxEnv{names: []string{"fiber"}}))
+	assert.Equal(t, "f.Ctx", qual(&ctxEnv{names: []string{"f"}}))
+	assert.Equal(t, "f.Ctx", qual(&ctxEnv{names: []string{".", "f"}}))
+	assert.Equal(t, "Ctx", qual(&ctxEnv{names: []string{"."}}))
+	assert.Equal(t, "fiber.Ctx", qual(&ctxEnv{}))
+}
+
+// A declaration inside a function can hide the name the file has for the fiber
+// package, and then the code that goes in there names the package by a second
+// import under a name nothing uses.
+func Test_ctxEnv_qualWhereTheNameIsHidden(t *testing.T) {
+	t.Parallel()
+
+	g, ok := parseSource(`package p
+
+import "github.com/gofiber/fiber/v3"
+
+func start(fiber *fiber.App) { fiber.Listen(":3000") }
+
+func other() { fiber.New() }
+`)
+	require.True(t, ok)
+	env := newCtxEnv(g, []string{"fiber"})
+
+	var inStart, inOther token.Pos
+	for _, decl := range g.file.Decls {
+		if fn, isFn := decl.(*ast.FuncDecl); isFn {
+			if fn.Name.Name == "start" {
+				inStart = fn.Body.Lbrace + 1
+			} else {
+				inOther = fn.Body.Lbrace + 1
+			}
+		}
+	}
+
+	assert.Equal(t, "fiberv3.ListenConfig", env.qual(inStart, "ListenConfig"))
+	assert.Equal(t, "fiber.ListenConfig", env.qual(inOther, "ListenConfig"))
+	assert.Equal(t, "fiber.ListenConfig", env.qual(g.file.Pos(), "ListenConfig"))
+	assert.Equal(t, "fiber.ListenConfig", env.spell("ListenConfig"), "messages name the package the way the file does")
+
+	// the import of the second name goes in when the migrated source uses it
+	content := g.src
+	assert.Equal(t, content, env.finish(content, content))
+	used := strings.Replace(content, `fiber.Listen(":3000")`, `fiber.Listen(":3000", fiberv3.ListenConfig{})`, 1)
+	assert.Contains(t, env.finish(content, used), "fiberv3 \"github.com/gofiber/fiber/v3\"")
+	assert.NotContains(t, env.finish(content, content+"\n// changed\n"), "fiberv3 \"")
+
+	// a dot import names the package by its members
+	dot := newCtxEnv(g, []string{"."})
+	assert.Equal(t, "ListenConfig", dot.qual(inOther, "ListenConfig"))
 }

@@ -338,7 +338,7 @@ func (t *ctxRangeTracker) checkConversion(call *ast.CallExpr, stack []ast.Node) 
 			e.replaceNode(g, call, target+"{Start: "+elem+"("+operand+".Start), End: "+elem+"("+operand+".End)}")
 			return
 		}
-		e.replaceNode(g, call, "func(v "+t.env.qual(ctxTypeRangeSet)+") "+target+" {\nreturn "+target+"{Start: "+elem+"(v.Start), End: "+elem+"(v.End)}\n}("+operand+")")
+		e.replaceNode(g, call, "func(v "+t.env.qual(call.Pos(), ctxTypeRangeSet)+") "+target+" {\nreturn "+target+"{Start: "+elem+"(v.Start), End: "+elem+"(v.End)}\n}("+operand+")")
 	})
 }
 

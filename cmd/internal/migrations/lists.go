@@ -75,6 +75,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateOlderV2Callbacks,
 			v3migrations.MigrateCtxBehaviorNotes,
 			v3migrations.MigrateSendFileConfig,
+			v3migrations.MigrateContextMirrors,
 			v3migrations.MigrateCORSConfig,
 			v3migrations.MigrateCSRFConfig,
 			v3migrations.MigrateMonitorImport,

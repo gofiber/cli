@@ -56,7 +56,11 @@ import (
 )
 
 func userID(c *fiber.Ctx) (int, error) {
-	return strconv.Atoi(c.Params("id"))
+	value, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 
 func pair(a int, err error) {}
@@ -68,10 +72,22 @@ func handler(c *fiber.Ctx) error {
 	}
 	var other int
 	other, err = strconv.Atoi(c.Params("other"))
+	if err != nil {
+		other = 0
+	}
 	_, err = strconv.Atoi(c.Params(strings.ToLower("ID")))
-	n, _ := strconv.Atoi(c.Params("n"))
+	n := fiber.Params[int](c, "n")
 	var x, y = strconv.Atoi(c.Params("x"))
-	pair(strconv.Atoi(c.Params("p")))
+	if y != nil {
+		x = 0
+	}
+	pair(func() (int, error) {
+		value, err := strconv.Atoi(c.Params("p"))
+		if err != nil {
+			return 0, err
+		}
+		return value, nil
+	}())
 	if v, err := strconv.Atoi(c.Params("v")); err != nil {
 		return err
 	} else if v < 0 {
@@ -174,7 +190,8 @@ func list(c *fiber.Ctx) error {
 	return nil
 }
 `,
-			msg: "Migrating generic helpers",
+			msg:   "Migrating generic helpers",
+			notes: []string{"QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "calls whose results are not both used",
@@ -227,6 +244,9 @@ import (
 func handler(c *f.Ctx) error {
 	n := sc.Itoa(1)
 	id, err := sc.Atoi(c.Params("id"))
+	if err != nil {
+		id = 0
+	}
 	page := f.Query[int](c, "page", 1)
 	_, _, _ = n, id, page
 	return err
@@ -318,7 +338,7 @@ func handler(c *fiber.Ctx, defaults []int, fs []float64) {
 }
 `,
 			msg:   "Migrating generic helpers",
-			notes: []string{"ParamsInt without a default value"},
+			notes: []string{"ParamsInt without a default value", "QueryFloat is fiber.Query[float64] now"},
 		},
 		{
 			name: "other receivers stay",

@@ -152,24 +152,29 @@ func (r *ctxRun) reachesContexts(fi internal.FileInfo, file *ast.File) bool {
 	})
 }
 
-// finish adds the import of the fiber package to the migrated source of a file that
-// had none, when the rewrite wrote the qualifier (see ctxEnv.qual).
+// finish adds the imports of the fiber package that the rewrite needs to the
+// migrated source of a file: the one of a file that had none, when the rewrite
+// wrote the qualifier (see ctxEnv.qual), and the second one of a file whose own
+// name for the package was hidden where the rewrite needed it. An import goes in
+// only when the migrated source uses its name.
 func (env *ctxEnv) finish(content, out string) string {
-	if !env.usedFiber || len(env.names) > 0 || out == content {
+	if out == content {
 		return out
 	}
 
-	importPath := ""
-	for _, file := range env.files {
-		for _, spec := range file.Imports {
-			if p, err := strconv.Unquote(spec.Path.Value); err == nil && reFiberCorePath.MatchString(p) {
-				importPath = p
-			}
+	if env.speller != nil {
+		out = env.speller.apply(out)
+	}
+	if env.extra != "" && ctxUsesName(out, env.extra) {
+		if importPath := env.fiberImportPath(); importPath != "" {
+			out = ctxAddNamedImport(out, importPath, env.extra)
 		}
 	}
-	if importPath == "" {
-		importPath = env.mod.fiberImportPath()
+
+	if !env.usedFiber || len(env.names) > 0 {
+		return out
 	}
+	importPath := env.fiberImportPath()
 	if importPath == "" {
 		return out
 	}
@@ -177,7 +182,24 @@ func (env *ctxEnv) finish(content, out string) string {
 	if alias == ctxFiberDefaultName {
 		alias = ""
 	}
+	if !ctxUsesName(out, env.alias) {
+		return out
+	}
 	return ctxAddImportAs(out, importPath, ctxFiberDefaultName, alias)
+}
+
+// fiberImportPath returns the import path of the fiber package that the file
+// uses, or else the other files of its package, or else the module; empty when
+// none does.
+func (env *ctxEnv) fiberImportPath() string {
+	for _, file := range append([]*ast.File{env.g.file}, env.files...) {
+		for _, spec := range file.Imports {
+			if p, err := strconv.Unquote(spec.Path.Value); err == nil && reFiberCorePath.MatchString(p) {
+				return p
+			}
+		}
+	}
+	return env.mod.fiberImportPath()
 }
 
 // ctxFiberDefaultName is the name of the fiber package.
