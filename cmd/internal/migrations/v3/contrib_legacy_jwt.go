@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -46,8 +47,7 @@ func migrateLegacyJWTImport(content string) string {
 	return src.apply()
 }
 
-// legacyJWTModules returns the paths of the standalone jwt module that a go.mod requires or
-// replaces.
+// legacyJWTModules returns the paths of the standalone jwt module that a go.mod requires.
 func legacyJWTModules(goMod string) []string {
 	file, err := modfile.ParseLax("go.mod", []byte(goMod), nil)
 	if err != nil {
@@ -55,16 +55,19 @@ func legacyJWTModules(goMod string) []string {
 	}
 
 	var paths []string
-	add := func(path string) {
-		if legacyJWTPath.MatchString(path) && !slices.Contains(paths, path) {
-			paths = append(paths, path)
+	for _, req := range file.Require {
+		if legacyJWTPath.MatchString(req.Mod.Path) && !slices.Contains(paths, req.Mod.Path) {
+			paths = append(paths, req.Mod.Path)
 		}
 	}
-	for _, req := range file.Require {
-		add(req.Mod.Path)
-	}
-	for _, rep := range file.Replace {
-		add(rep.Old.Path)
-	}
 	return paths
+}
+
+// updateLegacyJWTRequirement moves the requirement of the standalone jwt module to the jwt
+// module of contrib. A replace of the old module is left as it is: it points at a copy or a
+// fork of the old module, which cannot stand in for the new one, and it applies to nothing
+// once the requirement is gone.
+func updateLegacyJWTRequirement(goMod, oldPath, version string) string {
+	re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)%s\s+%s`, regexp.QuoteMeta(oldPath), goModVersionPattern))
+	return re.ReplaceAllString(goMod, fmt.Sprintf(`${1}%s %s`, contribV3Prefix+"jwt", version))
 }

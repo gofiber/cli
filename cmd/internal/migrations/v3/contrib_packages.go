@@ -100,7 +100,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 				return fmt.Errorf("fetch contrib jwt version: %w", err)
 			}
 
-			updated = updateGoModModule(updated, legacy, contribV3Prefix+"jwt", version)
+			updated = updateLegacyJWTRequirement(updated, legacy, version)
 		}
 
 		if updated == content {

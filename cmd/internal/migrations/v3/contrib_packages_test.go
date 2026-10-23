@@ -153,7 +153,11 @@ require (
     github.com/gofiber/jwt/v3 v3.3.10
 )
 
-replace github.com/gofiber/jwt/v3 => ../jwt
+replace github.com/gofiber/jwt/v3 v3.3.10 => ../jwt
+
+replace (
+    github.com/gofiber/jwt/v3 => ../jwt
+)
 `), 0o600))
 
 	var buf bytes.Buffer
@@ -165,8 +169,13 @@ replace github.com/gofiber/jwt/v3 => ../jwt
 
 	mod := readFile(t, filepath.Join(dir, "go.mod"))
 	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/jwt v")
-	assert.Contains(t, mod, "replace github.com/gofiber/contrib/v3/jwt => ../jwt")
-	assert.NotContains(t, mod, "github.com/gofiber/jwt")
+	assert.NotContains(t, mod, "require github.com/gofiber/jwt")
+	assert.NotContains(t, mod, "gofiber/jwt/v3 v3.3.10\n)", "the requirement moved")
+	// a replace of the old module points at a copy of the old module, which cannot stand in for the
+	// new one: it stays as it was, whatever its shape
+	assert.Contains(t, mod, "replace github.com/gofiber/jwt/v3 v3.3.10 => ../jwt")
+	assert.Contains(t, mod, "replace (\n    github.com/gofiber/jwt/v3 => ../jwt\n)")
+	assert.NotContains(t, mod, "replace github.com/gofiber/contrib")
 	assert.Contains(t, buf.String(), "Migrating contrib packages")
 }
 
