@@ -366,7 +366,9 @@ func main() {
 	}
 }
 
-func Test_MigrateConfigListenerFields_UnlinkedAppKeepsItsFields(t *testing.T) {
+// The settings of an app that no call of the module starts take effect nowhere, so they
+// are dropped, with one note.
+func Test_MigrateConfigListenerFields_UnstartedAppDropsItsSettings(t *testing.T) {
 	t.Parallel()
 
 	dir := appSingle(t, `package main
@@ -385,17 +387,17 @@ func main() {
 	log.Println(app.Config().AppName)
 }
 `)
-	before := appRead(t, dir, "main.go")
 
 	out := appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	assert.Equal(t, before, appRead(t, dir, "main.go"))
-	assert.Empty(t, out)
+	assert.Contains(t, out, "Migrating listener related config fields")
+	assert.Contains(t, appRead(t, dir, "main.go"), "app := fiber.New(fiber.Config{\n\t\tAppName: \"x\",\n\t})")
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
 	assert.Equal(t, 11, notes[0].Line)
-	assert.Contains(t, notes[0].Message, "EnablePrefork")
-	assert.Contains(t, notes[0].Message, "no Listen call")
+	assert.Contains(t, notes[0].Message, "Prefork field in v3: dropped, because no call of this module starts the app this config makes")
+	assert.Contains(t, notes[0].Message, "set it in the fiber.ListenConfig of the call that starts the app if you start it later")
+	assert.Empty(t, appRun(t, dir, v3.MigrateConfigListenerFields), "a second run changes nothing")
 }
 
 func Test_MigrateConfigListenerFields_OtherTypesAreNotApps(t *testing.T) {
@@ -819,20 +821,19 @@ func main() { _ = newApp() }
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
 
-	// printing is all those two settings change, and the app is never started
+	// nothing starts these apps: the settings take effect nowhere
 	test := appRead(t, dir, "app_test.go")
-	assert.NotContains(t, test, "DisableStartupMessage")
-	assert.NotContains(t, test, "EnablePrintRoutes")
-	assert.Contains(t, test, "Prefork:")
+	for _, setting := range []string{"DisableStartupMessage", "EnablePrintRoutes", "Prefork"} {
+		assert.NotContains(t, test, setting)
+		assert.NotContains(t, appRead(t, dir, "app.go"), setting)
+	}
 	assert.Contains(t, test, `AppName: "test"`)
-	// an app of the program itself may be started from anywhere
-	assert.Contains(t, appRead(t, dir, "app.go"), "DisableStartupMessage: true")
 
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 2)
 	assert.Equal(t, "app.go", notes[0].File)
 	assert.Equal(t, "app_test.go", notes[1].File)
-	assert.Contains(t, notes[1].Message, "EnablePrefork")
+	assert.Contains(t, notes[1].Message, "Prefork, DisableStartupMessage and EnablePrintRoutes fields in v3: dropped")
 }
 
 // A value that has side effects is evaluated where it was written, as it was in
@@ -946,7 +947,9 @@ func main() {
 	assert.Contains(t, notes[0].Message, "config.Settings.Fiber, config.ForServer now return fibermigrate.Config")
 }
 
-func Test_MigrateConfigListenerFields_ConfigThatEscapes(t *testing.T) {
+// A config that is also handed to a function of the project is followed there: the
+// parameter holds the config of v2 as well, and the app it makes asks the registry.
+func Test_MigrateConfigListenerFields_ConfigPassedOn(t *testing.T) {
 	t.Parallel()
 
 	dir := appSingle(t, `package main
@@ -962,6 +965,54 @@ func main() {
 	other(cfg).Listen(":3001")
 }
 `)
+
+	out, notes := shimMigrate(t, dir)
+
+	assert.Contains(t, out, "Migrating listener related config fields")
+	assert.Equal(t, `package main
+
+import (
+	"example.com/app/internal/fibermigrate"
+	"github.com/gofiber/fiber/v2"
+)
+
+func other(cfg fibermigrate.Config) *fiber.App { return fibermigrate.New(cfg) }
+
+func main() {
+	cfg := fibermigrate.Config{Prefork: true}
+	app := fibermigrate.New(cfg)
+	app.Listen(":3000", fibermigrate.ListenConfig(app))
+	fibermigrate.Listen(other(cfg), ":3001")
+}
+`, appRead(t, dir, "main.go"))
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "main.other now takes a fibermigrate.Config")
+}
+
+// A config that goes where the migration cannot follow it keeps its settings, and
+// the note says where it goes.
+func Test_MigrateConfigListenerFields_ConfigThatEscapes(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"encoding/json"
+	"os"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+func other(cfg fiber.Config) *fiber.App { return fiber.New(cfg) }
+
+func main() {
+	cfg := fiber.Config{Prefork: true}
+	app := fiber.New(cfg)
+	app.Listen(":3000")
+	other(cfg).Listen(":3001")
+	json.NewEncoder(os.Stdout).Encode(cfg)
+}
+`)
 	before := appRead(t, dir, "main.go")
 
 	appRun(t, dir, v3.MigrateConfigListenerFields)
@@ -969,12 +1020,12 @@ func main() {
 	assert.Equal(t, before, appRead(t, dir, "main.go"))
 	notes := internal.DrainNotes(dir)
 	require.Len(t, notes, 1)
-	assert.Contains(t, notes[0].Message, "the config is passed to other, at line 11 of main.go")
+	assert.Contains(t, notes[0].Message, "(the config is passed to json.NewEncoder(os.Stdout).Encode, at line 17 of main.go)")
 }
 
-// A config that is stored in a struct, assigned to a field or handed to a function is
-// not followed: its settings stay, and the note says where the config goes.
-func Test_MigrateConfigListenerFields_NotesWhereTheConfigGoes(t *testing.T) {
+// A config that is stored in a struct, assigned to a field or handed to a function
+// of the project is followed there, from the code that fills it in to the app.
+func Test_MigrateConfigListenerFields_FollowsTheConfigThroughStructsAndCalls(t *testing.T) {
 	t.Parallel()
 
 	dir := appSingle(t, `package main
@@ -1014,6 +1065,87 @@ func main() {
 	newServer(true).app.Listen(":3002")
 }
 `)
+
+	_, notes := shimMigrate(t, dir)
+
+	assert.Equal(t, `package main
+
+import (
+	"os"
+
+	"example.com/app/internal/fibermigrate"
+	"github.com/gofiber/fiber/v2"
+)
+
+type Settings struct {
+	Fiber fibermigrate.Config
+}
+
+type Server struct {
+	cfg fibermigrate.Config
+	app *fiber.App
+}
+
+func load() Settings {
+	return Settings{Fiber: fibermigrate.Config{Prefork: os.Getenv("PREFORK") == "1"}}
+}
+
+func newApp(cfg fibermigrate.Config) *fiber.App { return fibermigrate.New(cfg) }
+
+func newServer(prefork bool) *Server {
+	s := &Server{}
+	s.cfg = fibermigrate.Config{Prefork: prefork}
+	s.app = fibermigrate.New(s.cfg)
+	return s
+}
+
+func main() {
+	st := load()
+	fibermigrate.Listen(fibermigrate.New(st.Fiber), ":3000")
+	fibermigrate.Listen(newApp(fibermigrate.Config{DisableStartupMessage: true}), ":3001")
+	fibermigrate.Listen(newServer(true).app, ":3002")
+}
+`, appRead(t, dir, "main.go"))
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "main.newApp now takes a fibermigrate.Config and main.Settings.Fiber, main.Server.cfg now hold a fibermigrate.Config")
+}
+
+// A config that is kept in a collection, sent on a channel or handed to a value of
+// another type is not followed: its settings stay, and the note says where it goes.
+func Test_MigrateConfigListenerFields_NotesWhereTheConfigCannotBeFollowed(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+var byName = map[string]fiber.Config{}
+
+func register(name string, cfg fiber.Config) { byName[name] = cfg }
+
+func many() []fiber.Config {
+	return []fiber.Config{{Prefork: true}}
+}
+
+func show(v any) { fmt.Println(v) }
+
+func main() {
+	register("a", fiber.Config{DisableStartupMessage: true})
+	for _, cfg := range many() {
+		fiber.New(cfg).Listen(":3000")
+	}
+	cfg := fiber.Config{EnablePrintRoutes: true}
+	show(cfg)
+	fiber.New(cfg).Listen(":3001")
+	ch := make(chan fiber.Config, 1)
+	ch <- fiber.Config{Network: "tcp4"}
+	fiber.New(<-ch).Listen(":3002")
+}
+`)
 	before := appRead(t, dir, "main.go")
 
 	out := appRun(t, dir, v3.MigrateConfigListenerFields)
@@ -1021,10 +1153,12 @@ func main() {
 	assert.Empty(t, out)
 	assert.Equal(t, before, appRead(t, dir, "main.go"))
 	notes := internal.DrainNotes(dir)
-	require.Len(t, notes, 3)
-	assert.Contains(t, notes[0].Message, "(the config is stored in the field Fiber of a struct, slice or map, at line 19 of main.go)")
-	assert.Contains(t, notes[1].Message, "(the config is assigned to s.cfg, at line 26 of main.go)")
-	assert.Contains(t, notes[2].Message, "(the config is passed to newApp, at line 34 of main.go)")
+	require.Len(t, notes, 4)
+	assert.Equal(t, 14, notes[0].Line)
+	assert.Contains(t, notes[0].Message, "(the config is stored in a struct, slice or map, at line 14 of main.go)")
+	assert.Contains(t, notes[1].Message, "(the config is assigned to byName[name], at line 11 of main.go)")
+	assert.Contains(t, notes[2].Message, "(the config is held by a value of type any, at line 17 of main.go)")
+	assert.Contains(t, notes[3].Message, "(the config is sent on a channel, at line 28 of main.go)")
 }
 
 // A value that goes to the calls that start the app cannot use a package that a variable of the

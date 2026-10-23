@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"fmt"
 	"go/ast"
 	"os"
 	"path/filepath"
@@ -79,8 +80,12 @@ func (p *appPackage) hasUnreadFile() bool {
 
 // droppableValue reports whether the value of a setting can be removed together
 // with it: it uses no variable that only it keeps used.
-func (src *appListenSource) droppableValue(e ast.Expr) bool {
-	needs := src.file.valueNeeds(e)
+func (src *appListenSource) droppableValue(e ast.Expr) bool { return src.file.droppableValue(e) }
+
+// droppableValue reports whether the value can be removed with the setting it is the
+// value of.
+func (f *appFile) droppableValue(e ast.Expr) bool {
+	needs := f.valueNeeds(e)
 	return !needs.unknown && !slices.ContainsFunc(needs.locals, func(b appBinding) bool { return !b.isParam() })
 }
 
@@ -123,7 +128,40 @@ func (pl *appPlanner) dropDead(src *appListenSource) (commit func(), dropped []*
 			funcs = append(funcs, name)
 		}
 	}
+	return pl.dropFields(src, fmt.Sprintf("the app this config makes is not started anywhere in the package (%s is unexported and nothing calls it)", strings.Join(funcs, ", ")))
+}
 
+// dropUnstarted plans the removal of the settings of a source whose apps no call of
+// the module starts and that nothing in it reads the settings back from: they are
+// made, and used for tests or by a program in another module, and the settings
+// only take effect when an app is started. Code outside the module that starts one
+// of the apps has to pass them in its own fiber.ListenConfig, which the note says.
+func (pl *appPlanner) dropUnstarted(src *appListenSource) (commit func(), dropped []*appSourceField, why string) {
+	if len(src.creations) == 0 || src.escapes || src.retFn != nil || !src.file.walked || (src.node != nil && src.scope == nil) || pl.unreadable {
+		return nil, nil, ""
+	}
+	for _, c := range src.creations {
+		if !c.file.walked {
+			return nil, nil, ""
+		}
+	}
+
+	// an app that a package other modules can import hands out may be started there,
+	// and the settings are what its author wants for it: they stay, with the note
+	if mod, ok := pl.moduleOf(src.file); ok && len(pl.exposure(mod, src.creations)) > 0 {
+		return nil, nil, ""
+	}
+	// so may an app that goes to code outside the migration
+	if reach := pl.appReach(src.creations); reach != "" {
+		return nil, nil, reach + ", where code outside the migration may start it"
+	}
+	commit, dropped = pl.dropFields(src, "no call of this module starts the app this config makes")
+	return commit, dropped, ""
+}
+
+// dropFields plans the removal of the settings of the source that can be taken out
+// of it, with the note that tells why they are not needed.
+func (pl *appPlanner) dropFields(src *appListenSource, why string) (commit func(), dropped []*appSourceField) {
 	for _, fld := range src.fields {
 		if src.removable(fld) {
 			dropped = append(dropped, fld)
@@ -149,9 +187,8 @@ func (pl *appPlanner) dropDead(src *appListenSource) (commit func(), dropped []*
 			fld.dropped = true
 		}
 		internal.Notef(first.file.fi, first.file.g.line(first.node.Pos()),
-			"fiber.Config has no %s in v3: dropped, because the app this config makes is not started anywhere in the package (%s is unexported and nothing calls it); "+
-				"set %s in the fiber.ListenConfig of the call that starts the app if you start it later",
-			appFieldList(names), strings.Join(funcs, ", "), appThem(len(names)))
+			"fiber.Config has no %s in v3: dropped, because %s; set %s in the fiber.ListenConfig of the call that starts the app if you start it later",
+			appFieldList(names), why, appThem(len(names)))
 	}, dropped
 }
 

@@ -137,7 +137,8 @@ the standard library group, as `goimports` does. The files:
   it, wherever it is; `fibermigrate.Config` and `fibermigrate.New` stand in for a config
   that a function returns, and `fibermigrate.ConfigOf(app)` for `app.Config()`. Delete the
   file once you pass a `fiber.ListenConfig` to `Listen` yourself. The settings of an app
-  that nothing in the module starts are dropped, with a note;
+  that nothing in the module starts, and that goes to no code the migration cannot see,
+  are dropped, with a note;
 - `health.go`: the v2 healthcheck middleware (`HealthConfig`, `Health`) for the configs
   that cannot be split into one route for each probe. Delete the file once the probes
   are registered one by one;

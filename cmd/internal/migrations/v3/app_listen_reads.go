@@ -40,7 +40,7 @@ func (f *appFile) appConfigCall(e ast.Expr) (call *ast.CallExpr, recv ast.Expr, 
 		return nil, nil, false
 	}
 	sel, isSel := call.Fun.(*ast.SelectorExpr)
-	if !isSel || sel.Sel.Name != appNameConfig || f.callKind(call, 0, 0) != appKindConfig {
+	if !isSel || sel.Sel.Name != appNameConfig || f.callKind(call, 0, 0) != appKindConfig || f.kind(sel.X) != appKindApp {
 		return nil, nil, false
 	}
 	if callee, found := f.calleeOf(call, 0); found && callee.decl != nil && callee.decl.Recv != nil {
@@ -180,6 +180,9 @@ func (pl *appPlanner) finishReads() {
 		mr := pl.reads[root]
 		if why := pl.blocked[root]; why != "" {
 			for _, r := range mr.reads {
+				if r.sel == nil {
+					continue // a config that is only handed on reads nothing
+				}
 				internal.Notef(r.file.fi, r.file.g.line(r.sel.Pos()),
 					"fiber.Config has no %s field in v3: read the setting from the fiber.ListenConfig of the call that starts the app "+
 						"(the registry in %s, which keeps the settings of the apps of this module, could not be used: %s)",

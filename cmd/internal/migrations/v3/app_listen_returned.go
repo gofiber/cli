@@ -208,6 +208,10 @@ func shimReturnedVariable(w *appShimWork, f *appFile, id *ast.Ident, retyped map
 // literal of the registry's Config, and the rest stays in the fiber.Config in it.
 func shimWrapLiteral(w *appShimWork, f *appFile, lit *ast.CompositeLit) string {
 	g := f.g
+	if w.pl.wrapped[lit] {
+		return fmt.Sprintf("the fiber.Config literal at line %d is already changed by another change", g.line(lit.Pos()))
+	}
+	w.wraps = append(w.wraps, lit)
 
 	var drop []int
 	var held []string
@@ -323,7 +327,16 @@ func (f *appFile) orderNote(lit *ast.CompositeLit, drop []int, listenerFirst boo
 	}
 	return fmt.Sprintf("%s of this fiber.Config is now evaluated %s %s, where v2 evaluated the fields in the order they are written; "+
 		"both call functions or receive from channels, so check that the order of their effects does not matter",
-		strings.Join(moved, " and "), when, strings.Join(others, " and "))
+		appFieldsShort(moved), when, appFieldsShort(others))
+}
+
+// appFieldsShort joins the names of fields for a note: at most three, then the count
+// of the others.
+func appFieldsShort(names []string) string {
+	if len(names) <= 3 {
+		return strings.Join(names, " and ")
+	}
+	return strings.Join(names[:3], ", ") + fmt.Sprintf(" and %d more", len(names)-3)
 }
 
 // impure reports whether evaluating e can do more than compute a value: it calls a

@@ -75,7 +75,7 @@ func (f *appFile) configSources() []*appListenSource {
 	ast.Inspect(f.g.file, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CompositeLit:
-			if x.Type != nil && f.fiberTypeName(x.Type) == appNameConfig {
+			if (x.Type != nil && f.fiberTypeName(x.Type) == appNameConfig) || (x.Type == nil && f.isElidedConfig(x)) {
 				out = append(out, f.sourceOfLiteral(x))
 			}
 		case *ast.ValueSpec:
@@ -112,6 +112,26 @@ func (f *appFile) configSources() []*appListenSource {
 		}
 	}
 	return keep
+}
+
+// isElidedConfig reports whether the literal has no type because it is an element of
+// a slice, array or map of fiber.Config: []fiber.Config{{Prefork: true}}.
+func (f *appFile) isElidedConfig(lit *ast.CompositeLit) bool {
+	parent := f.parent[lit]
+	if kv, ok := parent.(*ast.KeyValueExpr); ok && kv.Value == ast.Expr(lit) {
+		parent = f.parent[kv]
+	}
+	outer, ok := parent.(*ast.CompositeLit)
+	if !ok {
+		return false
+	}
+	switch t := outer.Type.(type) {
+	case *ast.ArrayType:
+		return f.fiberTypeName(t.Elt) == appNameConfig
+	case *ast.MapType:
+		return f.fiberTypeName(t.Value) == appNameConfig
+	}
+	return false
 }
 
 // sourceOfConfigCall returns the source for the variable name that is declared with
@@ -428,9 +448,9 @@ func (src *appListenSource) followCall(pf *appFile, call *ast.CallExpr) {
 	fn := src.retFn
 	callee, found := pf.calleeOf(call, 0)
 	switch {
-	case found && callee.decl != fn:
+	case found && callee.decl != fn && !callee.isInterfaceMethod():
 		return // another function of the same name
-	case !found:
+	case !found || callee.isInterfaceMethod():
 		// a method of another type, or of a type the project does not declare, is
 		// not it; a receiver that cannot be traced may be
 		if fn.Recv != nil && !pf.foreignReceiver(call) && pf.feedsNew(call) {
@@ -589,7 +609,7 @@ func (f *appFile) referencesFunc(n ast.Node, fn *ast.FuncDecl) bool {
 		return fn.Recv == nil && pkg != nil && pkg.funcs[name] != nil && pkg.funcs[name].decl == fn
 	case *ast.SelectorExpr:
 		call := &ast.CallExpr{Fun: x}
-		if callee, found := f.calleeOf(call, 0); found {
+		if callee, found := f.calleeOf(call, 0); found && !callee.isInterfaceMethod() {
 			return callee.decl == fn
 		}
 		if t, tf := f.valueType(x.X, 0); t != nil {

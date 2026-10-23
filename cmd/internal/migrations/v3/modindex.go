@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/gofiber/cli/cmd/internal"
 )
 
@@ -62,16 +64,32 @@ type moduleIndex struct {
 	pkgs   map[string]*modPackage
 	users  map[string][]*modFile
 	member map[string]bool
-	mod    goModule
-	order  []string
+	// hub hands out the indexes of the other modules of the repository, nil for an
+	// index that knows only its own module.
+	hub   *moduleIndexes
+	mod   goModule
+	order []string
 	// listed is set once order holds every directory of the module.
 	listed bool
 }
 
 // moduleIndexes hands out the index of the module a file belongs to, one per
 // module for the length of a run.
+//
+// A repository can hold several modules below the directory the run starts in: a
+// go.work workspace, a module next to the one that imports it with a replace
+// directive, a nested module. The index of each one reads its own module, and
+// answers for the import paths and directories of the others too (dirOf, packageAt,
+// packageIn, importPathOf, fileAt and importers): a package of another module of
+// the repository is as much the project's code as one of the module itself. The
+// packages the finders go through (packages) stay those of the module.
 type moduleIndexes struct {
 	byRoot map[string]*moduleIndex
+	// root is the directory the workspace was found for.
+	root string
+	// workspace are the modules below the directory the run started in, longest
+	// path first, found when the first index is asked for.
+	workspace []goModule
 }
 
 // of returns the index of the module the file belongs to, nil when it belongs to
@@ -81,25 +99,69 @@ func (m *moduleIndexes) of(fi internal.FileInfo) *moduleIndex {
 	if !ok {
 		return nil
 	}
+	m.findWorkspace(fi.Root)
+	return m.index(mod)
+}
+
+// index returns the index of the module, made when it is first asked for.
+func (m *moduleIndexes) index(mod goModule) *moduleIndex {
 	if ix := m.byRoot[mod.root]; ix != nil {
 		return ix
 	}
 	if m.byRoot == nil {
 		m.byRoot = map[string]*moduleIndex{}
 	}
-	ix := newModuleIndex(fi)
+	ix := newModuleIndexOf(mod)
+	ix.hub = m
 	m.byRoot[mod.root] = ix
 	return ix
 }
 
+// findWorkspace finds the modules below the directory the run starts in, once.
+func (m *moduleIndexes) findWorkspace(root string) {
+	abs, err := filepath.Abs(root)
+	if err != nil || (m.root == abs && m.workspace != nil) {
+		return
+	}
+	m.root = abs
+	m.workspace = []goModule{}
+
+	//nolint:errcheck // a directory that cannot be read only means its modules are not in the workspace
+	_ = filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // keep walking
+		}
+		if d.IsDir() {
+			if p != abs && modSkippedDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != "go.mod" {
+			return nil
+		}
+		if data, readErr := os.ReadFile(p); readErr == nil { // #nosec G304 -- the user's own project tree
+			if modPath := modfile.ModulePath(data); modPath != "" {
+				m.workspace = append(m.workspace, goModule{root: filepath.Dir(p), path: modPath})
+			}
+		}
+		return nil
+	})
+	slices.SortFunc(m.workspace, func(a, b goModule) int { return len(b.path) - len(a.path) })
+}
+
 // newModuleIndex returns the index of the module the file belongs to: the module
 // of the nearest go.mod, not above the directory the migration runs in. It is nil
-// when there is none.
+// when there is none. An index made this way knows no other module.
 func newModuleIndex(fi internal.FileInfo) *moduleIndex {
 	mod, ok := moduleOf(fi.Path, fi.Root)
 	if !ok {
 		return nil
 	}
+	return newModuleIndexOf(mod)
+}
+
+func newModuleIndexOf(mod goModule) *moduleIndex {
 	return &moduleIndex{
 		mod:    mod,
 		dirs:   map[string]*modDir{},
@@ -108,6 +170,60 @@ func newModuleIndex(fi internal.FileInfo) *moduleIndex {
 		users:  map[string][]*modFile{},
 		member: map[string]bool{},
 	}
+}
+
+// peerFor returns the index of the other module of the repository the import path
+// names, nil when it names this module or none of the repository.
+func (ix *moduleIndex) peerFor(importPath string) *moduleIndex {
+	if ix == nil || ix.hub == nil {
+		return nil
+	}
+	var best *goModule
+	for i := range ix.hub.workspace {
+		mod := &ix.hub.workspace[i]
+		if (importPath == mod.path || strings.HasPrefix(importPath, mod.path+"/")) && (best == nil || len(mod.path) > len(best.path)) {
+			best = mod
+		}
+	}
+	if best == nil || best.root == ix.mod.root {
+		return nil
+	}
+	return ix.hub.index(*best)
+}
+
+// peerAt returns the index of the other module of the repository the directory is
+// in, nil when it is in this module or in none of the repository.
+func (ix *moduleIndex) peerAt(dir string) *moduleIndex {
+	if ix == nil || ix.hub == nil {
+		return nil
+	}
+	var best *goModule
+	for i := range ix.hub.workspace {
+		mod := &ix.hub.workspace[i]
+		if isWithin(mod.root, dir) && (best == nil || len(mod.root) > len(best.root)) {
+			best = mod
+		}
+	}
+	if best == nil || best.root == ix.mod.root {
+		return nil
+	}
+	return ix.hub.index(*best)
+}
+
+// peers returns the indexes of the other modules of the repository, in the order
+// of their directories.
+func (ix *moduleIndex) peers() []*moduleIndex {
+	if ix == nil || ix.hub == nil {
+		return nil
+	}
+	var out []*moduleIndex
+	for _, mod := range ix.hub.workspace {
+		if mod.root != ix.mod.root {
+			out = append(out, ix.hub.index(mod))
+		}
+	}
+	slices.SortFunc(out, func(a, b *moduleIndex) int { return strings.Compare(a.mod.root, b.mod.root) })
+	return out
 }
 
 // modDir is a directory of the module that holds Go files.
@@ -178,9 +294,16 @@ func (ix *moduleIndex) contains(dir string) bool {
 	return in
 }
 
-// importPathOf returns the import path of a directory of the module.
+// importPathOf returns the import path of a directory of the module, or of another
+// module of the repository.
 func (ix *moduleIndex) importPathOf(dir string) (string, bool) {
-	if ix == nil || !ix.contains(dir) {
+	if ix == nil {
+		return "", false
+	}
+	if !ix.contains(dir) {
+		if peer := ix.peerAt(dir); peer != nil {
+			return peer.importPathOf(dir)
+		}
 		return "", false
 	}
 	rel, err := filepath.Rel(ix.mod.root, dir)
@@ -193,10 +316,14 @@ func (ix *moduleIndex) importPathOf(dir string) (string, bool) {
 	return path.Join(ix.mod.path, filepath.ToSlash(rel)), true
 }
 
-// dirOf returns the directory of an import path of the module.
+// dirOf returns the directory of an import path of the module, or of another
+// module of the repository.
 func (ix *moduleIndex) dirOf(importPath string) (string, bool) {
 	if ix == nil {
 		return "", false
+	}
+	if peer := ix.peerFor(importPath); peer != nil {
+		return peer.dirOf(importPath)
 	}
 	var dir string
 	if importPath == ix.mod.path {
@@ -266,6 +393,9 @@ func (ix *moduleIndex) packageAt(importPath string) *modPackage {
 	if ix == nil {
 		return nil
 	}
+	if peer := ix.peerFor(importPath); peer != nil {
+		return peer.packageAt(importPath)
+	}
 	dir, ok := ix.dirOf(importPath)
 	if !ok {
 		return nil
@@ -278,6 +408,9 @@ func (ix *moduleIndex) packageAt(importPath string) *modPackage {
 func (ix *moduleIndex) packageIn(dir string) *modPackage {
 	if ix == nil {
 		return nil
+	}
+	if peer := ix.peerAt(dir); peer != nil {
+		return peer.packageIn(dir)
 	}
 	md := ix.dir(dir)
 	if md == nil {
@@ -298,6 +431,17 @@ func (ix *moduleIndex) packages() []*modPackage {
 		if pkg := ix.packageIn(dir); pkg != nil {
 			out = append(out, pkg)
 		}
+	}
+	return out
+}
+
+// repositoryPackages is packages followed by those of the other modules of the
+// repository, for a question about the project as a whole: which version of a
+// dependency it uses.
+func (ix *moduleIndex) repositoryPackages() []*modPackage {
+	out := ix.packages()
+	for _, peer := range ix.peers() {
+		out = slices.Concat(out, peer.packages())
 	}
 	return out
 }
@@ -323,7 +467,13 @@ func (ix *moduleIndex) fileAt(p string) *modFile {
 		return nil
 	}
 	abs, err := filepath.Abs(p)
-	if err != nil || !ix.contains(filepath.Dir(abs)) {
+	if err != nil {
+		return nil
+	}
+	if dir := filepath.Dir(abs); !ix.contains(dir) {
+		if peer := ix.peerAt(dir); peer != nil {
+			return peer.fileAt(abs)
+		}
 		return nil
 	}
 	return ix.readFile(abs)
@@ -341,6 +491,10 @@ func (ix *moduleIndex) invalidate(paths ...string) {
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			abs = p
+		}
+		if peer := ix.peerAt(filepath.Dir(abs)); peer != nil && !ix.contains(filepath.Dir(abs)) {
+			peer.invalidate(abs)
+			continue
 		}
 		delete(ix.files, abs)
 
@@ -362,10 +516,28 @@ func (ix *moduleIndex) invalidate(paths ...string) {
 // importers returns the files of the module that import the package, tests
 // included, in the order of their directories. A file that does not import fiber
 // but calls the function of a package that returns an app is one of them.
+//
+// For a package of the repository itself, of this module or of another one, they
+// are followed by the files of the other modules that import it: the code that
+// calls it can be anywhere in the repository. A package of a dependency is
+// imported by each module on its own account, and only the files of this module
+// are the answer.
 func (ix *moduleIndex) importers(importPath string) []*modFile {
 	if ix == nil {
 		return nil
 	}
+	out := ix.ownImporters(importPath)
+	if _, local := ix.dirOf(importPath); !local {
+		return out
+	}
+	for _, peer := range ix.peers() {
+		out = slices.Concat(out, peer.ownImporters(importPath))
+	}
+	return out
+}
+
+// ownImporters is importers for the files of the module itself.
+func (ix *moduleIndex) ownImporters(importPath string) []*modFile {
 	if users, ok := ix.users[importPath]; ok {
 		return users
 	}

@@ -907,8 +907,11 @@ func Test_MigrateConfigListenerFields_DeadConstructors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
 		files map[string]string
+		name  string
+		// phrase is what the note about the dropped settings says, when it is not the
+		// one for a function that never runs
+		phrase string
 		// what the file lost or kept
 		gone  []string
 		kept  []string
@@ -990,7 +993,9 @@ func newAdmin() *fiber.App {
 `,
 				"main.go": "package main\n\nfunc main() { _ = newAdmin() }\n",
 			},
-			kept: []string{"Prefork: true"},
+			gone:   []string{"Prefork"},
+			kept:   []string{"fiber.New(fiber.Config{})"},
+			phrase: "no call of this module starts the app this config makes",
 		},
 		{
 			name: "a function a test of the package calls",
@@ -1006,7 +1011,9 @@ func newAdmin() *fiber.App {
 				"admin_test.go": "package main\n\nimport \"testing\"\n\nfunc TestAdmin(t *testing.T) { _ = newAdmin() }\n",
 				"main.go":       "package main\n\nfunc main() {}\n",
 			},
-			kept: []string{"Prefork: true"},
+			gone:   []string{"Prefork"},
+			kept:   []string{"fiber.New(fiber.Config{})"},
+			phrase: "no call of this module starts the app this config makes",
 		},
 		{
 			name: "an exported function",
@@ -1021,7 +1028,9 @@ func NewAdmin() *fiber.App {
 `,
 				"main.go": "package main\n\nfunc main() {}\n",
 			},
-			kept: []string{"Prefork: true"},
+			gone:   []string{"Prefork"},
+			kept:   []string{"fiber.New(fiber.Config{})"},
+			phrase: "no call of this module starts the app this config makes", // nothing imports a main package
 		},
 		{
 			name: "a value that needs a variable of the function",
@@ -1059,7 +1068,26 @@ func newAdmin() *fiber.App {
 				"broken.go": "package main\n\nfunc broken( {\n",
 				"main.go":   "package main\n\nfunc main() {}\n",
 			},
-			kept: []string{"Prefork: true"},
+			gone:   []string{"Prefork"},
+			kept:   []string{"fiber.New(fiber.Config{})"},
+			phrase: "no call of this module starts the app this config makes",
+		},
+		{
+			name: "a package with a file that does not parse and may start the app",
+			files: map[string]string{
+				"admin.go": `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func newAdmin() *fiber.App {
+	return fiber.New(fiber.Config{Prefork: true})
+}
+`,
+				"broken.go": "package main\n\nfunc broken( { newAdmin().Listen(\":3000\")\n",
+				"main.go":   "package main\n\nfunc main() {}\n",
+			},
+			kept:  []string{"Prefork: true"},
+			notes: 2, // the file that does not parse, the setting that stays
 		},
 	}
 
@@ -1085,8 +1113,12 @@ func newAdmin() *fiber.App {
 			}
 			assert.Len(t, notes, wantNotes, shimNotes(notes))
 			if len(tt.gone) > 0 {
+				phrase := tt.phrase
+				if phrase == "" {
+					phrase = "not started anywhere in the package"
+				}
 				assert.Contains(t, notes[0].Message, "dropped")
-				assert.Contains(t, notes[0].Message, "not started anywhere in the package")
+				assert.Contains(t, notes[0].Message, phrase)
 			}
 		})
 	}

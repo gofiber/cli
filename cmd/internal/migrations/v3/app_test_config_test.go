@@ -247,3 +247,98 @@ func main() {
 	assert.Equal(t, src, appRead(t, dir, "main.go"))
 	assert.Empty(t, out)
 }
+
+// An app that comes out of a method of an interface another package declares is an app
+// where the interface says so.
+func Test_MigrateAppTestConfig_AppFromAnInterfaceMethod(t *testing.T) {
+	t.Parallel()
+
+	dir := appProject(t, map[string]string{
+		"internal/server/server.go": `package server
+
+import "github.com/gofiber/fiber/v2"
+
+// Base is embedded by App.
+type Base interface {
+	Fiber() *fiber.App
+}
+
+// App is what the rest of the program sees of the server.
+type App interface {
+	Base
+	Name() string
+}
+
+type server struct{ app *fiber.App }
+
+func (s *server) Fiber() *fiber.App { return s.app }
+func (s *server) Name() string      { return "x" }
+
+// New builds the server.
+func New() App { return &server{app: fiber.New()} }
+`,
+		"main.go": `package main
+
+import (
+	"net/http/httptest"
+
+	"example.com/app/internal/server"
+)
+
+func main() {
+	srv := server.New()
+	fbr := srv.Fiber()
+	_, _ = fbr.Test(httptest.NewRequest("GET", "/", nil), -1)
+	_, _ = server.New().Fiber().Test(httptest.NewRequest("GET", "/", nil), 500)
+}
+`,
+	})
+
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
+
+	assert.Contains(t, out, "Migrating app.Test usages")
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, `fbr.Test(httptest.NewRequest("GET", "/", nil), fiber.TestConfig{Timeout: 0, FailOnTimeout: false})`)
+	assert.Contains(t, main, `server.New().Fiber().Test(httptest.NewRequest("GET", "/", nil), fiber.TestConfig{Timeout: time.Duration(500) * time.Millisecond, FailOnTimeout: true})`)
+	assert.Empty(t, internal.DrainNotes(dir))
+}
+
+// A call that looks like app.Test of v2 on a value that is not known to be an app says
+// so, and a Test of the project's own does not.
+func Test_MigrateAppTestConfig_NotesWhatIsNotKnownToBeAnApp(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+
+	"github.com/acme/ext"
+)
+
+type matcher struct{}
+
+func (matcher) Test(req *http.Request, ms int) bool { return ms > 0 }
+
+func run(req *http.Request) {
+	x := ext.Make()
+	_, _ = x.Test(httptest.NewRequest("GET", "/", nil), -1)
+	_, _ = x.Test(req, 100)
+	_, _ = x.Test("name", 100)
+	var m matcher
+	_ = m.Test(req, 100)
+}
+`)
+	before := appRead(t, dir, "main.go")
+
+	out := appRun(t, dir, v3.MigrateAppTestConfig)
+
+	assert.Empty(t, out)
+	assert.Equal(t, before, appRead(t, dir, "main.go"))
+	notes := internal.DrainNotes(dir)
+	require.Len(t, notes, 2)
+	assert.Equal(t, 16, notes[0].Line)
+	assert.Equal(t, 17, notes[1].Line)
+	assert.Contains(t, notes[0].Message, "x is not known to be a fiber app here, so it was left as is")
+}

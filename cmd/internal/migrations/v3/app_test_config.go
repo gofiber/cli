@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"slices"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -50,7 +51,11 @@ func appMigrateTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 			return true
 		}
 		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel || sel.Sel.Name != "Test" || f.receiverKind(call, sel) != appKindApp {
+		if !isSel || sel.Sel.Name != "Test" {
+			return true
+		}
+		if f.receiverKind(call, sel) != appKindApp {
+			f.noteTestOnUnknown(fi, call, sel)
 			return true
 		}
 
@@ -72,6 +77,69 @@ func appMigrateTestContent(ix *appIndex, content string, fi internal.FileInfo) s
 		return true
 	})
 	return imps.apply(edits.apply(content))
+}
+
+// noteTestOnUnknown tells about a call that looks like app.Test of v2, a request and
+// a timeout in milliseconds, on a value that is not known to be a fiber app: it is
+// left as it is, and v3 will not compile it if it is one.
+func (f *appFile) noteTestOnUnknown(fi internal.FileInfo, call *ast.CallExpr, sel *ast.SelectorExpr) {
+	if len(call.Args) != 2 || call.Ellipsis.IsValid() || !isMillisecondTimeout(call.Args[1]) || !f.looksLikeRequest(call.Args[0]) {
+		return
+	}
+	if callee, found := f.calleeOf(call, 0); found && !callee.isInterfaceMethod() {
+		return // a Test the project declares
+	}
+	if t, tf := f.valueType(sel.X, 0); t != nil && tf.resolveNamedType(t) == nil && !tf.foreignType(t) {
+		return // a builtin type
+	}
+
+	internal.Notef(fi, f.g.line(call.Pos()),
+		"app.Test takes a fiber.TestConfig in v3 instead of a timeout in milliseconds, but %s is not known to be a fiber app here, so it was left as is: "+
+			"if it is one, use fiber.TestConfig{Timeout: ..., FailOnTimeout: true} (a Timeout of 0 is no timeout, as -1 was)", f.g.text(sel.X))
+}
+
+// foreignType reports whether the type expression names a type of a package the
+// project does not declare.
+func (f *appFile) foreignType(t ast.Expr) bool {
+	sel, ok := appStripType(t).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	id, isIdent := sel.X.(*ast.Ident)
+	return isIdent && f.packageNamed(id.Name) == nil
+}
+
+// isMillisecondTimeout reports whether e is an integer literal, possibly negative,
+// the way the timeout of app.Test of v2 was written.
+func isMillisecondTimeout(e ast.Expr) bool {
+	if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.SUB {
+		e = u.X
+	}
+	lit, ok := e.(*ast.BasicLit)
+	return ok && lit.Kind == token.INT
+}
+
+// looksLikeRequest reports whether e is an *http.Request the way a test makes one:
+// httptest.NewRequest(...), http.NewRequest(...), or a variable of that type.
+func (f *appFile) looksLikeRequest(e ast.Expr) bool {
+	if call, ok := e.(*ast.CallExpr); ok {
+		if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel {
+			if id, isIdent := sel.X.(*ast.Ident); isIdent && slices.Contains([]string{"net/http", "net/http/httptest"}, f.importPathOf(id.Name)) {
+				return strings.HasPrefix(sel.Sel.Name, "NewRequest")
+			}
+		}
+		return false
+	}
+	t, tf := f.valueType(e, 0)
+	if t == nil {
+		return false
+	}
+	sel, ok := appStripType(t).(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != clientMethodRequest {
+		return false
+	}
+	id, isIdent := sel.X.(*ast.Ident)
+	return isIdent && tf.importPathOf(id.Name) == "net/http"
 }
 
 // appTestConfigFor returns the fiber.TestConfig that stands for the timeout arg of

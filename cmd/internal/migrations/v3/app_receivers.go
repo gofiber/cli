@@ -36,8 +36,16 @@ const (
 )
 
 // appMaxDepth bounds how far the resolvers follow declarations, which also
-// keeps them from looping on cyclic ones.
-const appMaxDepth = 10
+// keeps them from looping on cyclic ones. A chain of calls such as
+// a.Builder().With(x).With(y).Build() takes several steps for each link.
+const appMaxDepth = 24
+
+// appMaxOriginDepth bounds how far originsOf follows the values back to the
+// fiber.New calls. Each function that returns an app and each variable that is
+// assigned one can lead to several others, and functions that call each other
+// lead back to themselves, so the work grows with the power of the depth: it
+// stays where it was while the resolvers of a chain of calls got deeper.
+const appMaxOriginDepth = 10
 
 // appRouterMethods are the methods of an app or router that return the router
 // again, so that app.Group("/a").Get(...) is still a router.
@@ -69,18 +77,24 @@ func (f *appFile) fiberQualifier() (prefix string, ok bool) {
 
 // fiberTypeName returns the name of the fiber package type that e refers to
 // (App for *fiber.App, f.App, or App in a dot-importing file), empty when e is
-// not a type of the fiber package.
-func (f *appFile) fiberTypeName(e ast.Expr) string {
+// not a type of the fiber package. An alias of such a type, in this package or in
+// another one of the project (type Config = fiber.Config), is that type.
+func (f *appFile) fiberTypeName(e ast.Expr) string { return f.fiberTypeNameAt(e, 0) }
+
+func (f *appFile) fiberTypeNameAt(e ast.Expr, depth int) string {
 	e = appStripType(e)
-	switch x := e.(type) {
-	case *ast.SelectorExpr:
-		if id, ok := x.X.(*ast.Ident); ok && f.isFiberQualifier(id.Name) {
-			return x.Sel.Name
+	if sel, ok := e.(*ast.SelectorExpr); ok {
+		if id, isIdent := sel.X.(*ast.Ident); isIdent && f.isFiberQualifier(id.Name) {
+			return sel.Sel.Name
 		}
-	case *ast.Ident:
-		if f.dotImportsFiber() {
-			return x.Name
+	}
+	if depth < appMaxDepth {
+		if td := f.resolveNamedType(e); td != nil && td.spec.Assign.IsValid() {
+			return td.file.fiberTypeNameAt(td.spec.Type, depth+1)
 		}
+	}
+	if id, ok := e.(*ast.Ident); ok && f.dotImportsFiber() {
+		return id.Name
 	}
 	return ""
 }
@@ -230,6 +244,10 @@ func (f *appFile) typeSpecKind(spec *ast.TypeSpec, depth int) appKind {
 
 	switch t := spec.Type.(type) {
 	case *ast.StructType:
+		if !f.ix.enter(spec) {
+			return appKindNone // it embeds itself, through other types
+		}
+		defer f.ix.leave(spec)
 		for _, fld := range t.Fields.List {
 			if len(fld.Names) == 0 {
 				if k := f.typeKind(fld.Type, depth); k == appKindApp || k == appKindRouter {
@@ -539,6 +557,10 @@ type appCallee struct {
 	decl *ast.FuncDecl
 }
 
+// isInterfaceMethod reports whether the callee is a method of an interface: the
+// signature is known, the function that answers is not.
+func (c appCallee) isInterfaceMethod() bool { return c.decl == nil && c.body == nil && c.typ != nil }
+
 // calleeOf finds the function a call invokes: a function of the package or of
 // another package of the project, a method of a type declared there, or a
 // function literal bound to a variable.
@@ -586,8 +608,43 @@ func (f *appFile) calleeOf(call *ast.CallExpr, depth int) (appCallee, bool) {
 				return appCallee{file: fn.file, typ: fn.decl.Type, body: fn.decl.Body, decl: fn.decl}, true
 			}
 		}
+		// a method of an interface the project declares: its result is known, the
+		// function that answers is not
+		if ft, ff := td.file.interfaceMethod(td.spec.Type, fun.Sel.Name, depth+1); ft != nil {
+			return appCallee{file: ff, typ: ft}, true
+		}
 	}
 	return appCallee{}, false
+}
+
+// interfaceMethod returns the signature of the method called name of the interface
+// type t (a type literal, or the name of a type of the project), and the file it is
+// written in; nil when the interface has none, also through the interfaces it embeds.
+func (f *appFile) interfaceMethod(t ast.Expr, name string, depth int) (*ast.FuncType, *appFile) {
+	if depth > appMaxDepth {
+		return nil, nil
+	}
+
+	switch x := appStripType(t).(type) {
+	case *ast.InterfaceType:
+		for _, m := range x.Methods.List {
+			if ft, ok := m.Type.(*ast.FuncType); ok && slices.ContainsFunc(m.Names, func(id *ast.Ident) bool { return id.Name == name }) {
+				return ft, f
+			}
+		}
+		for _, m := range x.Methods.List {
+			if len(m.Names) == 0 {
+				if ft, ff := f.interfaceMethod(m.Type, name, depth+1); ft != nil {
+					return ft, ff
+				}
+			}
+		}
+	case *ast.Ident, *ast.SelectorExpr:
+		if td := f.resolveNamedType(x); td != nil {
+			return td.file.interfaceMethod(td.spec.Type, name, depth+1)
+		}
+	}
+	return nil, nil
 }
 
 // appBinding is the declaration an identifier refers to.
@@ -857,7 +914,7 @@ func (o *appOrigins) merge(other appOrigins) {
 // originsOf follows the value of the idx-th result of e back to the fiber.New
 // calls it can come from.
 func (f *appFile) originsOf(e ast.Expr, idx, depth int) appOrigins {
-	if depth > appMaxDepth {
+	if depth > appMaxOriginDepth {
 		return appOrigins{}
 	}
 

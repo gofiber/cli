@@ -100,6 +100,11 @@ type appShimModule struct {
 	// exposedConfigs those of them that other modules can call.
 	configs        []string
 	exposedConfigs []string
+	// takes are the functions that take one, holds the variables and fields that hold
+	// one, and exposedTypes those of them that other modules can use.
+	takes        []string
+	holds        []string
+	exposedTypes []string
 	// starts are the calls that ask the registry for the settings.
 	starts []*appStartInfo
 	// values are the methods that start an app, used as values.
@@ -151,6 +156,13 @@ type appModuleOf struct {
 type appShimRefusal struct {
 	why  string
 	tell bool
+	// nobody is set when no call of the module starts the app, so that the settings
+	// have no effect and can be dropped.
+	nobody bool
+	// flow is set when the reason is the one of the places the config goes to (see
+	// app_listen_flow.go), which says more than why the config is not handed
+	// straight to fiber.New.
+	flow bool
 }
 
 // carry plans to keep the settings of the source with the apps it creates: every
@@ -191,15 +203,10 @@ func (pl *appPlanner) carrySource(src *appListenSource) (commit func(), refusal 
 	quiet := func(why string) (func(), appShimRefusal) { return nil, appShimRefusal{why: why} }
 	tell := func(why string) (func(), appShimRefusal) { return nil, appShimRefusal{why: why, tell: true} }
 
-	switch {
-	case src.escapes && src.escapeWhy != "":
-		return quiet(src.escapeWhy)
-	case len(src.creations) == 0:
-		return quiet("this fiber.Config is not handed straight to fiber.New")
-	case src.escapes:
-		return quiet("this fiber.Config is also passed on to code that could create another app with it")
-	case src.retFn == nil && src.node == nil && (src.lit == nil || len(src.creations) != 1):
-		return quiet("this fiber.Config is not a variable or a literal handed to fiber.New")
+	// a config that is not handed straight to fiber.New is followed to the places it
+	// goes to (see app_listen_flow.go)
+	if src.escapes || len(src.creations) == 0 || (src.retFn == nil && src.node == nil && (src.lit == nil || len(src.creations) != 1)) {
+		return pl.carryFlow(src)
 	}
 
 	f := src.file
@@ -213,7 +220,12 @@ func (pl *appPlanner) carrySource(src *appListenSource) (commit func(), refusal 
 		return tell(src.name + " is an exported variable, which other packages can create apps with")
 	}
 	for _, c := range src.creations {
-		if cm, ok := pl.moduleOf(c.file); !ok || cm.root != mod.root || !c.file.walked {
+		cm, ok := pl.moduleOf(c.file)
+		switch {
+		case ok && cm.root != mod.root:
+			return tell(fmt.Sprintf("the config is made in %s and the app in %s, which belong to different Go modules: "+
+				"each module gets a registry of its own, and two of them cannot exchange values", appFileLabel(f), appFileLabel(c.file)))
+		case !ok || !c.file.walked:
 			return quiet("the app is created in a file that is not part of this module or the migration")
 		}
 	}
@@ -301,13 +313,25 @@ func (pl *appPlanner) shimStarts(src *appListenSource, mod goModule) (wrap []*ap
 		return !ok || m.root != mod.root
 	}
 
+	crossing := func(started *appFile, o appOrigins) appShimRefusal {
+		created := started
+		for _, n := range o.news {
+			if slices.Contains(src.creations, n) {
+				created = n.file
+				break
+			}
+		}
+		return appShimRefusal{
+			why: fmt.Sprintf("the app is created in %s and started in %s, which belong to different Go modules: "+
+				"each module gets a registry of its own, and two of them cannot exchange values", appFileLabel(created), appFileLabel(started)),
+			tell: true,
+		}
+	}
+
 	for _, s := range pl.starts {
 		switch hit := hits(s.origins); {
 		case hit && other(s.file):
-			return nil, nil, appShimRefusal{
-				why:  fmt.Sprintf("the app is started in %s, which belongs to another module, and the registry of this module does not reach it", appFileLabel(s.file)),
-				tell: true,
-			}
+			return nil, nil, crossing(s.file, s.origins)
 		case other(s.file):
 		case hit, !s.origins.complete:
 			wrap = append(wrap, s)
@@ -318,10 +342,7 @@ func (pl *appPlanner) shimStarts(src *appListenSource, mod goModule) (wrap []*ap
 		switch hit := hits(v.origins); {
 		case other(v.file):
 			if hit {
-				return nil, nil, appShimRefusal{
-					why:  fmt.Sprintf("the app is started in %s, which belongs to another module, and the registry of this module does not reach it", appFileLabel(v.file)),
-					tell: true,
-				}
+				return nil, nil, crossing(v.file, v.origins)
 			}
 		case !hit && v.origins.complete:
 		case v.method == appNameListen || v.method == appNameListener:
@@ -347,7 +368,7 @@ func (pl *appPlanner) shimStarts(src *appListenSource, mod goModule) (wrap []*ap
 		}
 	}
 	if len(wrap) == 0 && len(values) == 0 && pl.reads[mod.root] == nil {
-		return nil, nil, appShimRefusal{why: "no Listen call of this module starts the app, so it would hold the settings for nobody", tell: true}
+		return nil, nil, appShimRefusal{why: "no Listen call of this module starts the app, so it would hold the settings for nobody", tell: true, nobody: true}
 	}
 
 	// a call that sets the same setting itself says two things
@@ -439,13 +460,27 @@ const appShimNote = "Prefork, Network, DisableStartupMessage and EnablePrintRout
 // config and the way out of the module of the apps it holds.
 func (sp *appShimModule) note() string {
 	note := appShimNote
+	var changes []string
 	if len(sp.configs) > 0 {
-		note += ". " + appNameList(sp.configs) + " now return" + appPlural(len(sp.configs)) + " fibermigrate." + appShimConfigType +
-			", the fiber.Config of Fiber v2 with the four settings, and fibermigrate." + appShimNewV2 + " hands them to the app it creates"
+		changes = append(changes, appNameList(sp.configs)+" now return"+appPlural(len(sp.configs))+" fibermigrate."+appShimConfigType)
+	}
+	if len(sp.takes) > 0 {
+		changes = append(changes, appNameList(sp.takes)+" now take"+appPlural(len(sp.takes))+" a fibermigrate."+appShimConfigType)
+	}
+	if len(sp.holds) > 0 {
+		changes = append(changes, appNameList(sp.holds)+" now hold"+appPlural(len(sp.holds))+" a fibermigrate."+appShimConfigType)
+	}
+	if len(changes) > 0 {
+		note += ". " + strings.Join(changes, " and ") + ". fibermigrate." + appShimConfigType +
+			" is the fiber.Config of Fiber v2 with the four settings, and fibermigrate." + appShimNewV2 + " hands them to the app it creates"
 	}
 	if len(sp.exposedConfigs) > 0 {
 		note += ". " + appNameList(sp.exposedConfigs) + " can be called from other modules, which cannot hand the result to fiber.New: " +
 			"they take its Config field and pass the settings to Listen"
+	}
+	if len(sp.exposedTypes) > 0 {
+		note += ". " + appNameList(sp.exposedTypes) + " can be used from other modules, which cannot name fibermigrate." + appShimConfigType +
+			" because " + moduleShimDir + " is internal: they pass a fiber.Config and the settings to Listen themselves"
 	}
 	if len(sp.exposed) > 0 {
 		note += ". " + appNameList(sp.exposed) + " export" + appPlural(len(sp.exposed)) +

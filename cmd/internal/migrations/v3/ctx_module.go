@@ -263,7 +263,7 @@ func (m *ctxModule) fiberImportPath() string {
 	}
 	m.fiberKnown = true
 
-	for _, pkg := range m.ix.packages() {
+	for _, pkg := range m.ix.repositoryPackages() {
 		for _, f := range pkg.files {
 			for _, imp := range f.imps {
 				if reFiberCorePath.MatchString(imp.path) {
