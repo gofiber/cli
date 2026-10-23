@@ -267,3 +267,87 @@ func Test_keepFormatting_NeverReturnsSomethingThatDiffersFromTheFormattedText(t 
 	got := keepFormatting(original, formatted, format)
 	assert.Equal(t, formatted, got)
 }
+
+// The author left more than one blank line after the import, which the formatter
+// keeps as one: the blank lines are back after the migration changed the imports
+// and the signature that stand around them.
+func Test_keepFormatting_BlankLinesAfterTheImportsAreBack(t *testing.T) {
+	t.Parallel()
+
+	original := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.SendString(\"hello\")\n}\n"
+	migrated := strings.ReplaceAll(strings.ReplaceAll(original, "*fiber.Ctx", "fiber.Ctx"), "fiber/v2", "fiber/v3")
+	formatted, err := tidyImports("x.go", []byte(migrated))
+	require.NoError(t, err)
+	require.NotContains(t, string(formatted), "\n\n\n", "the formatter keeps one blank line")
+
+	got := keepFormatting(original, string(formatted), formatFor(t))
+
+	assert.Equal(t, migrated, got)
+}
+
+// A migration that adds an import to the single import line of a file makes the
+// diff of the formatted texts ambiguous: any of the blank lines of the new import
+// block could be the one that was after the import. The blank lines of the author
+// must not end up between the imports then.
+func Test_keepFormatting_BlankLinesDoNotMoveIntoANewImportBlock(t *testing.T) {
+	t.Parallel()
+
+	original := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.Download(\"report.txt\")\n}\n"
+	formatted := "package main\n\nimport (\n\t\"test/internal/fibermigrate\"\n\n\t\"github.com/gofiber/fiber/v3\"\n)\n\nfunc Handler(c fiber.Ctx) error {\n\treturn fibermigrate.Download(c, \"report.txt\")\n}\n"
+
+	got := keepFormatting(original, formatted, formatFor(t))
+
+	start, end := strings.Index(got, "import ("), strings.Index(got, "\n)\n")
+	require.True(t, start >= 0 && end > start, got)
+	assert.NotContains(t, got[start:end], "\n\n\n", "no run of blank lines inside the import block")
+	assert.Equal(t, formatted, got, "when the diff cannot tell which blank line is which, the text of the formatter is used")
+}
+
+func Test_distrustBlankRuns(t *testing.T) {
+	t.Parallel()
+
+	t.Run("blank lines in the hunks make the run between them a guess", func(t *testing.T) {
+		t.Parallel()
+
+		base := []string{"a", "b", "", "c", "d"}
+		theirs := []string{"a", "B", "x", "", "y", "", "C", "d"}
+		hunks, ok := diffLines(base, theirs)
+		require.True(t, ok)
+		require.Greater(t, len(hunks), 1, "the diff holds the blank line apart: %v", hunks)
+
+		got := distrustBlankRuns(base, theirs, hunks)
+
+		assert.Equal(t, []hunk{{aStart: 1, aEnd: 4, bStart: 1, bEnd: 7}}, got)
+	})
+
+	t.Run("a run of blank lines between plain changes is an anchor", func(t *testing.T) {
+		t.Parallel()
+
+		base := []string{"a", "b", "", "c", "d"}
+		theirs := []string{"a", "B", "", "C", "d"}
+		hunks, ok := diffLines(base, theirs)
+		require.True(t, ok)
+
+		assert.Equal(t, hunks, distrustBlankRuns(base, theirs, hunks))
+		assert.Len(t, hunks, 2)
+	})
+
+	t.Run("lines that are not blank between the hunks are anchors", func(t *testing.T) {
+		t.Parallel()
+
+		base := []string{"a", "b", "m", "c", "d"}
+		theirs := []string{"a", "B", "", "m", "", "C", "d"}
+		hunks, ok := diffLines(base, theirs)
+		require.True(t, ok)
+
+		assert.Equal(t, hunks, distrustBlankRuns(base, theirs, hunks))
+	})
+
+	t.Run("nothing to join", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, distrustBlankRuns(nil, nil, nil))
+		one := []hunk{{aStart: 0, aEnd: 1, bStart: 0, bEnd: 2}}
+		assert.Equal(t, one, distrustBlankRuns([]string{"a"}, []string{"b", ""}, one))
+	})
+}

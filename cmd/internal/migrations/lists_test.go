@@ -253,8 +253,8 @@ func Other(a   int) int { return a }
 
 // A note points at the line the file has when the run is over, also when putting the author's text back moved it.
 func Test_DoMigration_NotesFollowTheLinesOfTheRestoredFile(t *testing.T) {
-	// the author wrote two blank lines before the handler, the formatter keeps one
-	source := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.Download(\"report.txt\")\n}\n"
+	// the author wrote three blank lines before the handler, the formatter keeps one
+	source := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.Status(404).SendString(\"Cannot GET /missing\")\n}\n"
 	dir := t.TempDir()
 	main := filepath.Join(dir, "main.go")
 	require.NoError(t, os.WriteFile(main, []byte(source), 0o600))
@@ -273,17 +273,40 @@ func Test_DoMigration_NotesFollowTheLinesOfTheRestoredFile(t *testing.T) {
 	lines := strings.Split(string(content), "\n")
 	found := false
 	for line := range strings.SplitSeq(buf.String(), "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "main.go:") || !strings.Contains(line, "no longer serves byte ranges") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "main.go:") || !strings.Contains(line, "answers an unmatched route") {
 			continue
 		}
-		// "main.go:N: ..." must name the line of the file that has the call the note is about
+		// "main.go:N: ..." must name the line of the file that has the text the note is about
 		number := strings.SplitN(strings.TrimSpace(line), ":", 3)[1]
 		n, convErr := strconv.Atoi(number)
 		require.NoError(t, convErr, line)
-		assert.Contains(t, lines[n-1], "c.Download(", "the note %q points at line %d: %q", line, n, lines[n-1])
+		assert.Contains(t, lines[n-1], "Cannot GET /missing", "the note %q points at line %d: %q", line, n, lines[n-1])
 		found = true
 	}
-	assert.True(t, found, "a note about the byte ranges of Download: %s", buf.String())
+	assert.True(t, found, "a note about the body of an unmatched route: %s", buf.String())
+}
+
+// A migration that adds an import to the only import of a file does not move the blank lines the author wrote
+// after it into the new import block.
+func Test_DoMigration_BlankLinesStayOutOfANewImportBlock(t *testing.T) {
+	source := "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\n\n\nfunc Handler(c *fiber.Ctx) error {\n\treturn c.Download(\"report.txt\")\n}\n"
+	dir := t.TempDir()
+	main := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(main, []byte(source), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, migrations.DoMigration(cmd, dir,
+		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+	content, err := os.ReadFile(main) //nolint:gosec // the path is this test's own temp dir
+	require.NoError(t, err)
+	want := "package main\n\nimport (\n\t\"test/internal/fibermigrate\"\n\n\t\"github.com/gofiber/fiber/v3\"\n)\n\n" +
+		"func Handler(c fiber.Ctx) error {\n\treturn fibermigrate.Download(c, \"report.txt\")\n}\n"
+	assert.Equal(t, want, string(content))
 }
 
 // When go mod tidy fails, go.mod holds the edits of the migration and is not tidied: the report says so, and

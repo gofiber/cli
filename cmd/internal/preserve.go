@@ -303,6 +303,7 @@ func merge3(base, ours, theirs []string) (merged []string, ok bool) {
 	if !okA || !okB {
 		return nil, false
 	}
+	hunksB = distrustBlankRuns(base, theirs, hunksB)
 
 	pos, i, j := 0, 0, 0
 	for i < len(hunksA) || j < len(hunksB) {
@@ -339,6 +340,41 @@ func merge3(base, ours, theirs []string) (merged []string, ok bool) {
 	}
 	return append(merged, base[pos:]...), true
 }
+
+// distrustBlankRuns joins two hunks of the migration into one when the lines that
+// the diff matched between them are blank and there are blank lines in the hunks as
+// well. The diff could have matched any of those blank lines at the same cost, so the
+// matched ones are a guess, and the blank lines that the author put next to the lines
+// of a hunk would land at the place of the guess: between the imports of a block that
+// the migration made from a single import, instead of after it. Joined, the author's
+// change inside the region is in conflict, and the migrated text is used.
+func distrustBlankRuns(base, theirs []string, hunks []hunk) []hunk {
+	if len(hunks) < 2 {
+		return hunks
+	}
+
+	joined := []hunk{hunks[0]}
+	for _, next := range hunks[1:] {
+		last := &joined[len(joined)-1]
+		guess := allBlank(base[last.aEnd:next.aStart]) &&
+			(anyBlank(base[last.aStart:last.aEnd]) || anyBlank(base[next.aStart:next.aEnd]) ||
+				anyBlank(theirs[last.bStart:last.bEnd]) || anyBlank(theirs[next.bStart:next.bEnd]))
+		if !guess {
+			joined = append(joined, next)
+			continue
+		}
+		last.aEnd, last.bEnd = next.aEnd, next.bEnd
+	}
+	return joined
+}
+
+func isBlank(line string) bool { return strings.TrimSpace(line) == "" }
+
+func allBlank(lines []string) bool {
+	return !slices.ContainsFunc(lines, func(l string) bool { return !isBlank(l) })
+}
+
+func anyBlank(lines []string) bool { return slices.ContainsFunc(lines, isBlank) }
 
 // comesAfter reports whether the hunk x of one side has to be taken after the hunk
 // y of the other: it starts later, or both start at one place and x changes lines
