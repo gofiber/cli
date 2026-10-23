@@ -91,7 +91,9 @@ is idempotent, so a second run changes nothing that the first one already migrat
   type cannot be followed is reported where it calls a method that v3 removed. The other
   modules of the repository (a `go.work` workspace, a nested module, a `replace` to a
   directory below the one you run the command in) are read as part of the project; a module
-  outside of that directory is not.
+  outside of that directory is not, and the `replace` or `use` directive that names one that
+  still requires Fiber v2 is reported, because the command only rewrites the files below its
+  directory.
 - Where a parameter, a variable, a constant or a type of a function hides the name of an
   import (`fiber := fiber.New()`, a parameter called `strconv`), the code the migration
   writes there is spelled with a second import of the package under a name nothing uses
@@ -245,7 +247,10 @@ The list has four kinds of entries:
   `*fiber.Ctx` of v2 and do not work with a v3 app. There is one entry for each module, at
   the first place the program imports it (not a test), with the module that imports Fiber v2.
   When `go.mod` was not tidied (`--skip_go_mod`, or `go mod tidy` failed) the requirements
-  whose `go.mod` is in the module cache are looked at instead and the entry says `probably`;
+  whose `go.mod` is in the module cache are looked at instead and the entry says `probably`.
+  A `replace` directive of a `go.mod`, or a `use` directive of a `go.work`, that names a
+  directory outside of the one the command runs in with a module that still requires Fiber v2
+  is reported at the directive: run the command in that module as well;
 - behavior changes of the middleware your project uses that no rewrite can reproduce
   (proxy SSRF policy, a timed-out handler that keeps running, cache defaults, hashed
   basic auth passwords, `SendFile` file names, the random token that replaces the UUID as
