@@ -283,9 +283,11 @@ func (r *jwtClaimsRun) report(cwd string) {
 		if m.files > 1 {
 			files = strconv.Itoa(m.files) + " files"
 		}
+		first := m.first.Place(m.line)
 		internal.AddNote(cwd, internal.Note{
-			File: m.first.Rel,
-			Line: m.line,
+			File: first.File,
+			Line: first.Line,
+			Pass: first.Pass,
 			Message: fmt.Sprintf("the jwt library of this module (%s) moved to %s in %s, because the jwt middleware of v3 (contrib/v3/jwt) "+
 				"hands over the tokens and the claims of v5: c.Locals(\"user\") became jwtware.FromContext(c), and the tokens and "+
 				"claims of one library are no values of the other. Differences of v5 that no rewrite can keep: the texts of the errors "+
