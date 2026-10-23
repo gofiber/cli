@@ -361,9 +361,10 @@ func routes(app *fiber.App) {
 `, res.file())
 }
 
-// timeoutHandled is the OnTimeout a timeout.New gets when an application of the
-// project has an ErrorHandler of its own, in the form timeoutCompact leaves it in.
-const timeoutHandled = `OnTimeout: func(c fiber.Ctx) error { // v3 sends this answer itself: the error handler of the application gives it the shape it had in v2 err := fiber.ErrRequestTimeout _ = c.App().Config().ErrorHandler(c, err) return err },`
+// timeoutHandled is the OnTimeout a timeout.New and a timeout.NewWithContext get
+// when an application of the project has an ErrorHandler of its own, in the form
+// timeoutCompact leaves it in.
+const timeoutHandled = `OnTimeout: func(c fiber.Ctx) error { err := fiber.ErrRequestTimeout if c.Context().Err() != nil { // v3 sends this answer itself: the error handler of the application gives it the shape it had in v2 _ = c.App().Config().ErrorHandler(c, err) } return err },`
 
 const timeoutRoutes = `package server
 
@@ -403,11 +404,13 @@ func New() *fiber.App {
 	})
 
 	compact := timeoutCompact(res.files["internal/server/routes.go"])
-	// timeout.New of v2 was handed to the error handler through the router
-	assert.Contains(t, compact, "timeout.New(slow, timeout.Config{ Timeout: 5 * time.Second, "+timeoutHandled+" })")
-	// and timeout.NewWithContext only returned the error, which the router still hands to it
-	assert.Contains(t, compact, "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: 5 * time.Second")+")")
-	assert.Contains(t, res.files["internal/server/routes.go"], "\t\t\t_ = c.App().Config().ErrorHandler(c, err)\n")
+	// v2 handed the 408 of timeout.New and of timeout.NewWithContext to the error handler through
+	// the router, and v3 only does that for a handler that has returned: when the time is up while
+	// the handler still runs, which includes the handler that waits for its context, OnTimeout
+	// calls the error handler itself, once the deadline has passed
+	assert.Equal(t, 2, strings.Count(compact, "timeout.New(slow, timeout.Config{ Timeout: 5 * time.Second, "+timeoutHandled+" })"), compact)
+	assert.Contains(t, res.files["internal/server/routes.go"], "\t\t\tif c.Context().Err() != nil {\n")
+	assert.Contains(t, res.files["internal/server/routes.go"], "\t\t\t\t_ = c.App().Config().ErrorHandler(c, err)\n")
 
 	// one note, about what v2 swallowed; the application is known to have a handler
 	if assert.Len(t, res.notes, 1, "%v", res.notes) {
@@ -510,7 +513,7 @@ func Test_MigrateTimeoutConfig_SaysWhenTheErrorHandlerCannotBeFound(t *testing.T
 	assert.Contains(t, timeoutCompact(res.files["internal/server/routes.go"]), "timeout.New(slow, "+timeoutConfig("timeout", "Timeout: 5 * time.Second")+")")
 	if assert.Len(t, res.notes, 1, "%v", res.notes) {
 		assert.Contains(t, res.notes[0], "no application with a default ErrorHandler could be found in this project")
-		assert.Contains(t, res.notes[0], "_ = c.App().Config().ErrorHandler(c, err)")
+		assert.Contains(t, res.notes[0], "if c.Context().Err() != nil { _ = c.App().Config().ErrorHandler(c, err) }")
 	}
 
 	// an application made from a config that is held somewhere else
@@ -537,8 +540,8 @@ func Test_MigrateTimeoutConfig_NamesTheErrorHandlerCallDoesNotClash(t *testing.T
 
 	// the core package is called c or err: the locals of the function take other names
 	want := map[string][]string{
-		"c":   {"OnTimeout: func(ctx c.Ctx) error {", "err := c.ErrRequestTimeout", "_ = ctx.App().Config().ErrorHandler(ctx, err)", "return err"},
-		"err": {"OnTimeout: func(c err.Ctx) error {", "reqErr := err.ErrRequestTimeout", "_ = c.App().Config().ErrorHandler(c, reqErr)", "return reqErr"},
+		"c":   {"OnTimeout: func(ctx c.Ctx) error {", "err := c.ErrRequestTimeout", "if ctx.Context().Err() != nil {", "_ = ctx.App().Config().ErrorHandler(ctx, err)", "return err"},
+		"err": {"OnTimeout: func(c err.Ctx) error {", "reqErr := err.ErrRequestTimeout", "if c.Context().Err() != nil {", "_ = c.App().Config().ErrorHandler(c, reqErr)", "return reqErr"},
 	}
 	for alias, lines := range want {
 		res := mw1RunFiles(t, v3.MigrateTimeoutConfig, map[string]string{

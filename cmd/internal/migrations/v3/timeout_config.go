@@ -23,9 +23,10 @@ import (
 // config gets, so that the status stays the one the clients know.
 //
 // v2 sent that error through the ErrorHandler of the application, and v3 writes
-// the answer of OnTimeout itself, so the ErrorHandler never sees it. When a config
-// of the project sets an ErrorHandler, the OnTimeout of a timeout.New(handler,
-// duration) calls it (see timeoutApps).
+// the answer of OnTimeout itself when the time is up while the handler still runs,
+// so the ErrorHandler never sees it. When a config of the project sets an
+// ErrorHandler, the OnTimeout of a timeout.New(handler, duration) and of a
+// timeout.NewWithContext calls it (see timeoutApps and timeoutOnTimeoutHandled).
 func MigrateTimeoutConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	var swallowed timeoutSwallowed
 	apps := scanTimeoutApps(cwd)
@@ -60,7 +61,7 @@ func migrateTimeoutContent(content string, fi internal.FileInfo, swallowed *time
 	fiber, needsFiber := mw1FiberName(content)
 	rw := &timeoutRewrite{g: g, fi: fi, swallowed: swallowed, onTimeout: timeoutOnTimeout(fiber)}
 	if apps.custom {
-		rw.onTimeoutNew = timeoutOnTimeoutHandled(fiber)
+		rw.onTimeoutHandled = timeoutOnTimeoutHandled(fiber)
 	}
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -104,13 +105,18 @@ func timeoutOnTimeout(fiber string) string {
 	return "OnTimeout: func(" + param + " " + fiber + ".Ctx) error { return " + fiber + ".ErrRequestTimeout }"
 }
 
-// timeoutOnTimeoutHandled writes the OnTimeout field of a timeout.New(handler,
-// duration) in a project whose applications may have an ErrorHandler of their own.
-// v2 returned fiber.ErrRequestTimeout from the middleware and the router handed it
-// to the ErrorHandler; v3 sends the answer that OnTimeout leaves on the context as
-// it is and does not hand the error to the ErrorHandler for a handler that is
-// still running. OnTimeout calls the ErrorHandler itself, so that the answer has the
-// shape v2 gave it, and returns the error, which the outer middleware saw in v2.
+// timeoutOnTimeoutHandled writes the OnTimeout field of a timeout.New or
+// timeout.NewWithContext in a project whose applications may have an ErrorHandler
+// of their own. v2 returned fiber.ErrRequestTimeout from the middleware and the
+// router handed it to the ErrorHandler. v3 does that only for a handler that has
+// returned: when the time is up while the handler still runs, which is also the
+// case of a handler that waits for its context, it sends the answer that OnTimeout
+// leaves on the context at once and the router never hands the error to the
+// ErrorHandler. The two cases tell apart by the context of the request, which is
+// the one with the deadline, done, in the first, and the one of the request again
+// in the second, so OnTimeout calls the ErrorHandler for the first and leaves the
+// second to the router: the ErrorHandler runs once, as in v2, and the error is
+// returned in both cases for the middleware around the timeout.
 func timeoutOnTimeoutHandled(fiber string) string {
 	ctx, errName := "c", "err"
 	if fiber == ctx {
@@ -120,9 +126,11 @@ func timeoutOnTimeoutHandled(fiber string) string {
 		errName = "reqErr"
 	}
 	return "OnTimeout: func(" + ctx + " " + fiber + ".Ctx) error {\n" +
-		"// v3 sends this answer itself: the error handler of the application gives it the shape it had in v2\n" +
 		errName + " := " + fiber + ".ErrRequestTimeout\n" +
+		"if " + ctx + ".Context().Err() != nil {\n" +
+		"// v3 sends this answer itself: the error handler of the application gives it the shape it had in v2\n" +
 		"_ = " + ctx + ".App().Config().ErrorHandler(" + ctx + ", " + errName + ")\n" +
+		"}\n" +
 		"return " + errName + "\n}"
 }
 
@@ -130,13 +138,13 @@ func timeoutOnTimeoutHandled(fiber string) string {
 type timeoutRewrite struct {
 	// onTimeout is the field every config gets.
 	onTimeout string
-	// onTimeoutNew is the field a config written for timeout.New(handler, duration)
-	// gets when the project has an ErrorHandler; empty for the other field.
-	onTimeoutNew string
-	g            *goSource
-	fi           internal.FileInfo
-	swallowed    *timeoutSwallowed
-	edits        editSet
+	// onTimeoutHandled is the field every config gets instead when the project has an
+	// ErrorHandler; empty otherwise.
+	onTimeoutHandled string
+	g                *goSource
+	fi               internal.FileInfo
+	swallowed        *timeoutSwallowed
+	edits            editSet
 	// rewrote is set once a call has been given a config that refers to the core
 	// package.
 	rewrote bool
@@ -148,13 +156,17 @@ func (rw *timeoutRewrite) migrateNew(call *ast.CallExpr, pkg string, names []str
 	if len(call.Args) != 2 || call.Ellipsis.IsValid() || mw2IsTyped(call.Args[1], names, mw2ConfigType, stack, 0) {
 		return
 	}
-	onTimeout := rw.onTimeout
-	if rw.onTimeoutNew != "" {
-		onTimeout = rw.onTimeoutNew
-	}
-	rw.edits.replaceNode(rw.g, call.Args[1], rw.config(pkg, rw.g.text(call.Args[1]), "", onTimeout))
+	rw.edits.replaceNode(rw.g, call.Args[1], rw.config(pkg, rw.g.text(call.Args[1]), "", rw.onTimeoutField()))
 	rw.rewrote = true
 	rw.swallowed.add(rw.fi, rw.g.line(call.Pos()))
+}
+
+// onTimeoutField returns the OnTimeout field a config gets.
+func (rw *timeoutRewrite) onTimeoutField() string {
+	if rw.onTimeoutHandled != "" {
+		return rw.onTimeoutHandled
+	}
+	return rw.onTimeout
 }
 
 // timeoutSwallowed collects the calls of the timeout.New(handler, d) of v2, which
@@ -186,7 +198,7 @@ func (t *timeoutSwallowed) report(root string, apps *timeoutApps) {
 	if !apps.custom && !apps.known() {
 		msg += ". v2 also gave the 408 of a timeout to the ErrorHandler of the application, and v3 sends the answer of OnTimeout itself: " +
 			"no application with a default ErrorHandler could be found in this project, so if yours has an ErrorHandler of its own, " +
-			"call it from OnTimeout (err := fiber.ErrRequestTimeout; _ = c.App().Config().ErrorHandler(c, err); return err)"
+			"call it from OnTimeout when the deadline has passed (err := fiber.ErrRequestTimeout; if c.Context().Err() != nil { _ = c.App().Config().ErrorHandler(c, err) }; return err)"
 	}
 	internal.AddNote(root, internal.Note{File: t.file, Line: t.line, Message: msg})
 }
@@ -325,7 +337,7 @@ func (rw *timeoutRewrite) migrateNewWithContext(call *ast.CallExpr, sel *ast.Sel
 			errs = "[]error{" + strings.Join(texts, ", ") + "}"
 		}
 	}
-	cfg := rw.config(pkg, g.text(call.Args[1]), errs, rw.onTimeout)
+	cfg := rw.config(pkg, g.text(call.Args[1]), errs, rw.onTimeoutField())
 
 	end := g.offset(call.Args[len(call.Args)-1].End())
 	if call.Ellipsis.IsValid() {
