@@ -22,8 +22,8 @@ import (
 // old key. A key is a whole word of the tag, so mine:"..." is not changed.
 var tagKeyRenames = []struct {
 	re   *regexp.Regexp
-	to   string
 	skip *regexp.Regexp
+	to   string
 }{
 	{re: regexp.MustCompile(`(^|\s)params:"`), to: `${1}uri:"`},
 	// a field that has a header key already keeps it

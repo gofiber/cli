@@ -1,6 +1,7 @@
 package v3
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -23,7 +24,7 @@ import (
 func MigrateSendFileConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changed, err := internal.ChangeFileContent(cwd, migrateSendFileContent)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to migrate SendFile calls: %w", err)
 	}
 	if !changed {
 		return nil
@@ -48,7 +49,7 @@ func migrateSendFileContent(content string) string {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "SendFile" {
+		if !ok || sel.Sel.Name != methodSendFile {
 			return true
 		}
 		if ident := GetBaseIdent(sel.X); ident == nil || !isFiberCtx(content, ident.Name) {
@@ -81,9 +82,9 @@ func isSendFileConfig(e ast.Expr) bool {
 	}
 	switch t := lit.Type.(type) {
 	case *ast.SelectorExpr:
-		return t.Sel.Name == "SendFile"
+		return t.Sel.Name == methodSendFile
 	case *ast.Ident:
-		return t.Name == "SendFile"
+		return t.Name == methodSendFile
 	default:
 		return false
 	}

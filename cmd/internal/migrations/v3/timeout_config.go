@@ -62,7 +62,7 @@ func migrateTimeoutContent(content string) string {
 		}
 
 		switch {
-		case sel.Sel.Name == "New" && len(call.Args) == 2 && !call.Ellipsis.IsValid():
+		case sel.Sel.Name == funcNew && len(call.Args) == 2 && !call.Ellipsis.IsValid():
 			if !isTimeoutConfig(call.Args[1], pkg) {
 				src.replace(call.Args[1], pkg+".Config{Timeout: "+src.text(call.Args[1])+"}")
 			}

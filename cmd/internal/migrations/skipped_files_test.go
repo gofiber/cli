@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,8 +112,10 @@ func Test_DoMigration_NamesTheFilesItLeftAsTheyWere(t *testing.T) {
 		From: ">=1.0.0-0",
 		To:   "<4.0.0-0",
 		Functions: []migrations.MigrationFn{func(_ *cobra.Command, cwd string, _, _ *semver.Version) error {
-			_, err := internal.ChangeFileContent(cwd, breakA)
-			return err
+			if _, err := internal.ChangeFileContent(cwd, breakA); err != nil {
+				return fmt.Errorf("change files: %w", err)
+			}
+			return nil
 		}},
 	}}
 

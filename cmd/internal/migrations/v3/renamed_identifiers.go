@@ -115,7 +115,7 @@ type identifierRenamer struct {
 }
 
 // is reports whether e names the package the file knows as name.
-func (r *identifierRenamer) is(e ast.Expr, name string) bool {
+func (*identifierRenamer) is(e ast.Expr, name string) bool {
 	id, ok := e.(*ast.Ident)
 	return ok && name != "" && id.Name == name
 }
@@ -150,7 +150,7 @@ func (r *identifierRenamer) selector(sel *ast.SelectorExpr) {
 			r.src.replace(sel.Sel, "Handler")
 		}
 	case r.is(sel.X, r.proxy):
-		if sel.Sel.Name == "New" {
+		if sel.Sel.Name == funcNew {
 			r.src.replace(sel.Sel, "Balancer")
 		}
 	}
@@ -173,7 +173,7 @@ func (r *identifierRenamer) call(call *ast.CallExpr) {
 		r.src.replace(sel, name+".ContainsRune")
 	case r.is(sel.X, r.encrypt) && sel.Sel.Name == "GenerateKey" && len(call.Args) == 0:
 		r.src.insertAt(call.Rparen, "32")
-	case sel.Sel.Name == "New" && len(call.Args) == 1 && r.isWindow(sel.X):
+	case sel.Sel.Name == funcNew && len(call.Args) == 1 && r.isWindow(sel.X):
 		switch call.Args[0].(type) {
 		case *ast.Ident, *ast.SelectorExpr, *ast.CompositeLit:
 			r.src.insertAt(call.Args[0].Pos(), "&")

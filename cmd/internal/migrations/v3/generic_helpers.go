@@ -49,15 +49,15 @@ func migrateParamsIntErrors(content string) string {
 
 	ast.Inspect(src.file, func(n ast.Node) bool {
 		switch n := n.(type) {
-		case *ast.AssignStmt: // id, err := c.ParamsInt("id")
+		case *ast.AssignStmt: // two values assigned
 			if len(n.Lhs) == 2 && len(n.Rhs) == 1 {
 				rewrite(n.Rhs[0])
 			}
-		case *ast.ValueSpec: // var id, err = c.ParamsInt("id")
+		case *ast.ValueSpec: // two values declared
 			if len(n.Names) == 2 && len(n.Values) == 1 {
 				rewrite(n.Values[0])
 			}
-		case *ast.ReturnStmt: // return c.ParamsInt("id")
+		case *ast.ReturnStmt: // both values returned
 			if len(n.Results) == 1 {
 				rewrite(n.Results[0])
 			}

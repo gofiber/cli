@@ -10,10 +10,16 @@ import (
 	"strings"
 )
 
+// The names of the functions of Fiber that more than one migration looks for.
+const (
+	funcNew        = "New"
+	methodSendFile = "SendFile"
+)
+
 // textEdit replaces content[start:end] with text.
 type textEdit struct {
-	start, end int
 	text       string
+	start, end int
 }
 
 // sourceEdits is a parsed Go file and the edits a migration makes to it. The edits are
@@ -73,18 +79,17 @@ func (s *sourceEdits) apply() string {
 		return b.end - a.end
 	})
 
-	var b strings.Builder
+	parts := make([]string, 0, 2*len(edits)+1)
 	last := 0
 	for _, e := range edits {
 		if e.start < last {
 			continue
 		}
-		b.WriteString(s.content[last:e.start])
-		b.WriteString(e.text)
+		parts = append(parts, s.content[last:e.start], e.text)
 		last = e.end
 	}
-	b.WriteString(s.content[last:])
-	return b.String()
+	parts = append(parts, s.content[last:])
+	return strings.Join(parts, "")
 }
 
 // importName returns the name the file gives the package whose import path matches re, or
