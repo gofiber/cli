@@ -409,3 +409,73 @@ func Test_merge3_PropertiesWithBlankLines(t *testing.T) {
 		}
 	}
 }
+
+func Test_lineMapper_AChangedLineIsTheLineOfTheBlockThatIsMostLikeIt(t *testing.T) {
+	t.Parallel()
+
+	oldLines := strings.Split(strings.Join([]string{
+		"func f() {",
+		"\t_, body, errs := a.Bytes()",
+		"\tif len(errs) > 0 {",
+		"\t\tlog.Println(errs)",
+		"\t}",
+		"\treturn body",
+		"}",
+	}, "\n"), "\n")
+	newLines := strings.Split(strings.Join([]string{
+		"func f() {",
+		"\tresp, err := a.Send()",
+		"\tvar body []byte",
+		"\tif err == nil {",
+		"\t\tbody = resp.Body()",
+		"\t}",
+		"\tif err != nil {",
+		"\t\tlog.Println(err)",
+		"\t}",
+		"\treturn body",
+		"}",
+	}, "\n"), "\n")
+
+	m := lineMapper(oldLines, newLines)
+	require.NotNil(t, m)
+	assert.Equal(t, 1, m(1), "a line that is there in both texts")
+	assert.Equal(t, 8, m(4), "log.Println(errs) became log.Println(err)")
+	assert.Equal(t, 11, m(7), "the lines after the block")
+	assert.Zero(t, m(0))
+}
+
+func Test_lineMapper_AChangedLineWithNothingLikeItIsAtTheSamePlaceOfTheBlock(t *testing.T) {
+	t.Parallel()
+
+	oldLines := []string{"package a", "x := first()", "y := second()", "z := third()", "end"}
+	newLines := []string{"package a", "alpha()", "beta()", "end"}
+
+	m := lineMapper(oldLines, newLines)
+	require.NotNil(t, m)
+	assert.Equal(t, 2, m(2), "the first line of the block")
+	assert.Equal(t, 3, m(3), "the second")
+	assert.Equal(t, 3, m(4), "the block got shorter: the last line of it")
+	assert.Equal(t, 4, m(5))
+}
+
+func Test_lineMapper_OfSeveralLinesLikeItTheClosestToThePlaceIsTaken(t *testing.T) {
+	t.Parallel()
+
+	oldLines := []string{"top", "\tprint()", "\tprint()", "bottom"}
+	newLines := []string{"top", "\tprint(1)", "\tprint(2)", "\tprint(3)", "bottom"}
+
+	m := lineMapper(oldLines, newLines)
+	require.NotNil(t, m)
+	// every line of the block has the word of the line, the place decides
+	assert.Equal(t, 2, m(2))
+	assert.Equal(t, 3, m(3))
+	assert.Equal(t, 5, m(4))
+}
+
+func Test_lineWords(t *testing.T) {
+	t.Parallel()
+
+	got := lineWords("\tlog.Println(errs, 42) // _x")
+	assert.Equal(t, map[string]struct{}{"log": {}, "Println": {}, "errs": {}, "42": {}, "_x": {}}, got)
+	assert.Empty(t, lineWords("\t}"))
+}

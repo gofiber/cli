@@ -81,10 +81,10 @@ func recordRewrite(root, rel string, pass int, given, returned, written string) 
 }
 
 // RelocateNotes gives the notes the lines their files have now, after all the
-// rewrites of the run so far: the line of a note that a rewrite changed is the
-// start of what replaced it. A note that was not made in a pass (Pass is 0) and
-// one for a file that nothing rewrote keep their line. It changes notes and
-// returns it.
+// rewrites of the run so far: the line of a note that a rewrite changed is the line
+// of what replaced it that is most like it (see lineMapper). A note that was not
+// made in a pass (Pass is 0) and one for a file that nothing rewrote keep their
+// line. It changes notes and returns it.
 func RelocateNotes(root string, notes []Note) []Note {
 	runsMu.Lock()
 	defer runsMu.Unlock()

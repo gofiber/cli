@@ -34,8 +34,17 @@ func linesProject(t *testing.T, files map[string]string) string {
 // linesOfCallB returns the line of the file in dir that calls fmt.Println("b").
 func linesOfCallB(t *testing.T, dir, name string) int {
 	t.Helper()
+	return linesOfCall(t, dir, name, `fmt.Println("b")`)
+}
 
-	const text = `fmt.Println("b")`
+// linesOfCallA returns the line of the file in dir that calls fmt.Println("a").
+func linesOfCallA(t *testing.T, dir, name string) int {
+	t.Helper()
+	return linesOfCall(t, dir, name, `fmt.Println("a")`)
+}
+
+func linesOfCall(t *testing.T, dir, name, text string) int {
+	t.Helper()
 	content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name))) //nolint:gosec // a file of the temp project of this test
 	require.NoError(t, err)
 	for i, line := range strings.Split(string(content), "\n") {
@@ -99,7 +108,7 @@ func linesAddImportsProcessor(content string, _ internal.FileInfo) string {
 	return linesAddImports(content)
 }
 
-func Test_RelocateNotes_ALineThatWasRewrittenIsWhereItsReplacementStarts(t *testing.T) {
+func Test_RelocateNotes_ALineThatWasRewrittenIsWhereTheLineItBecameIs(t *testing.T) {
 	dir := linesProject(t, map[string]string{"main.go": linesSource})
 	internal.BeginRun(dir)
 	t.Cleanup(func() { internal.AbandonRun(dir) })
@@ -112,7 +121,8 @@ func Test_RelocateNotes_ALineThatWasRewrittenIsWhereItsReplacementStarts(t *test
 
 	notes := internal.RelocateNotes(dir, internal.DrainNotes(dir))
 	require.Len(t, notes, 1)
-	assert.Equal(t, 6, notes[0].Line)
+	assert.Equal(t, linesOfCallA(t, dir, "main.go"), notes[0].Line, "the call is the line of the block that is most like the line")
+	assert.Equal(t, 7, notes[0].Line)
 }
 
 func Test_RelocateNotes_ReturnedLinesAreOfTheTextTheProcessorReturned(t *testing.T) {

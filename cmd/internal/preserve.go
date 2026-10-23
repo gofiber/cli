@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // A migration writes the file it changed through the formatter, so that the
@@ -139,7 +140,8 @@ func restoreFormatting(path, original, final string) (restored string, remap fun
 
 // lineMapper returns the function that maps the number (from 1) of a line of the
 // old text to the number of the line it has in the new text: the lines that are
-// there in both are matched, a line that was changed maps to the start of what
+// there in both are matched, a line that was changed maps to the line of what
+// replaced it that is most like it, or else to the line at the same place in what
 // replaced it.
 func lineMapper(oldLines, newLines []string) func(int) int {
 	hunks, ok := diffLines(oldLines, newLines)
@@ -153,12 +155,67 @@ func lineMapper(oldLines, newLines []string) func(int) int {
 			case idx < h.aStart:
 				return idx + offset + 1
 			case idx < h.aEnd:
-				return h.bStart + min(idx-h.aStart, max(h.bEnd-h.bStart-1, 0)) + 1
+				return h.bStart + replacedLine(oldLines[idx], idx-h.aStart, newLines[h.bStart:h.bEnd]) + 1
 			}
 			offset = h.bEnd - h.aEnd
 		}
 		return idx + offset + 1
 	}
+}
+
+// replacedLine says which of the lines that replaced a block of code stands for
+// line, which was the pos-th of the block: the one that has most of its words, if
+// that is most of them, otherwise the one at the same place in the new block (the
+// last, when the new block is shorter). It returns 0 when nothing replaced the line.
+func replacedLine(line string, pos int, replacement []string) int {
+	at := min(pos, max(len(replacement)-1, 0))
+
+	words := lineWords(line)
+	if len(words) == 0 {
+		return at
+	}
+	best, bestScore := -1, 0.0
+	for i, candidate := range replacement {
+		have := lineWords(candidate)
+		same, long := 0, false
+		for word := range words {
+			if _, found := have[word]; found {
+				same++
+				long = long || len(word) >= 3
+			}
+		}
+		score := float64(same) / float64(len(words))
+		if !long || score < replacedLineSimilarity {
+			continue
+		}
+		if score > bestScore || (score == bestScore && abs(i-at) < abs(best-at)) {
+			best, bestScore = i, score
+		}
+	}
+	if best < 0 {
+		return at
+	}
+	return best
+}
+
+// replacedLineSimilarity is the share of the words of a line that another line
+// has to share for it to stand for the line.
+const replacedLineSimilarity = 0.6
+
+// lineWords returns the set of the identifiers and numbers of a line of code.
+func lineWords(line string) map[string]struct{} {
+	words := map[string]struct{}{}
+	for _, word := range strings.FieldsFunc(line, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }) {
+		words[word] = struct{}{}
+	}
+	return words
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // usesCRLF reports whether the text ends its lines with CRLF, as most of its lines do.
