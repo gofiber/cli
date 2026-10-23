@@ -117,6 +117,8 @@ func migrationName(fn MigrationFn) string {
 func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, skipGoMod, verbose bool, includeFiles, excludeFiles []string) error {
 	internal.SetFileFilters(includeFiles, excludeFiles)
 	defer internal.SetFileFilters(nil, nil)
+	// Forget the files an earlier run in this directory left as they were.
+	internal.DrainSkippedFiles(cwd)
 	var errs []error
 	var origDeps map[string]map[string]*semver.Version
 	if !skipGoMod {
@@ -176,9 +178,25 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		}
 	}
 
+	printSkippedFiles(cmd, cwd)
+
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
 
 	return nil
+}
+
+// printSkippedFiles names the files that a rewrite would have broken, which were left
+// as they were, so that they are not taken for migrated.
+func printSkippedFiles(cmd *cobra.Command, cwd string) {
+	files := internal.DrainSkippedFiles(cwd)
+	if len(files) == 0 {
+		return
+	}
+
+	cmd.Println("Not migrated: a rewrite of these files produced code that does not parse, so they are left as they were:")
+	for _, f := range files {
+		cmd.Printf("  %s\n", f.Reason)
+	}
 }
