@@ -78,10 +78,24 @@ is idempotent, so a second run changes nothing that the first one already migrat
   `g := c.Range`) becomes a function literal with the v2 signature, bound to the receiver
   the way Go binds a method value; `c.ParamsInt` with a spread of defaults and
   `c.AllParams` become function literals as well.
-- Stores, apps and clients are followed across the packages of the module, also into
-  files that do not import Fiber: a session store that an `auth` package exports gets its
-  `defer sess.Release()` where handlers use it, and `server.New().Listen(":3000")` in a
-  `main` package that never imports Fiber gets the listener settings of the app.
+- Stores, apps, clients and request contexts are followed across the packages of the
+  module, also into files that do not import Fiber: a session store that an `auth` package
+  exports gets its `defer sess.Release()` where handlers use it, `server.New().Listen(":3000")`
+  in a `main` package that never imports Fiber gets the listener settings of the app, and a
+  handler in a package that imports neither Fiber nor its middleware is migrated like one
+  that takes `*fiber.Ctx` when its argument is a type another package declares as a
+  wrapper that embeds `fiber.Ctx`, as an alias of it (`type Ctx = fiber.Ctx`), or when it
+  comes from a function, a field, a generic type or a channel of another package. The file
+  gets the imports the rewrite needs, and a wrapper that declares a method of its own that
+  v3 uses (a `Redirect(to string)`) is called through the embedded context. A value whose
+  type cannot be followed is reported where it calls a method that v3 removed. The other
+  modules of the repository (a `go.work` workspace, a nested module, a `replace` to a
+  directory below the one you run the command in) are read as part of the project; a module
+  outside of that directory is not.
+- Where a parameter, a variable, a constant or a type of a function hides the name of an
+  import (`fiber := fiber.New()`, a parameter called `strconv`), the code the migration
+  writes there is spelled with a second import of the package under a name nothing uses
+  (`fiberv3`, `stdstrconv`), which is added only when it is used.
 - The sentry-go API that versions 0.46 to 0.50 removed is rewritten to what the
   changelog recommends: `scope.SetExtra` becomes `SetContext`, `SetExtras` becomes
   `SetContexts`, `RemoveExtra` becomes `RemoveContext`, `event.Extra` becomes
@@ -105,7 +119,36 @@ is idempotent, so a second run changes nothing that the first one already migrat
   `FailOnTimeout: true` for `app.Test`, the v2 expiration and `Cache-Control` defaults
   of the cache middleware, `OnTimeout` returning `fiber.ErrRequestTimeout` for the
   timeout middleware (408 instead of 503), `Status(fiber.StatusFound)` for a redirect
-  without a status (302 instead of 303).
+  without a status (302 instead of 303). The 408 of a timeout goes to the `ErrorHandler`
+  of the application once, as in v2.
+- `c.Download(file[, name])` becomes `fibermigrate.Download(c, file[, name])`, the
+  `Download` of v3 with the byte ranges and the `Content-Type` that v2 sent. `c.ParamsInt(key)`
+  without a default gives the `0` that v2 returned together with the error, wherever the
+  value is used.
+- The jwt library the project uses for claims (`dgrijalva/jwt-go`, `form3tech-oss/jwt-go`,
+  `golang-jwt/jwt` v3 and v4) moves to `golang-jwt/jwt/v5` in every file of a module that
+  uses the jwt middleware, not only in the files that import the middleware, because the
+  tokens of the middleware are v5 tokens. One note per module lists the libraries and the two
+  differences in behavior (the text of the errors, tokens with an `iat` in the future), and
+  what v5 removed (`claims.Valid()`, the `ValidationError` types, ...) is noted where it is
+  used. `fiberi18n.GetMessage` and `MustGetMessage` of the v1 module become `Localize` and
+  `MustLocalize` of the translator.
+- A wrapper around a storage (a struct that embeds `fiber.Storage` and overrides `Get`,
+  `Set`, `Delete` or `Reset`) gets the `GetWithContext`, `SetWithContext`,
+  `DeleteWithContext` and `ResetWithContext` twins of the methods it overrides, which the
+  middleware of v3 calls instead of them.
+- A project that is pinned to an older release of Fiber v2 gets the rewrites for the API
+  of that release: below v2.50 `c.GetReqHeaders()["X"]` (a `map[string]string` then) becomes
+  `c.Get("X")` and `c.GetRespHeaders()["X"]` becomes `c.GetRespHeader("X")`, below v2.48
+  the `Hooks().OnListen` handlers get the `fiber.ListenData` parameter, and below v2.23 the
+  `StackTraceHandler` of the recover middleware gets the context.
+- When `otelfiber` moves to its v3 module, the other OpenTelemetry modules of `go.mod`
+  (`go.opentelemetry.io/otel*` and `go.opentelemetry.io/contrib*`) are raised with it to the
+  release that module needs, so that `go mod tidy` can resolve them.
+- The files are written through the formatter, so that what a migration adds is formatted
+  like the rest, and then the text you wrote is put back wherever no migration changed it:
+  CRLF line endings, the order and the spacing of your imports, comments written without a
+  space. A file that cannot be merged safely is left as the migrations wrote it.
 
 ### Code that v3 has no counterpart for
 
@@ -134,11 +177,30 @@ the standard library group, as `goimports` does. The files:
   is built away from that call (a condition, a function that takes arguments, another
   package), `fibermigrate.NewApp` records the settings with the app and
   `fibermigrate.ListenConfig`, `Listen` and `Listener` hand them to the call that starts
-  it, wherever it is; `fibermigrate.Config` and `fibermigrate.New` stand in for a config
-  that a function returns, and `fibermigrate.ConfigOf(app)` for `app.Config()`. Delete the
-  file once you pass a `fiber.ListenConfig` to `Listen` yourself. The settings of an app
-  that nothing in the module starts, and that goes to no code the migration cannot see,
-  are dropped, with a note;
+  it, wherever it is; `fibermigrate.ConfigOf(app)` stands in for `app.Config()`.
+  `fibermigrate.Config` (the `fiber.Config` of v2, with the four settings) and
+  `fibermigrate.New` stand in for a config that does not go straight to `fiber.New`: it is
+  returned by a function, handed to another one as a parameter, kept in a struct field or a
+  variable of the package, written with an alias of `fiber.Config` (`type Config =
+  fiber.Config`), or changed by the functions of a functional option (`type Option
+  func(*fiber.Config)`). The migration follows the config through all of these, across
+  packages and files, and every place that holds it takes the type of the registry, so the
+  code that reads and assigns the settings is not touched; where it cannot follow the config
+  (a collection, a channel, an interface, another module) the settings stay and the note says
+  where it stopped. Delete the file once you pass a `fiber.ListenConfig` to `Listen`
+  yourself. The settings of an app that no call of the module starts are dropped, with one
+  note, unless the app goes to code the migration cannot see (a function of another module,
+  an interface, a struct field), where it may be started;
+- `ctx.go`: `LegacyCtx`, a `fiber.Ctx` that also has the methods v2 had and v3 removed
+  (`BodyParser`, `QueryParser`, `ParamsInt`, `QueryInt`, `RedirectBack`, `UserContext`, ...),
+  for an interface of your project that mirrors the context of v2. The note at the interface
+  lists the methods v3 lacks, and every line that hands a context to it passes
+  `fibermigrate.LegacyCtx{Ctx: c}` when the interface only asks for methods the adapter has.
+  An interface that asks for a method v3 changed (`Bind`, `Context`, `Format`, `Range`,
+  `Redirect`, `SendFile`), and a struct that embeds the context, get the note only. Delete the
+  file once the interface describes what your handlers use;
+- `download.go`: `Download`, the `c.Download` of v3 with the byte ranges and the
+  `Content-Type` that `c.Download` of v2 sent. Delete the file if you do not need them;
 - `health.go`: the v2 healthcheck middleware (`HealthConfig`, `Health`) for the configs
   that cannot be split into one route for each probe. Delete the file once the probes
   are registered one by one;
@@ -147,7 +209,9 @@ the standard library group, as `goimports` does. The files:
   program tells a session `Source` from a string.
 
 Values do not cross the boundary of a Go module: a nested module (a directory with a
-`go.mod` of its own) gets its own `internal/fibermigrate`. The adapter for a filesystem
+`go.mod` of its own) gets its own `internal/fibermigrate`, and a config or an app that goes
+from one module of the repository to another keeps its settings, with a note that says so,
+because two copies of the package cannot exchange values. The adapter for a filesystem
 root that is an `http.FileSystem` (packr, pkger, rice, statik, your own type),
 `fiber_migrate_httpfs.go`, is still a file next to the code that uses it, once per
 package; delete it once you serve an `embed.FS` or `os.DirFS`.
@@ -165,18 +229,31 @@ At the end the command lists what it could not do for you, sorted by file and li
 ```
 
 When a migration raised the entry, its name follows the position. Quote it when you report a
-problem with a migration. A line number is the one the file had when that migration looked at it,
-so it can be a few lines off for a file that later migrations changed.
+problem with a migration. A line number is the line the file has when the command ends, whatever
+the rewrites that came after the migration did to the code above it; where a rewrite replaced the
+code the entry is about, it is the first line of what replaced it. Several findings on one line are
+one entry, and the others follow it with `also:`. A finding that the command tells the project once,
+at the first place, names the others: `(2 more in this project: a.go:14, sub/b.go:6)`, and
+`and 3 more` after the fifth.
 
-The list has three kinds of entries:
+The list has four kinds of entries:
 
 - files that were skipped because they do not parse;
 - v2 constructs that are still in the code and will not compile on v3, with the
   migration or the v3 API to use instead;
+- dependencies that are built for Fiber v2 and stay in the program: their handlers take the
+  `*fiber.Ctx` of v2 and do not work with a v3 app. There is one entry for each module, at
+  the first place the program imports it (not a test), with the module that imports Fiber v2.
+  When `go.mod` was not tidied (`--skip_go_mod`, or `go mod tidy` failed) the requirements
+  whose `go.mod` is in the module cache are looked at instead and the entry says `probably`;
 - behavior changes of the middleware your project uses that no rewrite can reproduce
   (proxy SSRF policy, a timed-out handler that keeps running, cache defaults, hashed
   basic auth passwords, `SendFile` file names, the random token that replaces the UUID as
-  the default session ID, ...). These are reported once per project, at the first import.
+  the default session ID, no proxy being trusted unless `TrustProxy` is set, the charset that
+  `c.JSON` adds to the `Content-Type`, the body of a 404, the text of the errors of the
+  binders, what a `go` directive that jumps several releases switches on, ...). These are
+  reported once per project, at the first import. A test of the project that compares a
+  `Content-Type` or the body of a 404 gets an entry at the line of the comparison.
   A few rewrites report their own difference the same way: the error of `ParamsInt`
   loses the `failed to convert: ` v2 put in front of it, the deprecated `timeout.New`
   of v2 only logged the error of its handler, `Redirect().Back` follows a `Referer`
