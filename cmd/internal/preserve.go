@@ -38,6 +38,7 @@ func BeginRun(root string) {
 	runsMu.Lock()
 	defer runsMu.Unlock()
 	runs[filepath.Clean(root)] = map[string]string{}
+	histories[filepath.Clean(root)] = map[string][]rewrite{}
 }
 
 // AbandonRun forgets a run without restoring anything.
@@ -45,6 +46,7 @@ func AbandonRun(root string) {
 	runsMu.Lock()
 	defer runsMu.Unlock()
 	delete(runs, filepath.Clean(root))
+	delete(histories, filepath.Clean(root))
 }
 
 // rememberOriginal keeps the text of a file before its first rewrite of a run.
@@ -71,6 +73,7 @@ func FinishRun(root string) (moved map[string]func(line int) int, err error) {
 	runsMu.Lock()
 	files := runs[key]
 	delete(runs, key)
+	delete(histories, key)
 	runsMu.Unlock()
 
 	var errs []error

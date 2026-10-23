@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -307,6 +308,57 @@ func Test_DoMigration_BlankLinesStayOutOfANewImportBlock(t *testing.T) {
 	want := "package main\n\nimport (\n\t\"test/internal/fibermigrate\"\n\n\t\"github.com/gofiber/fiber/v3\"\n)\n\n" +
 		"func Handler(c fiber.Ctx) error {\n\treturn fibermigrate.Download(c, \"report.txt\")\n}\n"
 	assert.Equal(t, want, string(content))
+}
+
+// A finding that is reported once for the project names the other places, and every place has the line its file
+// has when the run is over: the import that the rewrite adds and the blank lines of the author that are put back
+// both move the code below them.
+func Test_DoMigration_OnceNotesNameTheLinesOfTheFinishedFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		// two blank lines in the middle of the handler, which the formatter keeps as one
+		"a.go": "package main\n\nimport \"github.com/gofiber/fiber/v2\"\n\nfunc A(c *fiber.Ctx) error {\n\tid, err := c.ParamsInt(\"id\")\n\tif err != nil {\n\t\treturn err\n\t}\n\n\n" +
+			"\tother, err := c.ParamsInt(\"other\")\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn c.JSON(fiber.Map{\"id\": id, \"other\": other})\n}\n",
+		"sub/b.go": "package sub\n\nimport \"github.com/gofiber/fiber/v2\"\n\nfunc B(c *fiber.Ctx) error {\n\tn, err := c.ParamsInt(\"n\")\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn c.JSON(n)\n}\n",
+		"go.mod":   "module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	require.NoError(t, migrations.DoMigration(cmd, dir,
+		semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), true, false, nil, nil))
+
+	// the line of the note and of the places it names is a line that has the call
+	line := func(place string) string {
+		name, number, found := strings.Cut(place, ":")
+		require.True(t, found, place)
+		n, err := strconv.Atoi(number)
+		require.NoError(t, err, place)
+		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name))) //nolint:gosec // the path is this test's own temp dir
+		require.NoError(t, err)
+		lines := strings.Split(string(content), "\n")
+		require.LessOrEqual(t, n, len(lines), place)
+		return lines[n-1]
+	}
+
+	re := regexp.MustCompile(`(?m)^  (\S+:\d+): MigrateGenericHelpers: ParamsInt without a default value .*\((\d+) more in this project: ([^)]*)\)$`)
+	match := re.FindStringSubmatch(buf.String())
+	require.NotNil(t, match, buf.String())
+	assert.Contains(t, line(match[1]), "strconv.Atoi(c.Params(", "the note points at the first call: %s", match[1])
+	assert.Equal(t, "2", match[2])
+	places := strings.Split(match[3], ", ")
+	require.Len(t, places, 2)
+	for _, place := range places {
+		assert.Contains(t, line(place), "strconv.Atoi(c.Params(", "the other place %s", place)
+	}
+	assert.Equal(t, "a.go:", match[1][:5])
+	assert.Equal(t, "sub/b.go:", places[1][:9])
 }
 
 // When go mod tidy fails, go.mod holds the edits of the migration and is not tidied: the report says so, and

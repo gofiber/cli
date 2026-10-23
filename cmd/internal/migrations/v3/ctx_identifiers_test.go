@@ -129,7 +129,7 @@ var shutdownHooks []func() error
 func register(h func() error) { shutdownHooks = append(shutdownHooks, h) }
 `,
 			msg:   "Migrating removed fiber identifiers",
-			notes: []string{"fiber.OnShutdownHandler no longer exists in Fiber v3 and was replaced by func() error; Hooks().OnShutdown is OnPostShutdown(func(error) error) now, so adapt the code that registers these handlers (1 more in this project)"},
+			notes: []string{"fiber.OnShutdownHandler no longer exists in Fiber v3 and was replaced by func() error; Hooks().OnShutdown is OnPostShutdown(func(error) error) now, so adapt the code that registers these handlers (1 more in this project: main.go:7)"},
 		},
 		{
 			name: "parser decoder",

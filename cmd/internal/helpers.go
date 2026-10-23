@@ -107,20 +107,20 @@ func ChangeFileContentInfo(cwd string, processorFn FileProcessorInfo) (bool, err
 			return fmt.Errorf("read file %s: %w", path, err)
 		}
 
-		fi := FileInfo{Root: cwd, Path: path, Rel: rel}
+		fi := FileInfo{Root: cwd, Path: path, Rel: rel, pass: startPass(cwd)}
 		original := string(fileContent)
-		processed := processorFn(original, fi)
-		if processed != original {
-			fixed, err := tidyImports(path, []byte(processed))
+		returned := processorFn(original, fi)
+		if returned != original {
+			fixed, err := tidyImports(path, []byte(returned))
 			if err != nil {
 				noteSkippedFile(fi, original, err)
 				return nil
 			}
-			processed = string(fixed)
 			rememberOriginal(cwd, path, original)
-			if err2 := os.WriteFile(path, []byte(processed), 0o600); err2 != nil {
+			if err2 := os.WriteFile(path, fixed, 0o600); err2 != nil {
 				return fmt.Errorf("write file %s: %w", path, err2)
 			}
+			recordRewrite(cwd, rel, fi.pass, original, returned, string(fixed))
 			changed = true
 		}
 

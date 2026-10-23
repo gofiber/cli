@@ -247,6 +247,9 @@ func DoMigration(cmd *cobra.Command, cwd string, curr, target *semver.Version, s
 		}
 	}
 
+	// A note has the line its file had when the migration looked at it: the rewrites
+	// that came after moved the code, and then the author's formatting is put back.
+	notes = internal.RelocateNotes(cwd, notes)
 	moved, err := internal.FinishRun(cwd)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("restore the formatting: %w", err))
@@ -297,6 +300,14 @@ func followLines(notes []internal.Note, moved map[string]func(line int) int) []i
 		if remap, ok := moved[filepath.ToSlash(n.File)]; ok && n.Line > 0 {
 			notes[i].Line = remap(n.Line)
 		}
+		if len(n.More) > 0 {
+			notes[i].More = slices.Clone(n.More)
+			for j, place := range n.More {
+				if remap, ok := moved[filepath.ToSlash(place.File)]; ok && place.Line > 0 {
+					notes[i].More[j].Line = remap(place.Line)
+				}
+			}
+		}
 	}
 	return notes
 }
@@ -345,7 +356,7 @@ func printNotes(cmd *cobra.Command, notes []internal.Note) {
 	for _, item := range items {
 		cmd.Printf("  %s\n", item[0])
 		for _, n := range item[1:] {
-			cmd.Printf("      also: %s\n", internal.Note{Migration: n.Migration, Message: n.Message})
+			cmd.Printf("      also: %s\n", internal.Note{Migration: n.Migration, Message: n.Message, More: n.More})
 		}
 	}
 }

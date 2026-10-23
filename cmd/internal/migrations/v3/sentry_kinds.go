@@ -397,28 +397,16 @@ func (r *sentryRun) tables(f *sentryFile) kindTables {
 		func(t ast.Expr) uint8 { return uint8(f.declaredKind(t, nil)) })
 }
 
-// sentryTally counts the places of a rewrite that the project is told about once,
-// at the first of them.
+// sentryTally collects the places of a rewrite that the project is told about
+// once, at the first of them.
 type sentryTally struct {
-	file   string
-	line   int
-	places int
+	noteTally
 }
 
-func (t *sentryTally) add(fi internal.FileInfo, line int) {
-	if t.places == 0 {
-		t.file, t.line = fi.Rel, line
-	}
-	t.places++
-}
-
-// report leaves the note, with the number of other places.
+// report leaves the note, with the other places.
 func (t *sentryTally) report(root, message string) {
-	if t.places == 0 {
+	if !t.found {
 		return
 	}
-	if t.places > 1 {
-		message += " (" + strconv.Itoa(t.places-1) + " more in this project)"
-	}
-	internal.AddNote(root, internal.Note{File: t.file, Line: t.line, Message: message})
+	internal.AddNote(root, t.note(message))
 }

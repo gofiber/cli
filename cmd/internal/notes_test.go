@@ -42,6 +42,32 @@ func Test_Note_String(t *testing.T) {
 	assert.Equal(t, "MigrateX: message", internal.Note{Migration: "MigrateX", Message: "message"}.String())
 }
 
+func Test_Note_StringNamesTheOtherPlaces(t *testing.T) {
+	t.Parallel()
+
+	places := func(n int) []internal.NotePlace {
+		out := make([]internal.NotePlace, n)
+		for i := range out {
+			out[i] = internal.NotePlace{File: "handlers/users.go", Line: 10 + i}
+		}
+		return out
+	}
+
+	note := internal.Note{File: "main.go", Line: 7, Message: "message", More: places(1)}
+	assert.Equal(t, "main.go:7: message (1 more in this project: handlers/users.go:10)", note.String())
+
+	note.More = places(5)
+	assert.Equal(t, "main.go:7: message (5 more in this project: handlers/users.go:10, handlers/users.go:11, handlers/users.go:12, "+
+		"handlers/users.go:13, handlers/users.go:14)", note.String())
+
+	note.More = places(8)
+	assert.Equal(t, "main.go:7: message (8 more in this project: handlers/users.go:10, handlers/users.go:11, handlers/users.go:12, "+
+		"handlers/users.go:13, handlers/users.go:14, and 3 more)", note.String())
+
+	note.More = nil
+	assert.Equal(t, "main.go:7: message", note.String())
+}
+
 func Test_LineOf(t *testing.T) {
 	t.Parallel()
 

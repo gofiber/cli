@@ -134,7 +134,7 @@ func (r *sentryRun) migrate(content string, fi internal.FileInfo) string {
 	out := f.edits.apply(content)
 	f.rep.flush(&f.edits, out, out)
 	for _, p := range f.places {
-		p.tally.add(fi, internal.LineOf(out, mw1MappedOffset(f.edits.edits, p.offset)))
+		p.tally.addReturned(fi, internal.LineOf(out, mw1MappedOffset(f.edits.edits, p.offset)))
 	}
 	r.changed = append(r.changed, fi.Path)
 	return out

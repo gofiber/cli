@@ -469,7 +469,7 @@ func handler(c *fiber.Ctx) error {
 	return nil
 }
 `,
-			notes: []string{"main.go:14: " + note + " (1 more in this project)"},
+			notes: []string{"main.go:14: " + note + " (1 more in this project: main.go:15)"},
 		},
 		{
 			name: "a function of the file that takes the types of the fiber package, or something it does not look into",
@@ -607,7 +607,7 @@ func handler(c *fiber.Ctx, h *holder, s web.Sink) error {
 	return nil
 }
 `,
-			notes: []string{"main.go:18: " + note + " (1 more in this project)"},
+			notes: []string{"main.go:18: " + note + " (1 more in this project: main.go:19)"},
 		},
 		{
 			name: "the results of c.Range that are not assigned go where they are declared to go",

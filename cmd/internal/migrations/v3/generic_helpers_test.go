@@ -444,7 +444,7 @@ func b(c *fiber.Ctx, defaults ...int) error {
 }
 `,
 			msg:   "Migrating generic helpers",
-			notes: []string{"(1 more in this project)"},
+			notes: []string{"(1 more in this project: main.go:11)"},
 		},
 		{
 			name: "a default value leaves no error to change",

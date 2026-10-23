@@ -37,12 +37,10 @@ type ctxPackageFile struct {
 	names []string
 }
 
-// ctxKindNote is the first place of a kind of note, and how many places there are.
+// ctxKindNote is a kind of note, with the places of the project it was found at.
 type ctxKindNote struct {
-	file    string
 	message string
-	line    int
-	places  int
+	noteTally
 }
 
 func newCtxRun() *ctxRun {
@@ -330,11 +328,7 @@ func ctxParseDir(dir string) []ctxPackageFile {
 func (r *ctxRun) report(root string) {
 	for _, kind := range r.order {
 		k := r.kinds[kind]
-		msg := k.message
-		if k.places > 1 {
-			msg += fmt.Sprintf(" (%d more in this project)", k.places-1)
-		}
-		internal.AddNote(root, internal.Note{File: k.file, Line: k.line, Message: msg})
+		internal.AddNote(root, k.note(k.message))
 	}
 }
 
@@ -357,10 +351,11 @@ func (n *ctxNoter) notef(pos token.Pos, format string, args ...any) {
 // oncef records a note of the given kind for the construct at pos. Only the first
 // place of a kind in the project is reported, with the number of the others.
 func (n *ctxNoter) oncef(kind string, pos token.Pos, format string, args ...any) {
-	if k, seen := n.run.kinds[kind]; seen {
-		k.places++
-		return
+	k, seen := n.run.kinds[kind]
+	if !seen {
+		k = &ctxKindNote{message: fmt.Sprintf(format, args...)}
+		n.run.kinds[kind] = k
+		n.run.order = append(n.run.order, kind)
 	}
-	n.run.kinds[kind] = &ctxKindNote{file: n.fi.Rel, line: n.g.line(pos), message: fmt.Sprintf(format, args...), places: 1}
-	n.run.order = append(n.run.order, kind)
+	k.add(n.fi, n.g.line(pos))
 }

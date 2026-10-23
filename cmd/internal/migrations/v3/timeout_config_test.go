@@ -75,7 +75,7 @@ func wrap(a, b string) fiber.Handler { return slow }
 	// the project is told once that the handlers of v2 swallowed their errors
 	if assert.Len(t, run.notes, 1, "%v", run.messages()) {
 		assert.Contains(t, run.notes[0].Message, "timeout.New(handler, duration) of v2 logged an error the handler returned")
-		assert.Contains(t, run.notes[0].Message, "(5 more in this project)")
+		assert.Len(t, run.notes[0].More, 5, "the project is told where the other calls are")
 	}
 }
 

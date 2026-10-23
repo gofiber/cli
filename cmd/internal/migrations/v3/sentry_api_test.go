@@ -59,7 +59,7 @@ func handler(c *fiber.Ctx) error {
 	if assert.Len(t, res.notes, 1) {
 		assert.Contains(t, res.notes[0], fmt.Sprintf("main.go:%d: %s", mw1LineOf(t, file, `scope.SetContext("unwantedQuery"`), sentryExtrasNote))
 		assert.Contains(t, res.notes[0], `holds the value under "value"`)
-		assert.Contains(t, res.notes[0], "(4 more in this project)")
+		assert.Contains(t, res.notes[0], "(4 more in this project: main.go:15, main.go:17, main.go:21, main.go:23)")
 	}
 
 	// a second run has nothing left to do
@@ -417,7 +417,7 @@ func users() []sentry.User {
 		assert.Contains(t, res.notes[1], "ClientOptions.DisableLogs was removed in sentry-go 0.49")
 		assert.Contains(t, res.notes[2], "ClientOptions.DisableMetrics was removed in sentry-go 0.49")
 		assert.Contains(t, res.notes[3], "sentry-go 0.31 dropped profiling and the segment of a user")
-		assert.Contains(t, res.notes[3], "(2 more in this project)")
+		assert.Contains(t, res.notes[3], "(2 more in this project: main.go:15, main.go:25)")
 	}
 }
 
@@ -532,7 +532,7 @@ func (s *server) index(c *fiber.Ctx) error {
 	assert.Contains(t, file, `obs.Settings().SetExtra("other", 6)`)
 	if assert.Len(t, res.notes, 1) {
 		assert.Contains(t, res.notes[0], "handlers/handlers.go:14: "+sentryExtrasNote)
-		assert.Contains(t, res.notes[0], "(4 more in this project)")
+		assert.Contains(t, res.notes[0], "(4 more in this project: handlers/handlers.go:15, handlers/handlers.go:16, handlers/handlers.go:17, handlers/handlers.go:18)")
 	}
 	assert.Contains(t, res.stdout, "Migrating the sentry-go API")
 }

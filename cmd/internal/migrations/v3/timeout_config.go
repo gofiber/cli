@@ -172,35 +172,23 @@ func (rw *timeoutRewrite) onTimeoutField() string {
 // timeoutSwallowed collects the calls of the timeout.New(handler, d) of v2, which
 // only logged an error its handler returned, so that the project is told once.
 type timeoutSwallowed struct {
-	file   string
-	line   int
-	places int
-}
-
-func (t *timeoutSwallowed) add(fi internal.FileInfo, line int) {
-	if t.places == 0 {
-		t.file, t.line = fi.Rel, line
-	}
-	t.places++
+	noteTally
 }
 
 // report records the note for the project in root, if a call was rewritten.
 func (t *timeoutSwallowed) report(root string, apps *timeoutApps) {
-	if t.places == 0 {
+	if !t.found {
 		return
 	}
 	msg := "timeout.New(handler, duration) of v2 logged an error the handler returned and sent what the handler had " +
 		"written, usually 200 with an empty body, and answered 408 only after the whole time when the handler panicked; " +
 		"the v3 middleware passes the error on to the error handler and answers 500 at once after a panic"
-	if t.places > 1 {
-		msg += fmt.Sprintf(" (%d more in this project)", t.places-1)
-	}
 	if !apps.custom && !apps.known() {
 		msg += ". v2 also gave the 408 of a timeout to the ErrorHandler of the application, and v3 sends the answer of OnTimeout itself: " +
 			"no application with a default ErrorHandler could be found in this project, so if yours has an ErrorHandler of its own, " +
 			"call it from OnTimeout when the deadline has passed (err := fiber.ErrRequestTimeout; if c.Context().Err() != nil { _ = c.App().Config().ErrorHandler(c, err) }; return err)"
 	}
-	internal.AddNote(root, internal.Note{File: t.file, Line: t.line, Message: msg})
+	internal.AddNote(root, t.note(msg))
 }
 
 // timeoutApps is what the project says about the ErrorHandler of its applications.
