@@ -552,6 +552,69 @@ func (o *One) Get(key string) ([]byte, error) { return o.Store.Get(key) }
 	assert.Contains(t, notes[0], "call GetWithContext, which it brings, and skip Get")
 }
 
+// Delete(string) error and Reset() error are everywhere: they do not make a type that
+// embeds something unreadable a storage wrapper, and a type of Fiber itself, such as
+// the session store, is no storage.
+func Test_MigrateStorageInterface_WrapperRuleNeedsAMethodOfAStorage(t *testing.T) {
+	t.Parallel()
+
+	dir := importsTree(t, map[string]string{
+		"session.go": `package a
+
+import "github.com/gofiber/fiber/v3/middleware/session"
+
+type Counter struct {
+	*session.Store
+	resets int
+}
+
+func (c *Counter) Reset() error {
+	c.resets++
+	return nil
+}
+
+func (c *Counter) Delete(id string) error { return nil }
+
+func (c *Counter) Get(key string) ([]byte, error) { return nil, nil }
+`,
+		"unknown.go": `package a
+
+import "example.com/kv"
+
+type Cleaner struct {
+	*kv.Store
+}
+
+func (c *Cleaner) Delete(key string) error { return c.Store.Delete(key) }
+
+func (c *Cleaner) Reset() error { return c.Store.Reset() }
+`,
+		"valued.go": `package a
+
+import "example.com/kv"
+
+type Cache struct {
+	*kv.Store
+}
+
+func (c *Cache) Get(key string) ([]byte, error) { return c.Store.Get(key) }
+
+func (c *Cache) Delete(key string) error { return c.Store.Delete(key) }
+`,
+	})
+
+	require.NoError(t, v3.MigrateStorageInterface(newCmd(&bytes.Buffer{}), dir, nil, nil))
+
+	assert.NotContains(t, importsRead(t, dir, "session.go"), "WithContext")
+	assert.NotContains(t, importsRead(t, dir, "unknown.go"), "WithContext")
+
+	valued := importsRead(t, dir, "valued.go")
+	assert.Contains(t, valued, "func (c *Cache) GetWithContext(")
+	assert.Contains(t, valued, "func (c *Cache) DeleteWithContext(")
+
+	assert.Empty(t, importsNotes(dir))
+}
+
 // The type a wrapper embeds can be a storage of another package of the module.
 func Test_MigrateStorageInterface_WrapperOfAStorageOfAnotherPackage(t *testing.T) {
 	t.Parallel()

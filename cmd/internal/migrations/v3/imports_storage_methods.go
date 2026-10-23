@@ -294,6 +294,9 @@ func importsIsFiberStorage(sel importsSelector) bool {
 // its packages is a storage.
 const importsStorageModule = "github.com/gofiber/storage/"
 
+// importsFiberModule is the module of Fiber: the only storage in it is the interface.
+const importsFiberModule = "github.com/gofiber/fiber/"
+
 // embedsStorage tells what the types t embeds are: known is set when one of them
 // is a storage (the interface of Fiber, a driver, a type of the module that has its
 // methods or embeds one), weak when one is a type about which the scan can say
@@ -307,6 +310,8 @@ func (p importsStoragePackages) embedsStorage(ix func() *moduleIndex, pkg map[st
 		switch {
 		case importsIsFiberStorage(sel) || strings.HasPrefix(sel.path, importsStorageModule):
 			known = true
+		case strings.HasPrefix(sel.path, importsFiberModule):
+			// a type of Fiber itself, such as session.Store, is no storage
 		case p.moduleTypeIsStorage(ix, sel, depth):
 			known = true
 		default:
@@ -367,8 +372,10 @@ func (t *importsStorageType) listsStorage() bool {
 }
 
 // v2Methods returns the methods of the four that have a context twin in v3 which
-// the type declares with the signature of Fiber v2, and the twin it lacks.
-func (t *importsStorageType) v2Methods() (declared int, missing []string) {
+// the type declares with the signature of Fiber v2, the twin it lacks, and whether
+// it declares Get or Set, the two whose signatures (a []byte value) are a storage's:
+// Delete(string) error and Reset() error are everywhere.
+func (t *importsStorageType) v2Methods() (declared int, missing []string, valued bool) {
 	for line := range strings.Lines(importsStorageSignatures) {
 		name, _, _ := strings.Cut(line, "(")
 		m, ok := t.methods[name]
@@ -376,11 +383,12 @@ func (t *importsStorageType) v2Methods() (declared int, missing []string) {
 			continue
 		}
 		declared++
+		valued = valued || name == appMethodGet || name == nameSet
 		if twin := name + "WithContext"; !t.declares(twin) {
 			missing = append(missing, name)
 		}
 	}
-	return declared, missing
+	return declared, missing, valued
 }
 
 // declares reports whether the type has a method of its own with the name, or an
@@ -570,16 +578,17 @@ func storageMethods(g *goSource, fi internal.FileInfo, fn *ast.FuncDecl, typ *im
 // wrapperMethods renders the context twins of the methods a storage wrapper
 // declares in this file. The type wraps a storage when it embeds one (or a type
 // that is one); a type that embeds something the scan can say nothing about is
-// taken for one when it declares two of the methods, which is not a pair of
-// methods a type without a storage in it has by chance.
+// taken for one when it declares Get or Set and one more of the methods, which is
+// not what a type without a storage in it has by chance. With only one it is
+// reported.
 func (p importsStoragePackages) wrapperMethods(g *goSource, fi internal.FileInfo, pkg map[string]*importsStorageType, typ *importsStorageType, ctx string, ix func() *moduleIndex) string {
-	declared, lacking := typ.v2Methods()
+	declared, lacking, valued := typ.v2Methods()
 	if declared == 0 || len(lacking) == 0 {
 		return ""
 	}
 	known, weak := p.embedsStorage(ix, pkg, typ, 0)
-	if !known && (!weak || declared < 2) {
-		if weak {
+	if !known && (!weak || !valued || declared < 2) {
+		if weak && valued {
 			typ.noteUnreadableWrapper(g, fi, lacking)
 		}
 		return ""
