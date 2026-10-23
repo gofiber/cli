@@ -1,7 +1,6 @@
 package v3
 
 import (
-	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -64,10 +63,30 @@ func legacyJWTModules(goMod string) []string {
 }
 
 // updateLegacyJWTRequirement moves the requirement of the standalone jwt module to the jwt
-// module of contrib. A replace of the old module is left as it is: it points at a copy or a
-// fork of the old module, which cannot stand in for the new one, and it applies to nothing
-// once the requirement is gone.
+// module of contrib. The requirement is the only directive that moves: a replace of the old
+// module points at a copy or a fork of the old module, which cannot stand in for the new
+// one, and it applies to nothing once the requirement is gone, and an exclude names a
+// version of the old module. The requirement is found by the parser, because a line of a
+// block reads the same in a require, a replace and an exclude block.
 func updateLegacyJWTRequirement(goMod, oldPath, version string) string {
-	re := regexp.MustCompile(fmt.Sprintf(`(?m)^(\s*(?:require\s+)?)%s\s+%s`, regexp.QuoteMeta(oldPath), goModVersionPattern))
-	return re.ReplaceAllString(goMod, fmt.Sprintf(`${1}%s %s`, contribV3Prefix+"jwt", version))
+	file, err := modfile.ParseLax("go.mod", []byte(goMod), nil)
+	if err != nil {
+		return goMod
+	}
+
+	// from the last requirement to the first, so that the offsets of the others hold
+	reqs := slices.SortedFunc(slices.Values(file.Require), func(a, b *modfile.Require) int {
+		return b.Syntax.Start.Byte - a.Syntax.Start.Byte
+	})
+	for _, req := range reqs {
+		if req.Mod.Path != oldPath {
+			continue
+		}
+		verb := ""
+		if !req.Syntax.InBlock {
+			verb = "require "
+		}
+		goMod = goMod[:req.Syntax.Start.Byte] + verb + contribV3Prefix + "jwt " + version + goMod[req.Syntax.End.Byte:]
+	}
+	return goMod
 }

@@ -157,6 +157,11 @@ replace github.com/gofiber/jwt/v3 v3.3.10 => ../jwt
 
 replace (
     github.com/gofiber/jwt/v3 => ../jwt
+    github.com/gofiber/jwt/v3 v3.3.9 => ../jwt
+)
+
+exclude (
+    github.com/gofiber/jwt/v3 v3.3.8
 )
 `), 0o600))
 
@@ -172,11 +177,55 @@ replace (
 	assert.NotContains(t, mod, "require github.com/gofiber/jwt")
 	assert.NotContains(t, mod, "gofiber/jwt/v3 v3.3.10\n)", "the requirement moved")
 	// a replace of the old module points at a copy of the old module, which cannot stand in for the
-	// new one: it stays as it was, whatever its shape
+	// new one: it stays as it was, whatever its shape, and so does every other directive but the
+	// requirement
 	assert.Contains(t, mod, "replace github.com/gofiber/jwt/v3 v3.3.10 => ../jwt")
-	assert.Contains(t, mod, "replace (\n    github.com/gofiber/jwt/v3 => ../jwt\n)")
+	assert.Contains(t, mod, "replace (\n    github.com/gofiber/jwt/v3 => ../jwt\n    github.com/gofiber/jwt/v3 v3.3.9 => ../jwt\n)")
+	assert.Contains(t, mod, "exclude (\n    github.com/gofiber/jwt/v3 v3.3.8\n)")
 	assert.NotContains(t, mod, "replace github.com/gofiber/contrib")
 	assert.Contains(t, buf.String(), "Migrating contrib packages")
+}
+
+// The requirement moves where it stands, with the comment it has, in a block and on a line of its own.
+func Test_MigrateContribPackages_LegacyJWTRequirementShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		mod  string
+		want string
+	}{
+		{
+			name: "line of its own",
+			mod:  "require github.com/gofiber/jwt/v3 v3.3.10 // indirect\n",
+			want: "require github.com/gofiber/contrib/v3/jwt v3.0.0 // indirect\n",
+		},
+		{
+			name: "block",
+			mod:  "require (\n\tgithub.com/gofiber/fiber/v2 v2.0.0\n\tgithub.com/gofiber/jwt/v2 v2.1.0 // indirect\n)\n",
+			want: "require (\n\tgithub.com/gofiber/fiber/v2 v2.0.0\n\tgithub.com/gofiber/contrib/v3/jwt v3.0.0 // indirect\n)\n",
+		},
+		{
+			name: "windows line endings",
+			mod:  "require (\r\n\tgithub.com/gofiber/jwt/v3 v3.3.10\r\n)\r\n",
+			want: "require (\r\n\tgithub.com/gofiber/contrib/v3/jwt v3.0.0\r\n)\r\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			restore := v3.SetContribV3VersionFetcher(func(string) (string, error) { return "v3.0.0", nil })
+			t.Cleanup(restore)
+
+			goMod := filepath.Join(dir, "go.mod")
+			require.NoError(t, os.WriteFile(goMod, []byte("module example\n\ngo 1.22\n\n"+tt.mod), 0o600))
+
+			var buf bytes.Buffer
+			require.NoError(t, v3.MigrateContribPackages(newCmd(&buf), dir, nil, nil))
+
+			assert.Equal(t, "module example\n\ngo 1.22\n\n"+tt.want, readFile(t, goMod))
+		})
+	}
 }
 
 func Test_MigrateContribPackages_LegacyJWTIdempotent(t *testing.T) {
