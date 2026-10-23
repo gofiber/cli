@@ -311,3 +311,49 @@ func Test_DoMigration_GoModFailureIsExplained(t *testing.T) {
 	assert.Contains(t, out, "1 item to review by hand:", "the note is there once, although the go command failed twice")
 	assert.Contains(t, out, "go mod tidy failed (see its output above), so go.mod and go.sum hold the edits of the migration")
 }
+
+// A dependency that is built for Fiber v2 is looked for in the go.mod files of the module cache when the
+// migration did not tidy go.mod: with --skip_go_mod, and when go mod tidy failed.
+func Test_DoMigration_DependenciesAreJudgedFromTheModuleCacheWhenGoModIsNotTidied(t *testing.T) {
+	const want = "example.org/legacy v1.0.0 requires github.com/gofiber/fiber/v2, so it is probably built for Fiber v2"
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T)
+		skip  bool
+	}{
+		{name: "with --skip_go_mod", skip: true, setup: func(*testing.T) {}},
+		{name: "when go mod tidy fails", setup: func(t *testing.T) {
+			t.Helper()
+			t.Cleanup(stubFailingGoMod(t, "go: updates to go.mod needed"))
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cache := t.TempDir()
+			t.Setenv("GOMODCACHE", cache)
+			mod := filepath.Join(cache, "cache", "download", "example.org", "legacy", "@v", "v1.0.0.mod")
+			require.NoError(t, os.MkdirAll(filepath.Dir(mod), 0o750))
+			require.NoError(t, os.WriteFile(mod, []byte("module example.org/legacy\n\ngo 1.20\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n"), 0o600))
+
+			fiberGoMod := filepath.Join(dir, "fiber.mod")
+			require.NoError(t, os.WriteFile(fiberGoMod, []byte("module github.com/gofiber/fiber/v3\n\ngo 1.26.0\n"), 0o600))
+			t.Cleanup(stubFiberDownload(t, fiberGoMod))
+			tc.setup(t)
+
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nimport _ \"example.org/legacy\"\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"),
+				[]byte("module test\n\ngo 1.26.0\n\nrequire (\n\tgithub.com/gofiber/fiber/v2 v2.52.15\n\texample.org/legacy v1.0.0\n)\n"), 0o600))
+
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			cmd.Flags().Bool("skip_go_mod", tc.skip, "")
+			_ = migrations.DoMigration(cmd, dir, semver.MustParse("2.52.15"), semver.MustParse("3.6.1"), tc.skip, false, nil, nil)
+
+			assert.Contains(t, buf.String(), "main.go:3: "+want)
+			assert.Contains(t, buf.String(), "go.mod was not tidied by the migration")
+		})
+	}
+}
