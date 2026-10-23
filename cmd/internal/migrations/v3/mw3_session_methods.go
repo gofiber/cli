@@ -53,11 +53,16 @@ type mw3SessionMethodsPass struct {
 	f     *mw3SessionFile
 	fi    internal.FileInfo
 	types *mw3StoreTypes
+	// env tells which types are the request context of Fiber: an alias of it, a
+	// struct that embeds it, here or in another package of the module. It is built
+	// when the first store call asks for a context.
+	env *ctxEnv
 	// added are the functions that were given a context to pass on, by the name of
 	// the parameter.
-	added   map[*ast.FuncType]string
-	imports mw3ImportEdits
-	edits   editSet
+	added    map[*ast.FuncType]string
+	imports  mw3ImportEdits
+	edits    editSet
+	envReady bool
 }
 
 func mw3SessionMethodsContent(src string, fi internal.FileInfo, pkgs *mw3Pkgs) string {
@@ -235,11 +240,12 @@ func mw3IsSliceOfAny(t ast.Expr) bool {
 func (p *mw3SessionMethodsPass) context(call *ast.CallExpr, stack []ast.Node) string {
 	for _, node := range slices.Backward(stack) {
 		var ft *ast.FuncType
+		var recv *ast.FieldList
 		switch n := node.(type) {
 		case *ast.FuncLit:
 			ft = n.Type
 		case *ast.FuncDecl:
-			ft = n.Type
+			ft, recv = n.Type, n.Recv
 		default:
 			continue
 		}
@@ -248,8 +254,26 @@ func (p *mw3SessionMethodsPass) context(call *ast.CallExpr, stack []ast.Node) st
 		if name := p.added[ft]; name != "" {
 			return name
 		}
-		for _, field := range ft.Params.List {
-			if !isFiberType(field.Type, p.f.fiber, "Ctx") && !p.isContext(field.Type) {
+		if name := p.requestContext(ft, recv); name != "" {
+			return name
+		}
+		break
+	}
+
+	return p.f.importAt(&p.imports, "context", call.Pos(), stack, nil, "context", "stdcontext") + ".Background()"
+}
+
+// requestContext returns the name of the parameter of the function, or of its
+// receiver, that holds the context of the request: a fiber.Ctx, a context.Context,
+// or a type that is the fiber context under another name (an alias, a struct that
+// embeds it) wherever the program declares it.
+func (p *mw3SessionMethodsPass) requestContext(ft *ast.FuncType, recv *ast.FieldList) string {
+	for _, fields := range []*ast.FieldList{ft.Params, recv} {
+		if fields == nil {
+			continue
+		}
+		for _, field := range fields.List {
+			if !isFiberType(field.Type, p.f.fiber, "Ctx") && !p.isContext(field.Type) && !p.isFiberContext(field.Type) {
 				continue
 			}
 			for _, name := range field.Names {
@@ -258,10 +282,18 @@ func (p *mw3SessionMethodsPass) context(call *ast.CallExpr, stack []ast.Node) st
 				}
 			}
 		}
-		break
 	}
+	return ""
+}
 
-	return p.f.importAt(&p.imports, "context", call.Pos(), stack, nil, "context", "stdcontext") + ".Background()"
+// isFiberContext reports whether the type is the request context of Fiber under
+// another name, as the environment of the context migrations tells.
+func (p *mw3SessionMethodsPass) isFiberContext(t ast.Expr) bool {
+	if !p.envReady {
+		p.envReady = true
+		p.env = p.f.pkgs.contexts().envFor(p.fi, p.f.g, p.f.fiber)
+	}
+	return p.env != nil && p.env.typeIs(t, ctxTypeCtx) == ctxYes
 }
 
 // isContext reports whether the type is context.Context.
