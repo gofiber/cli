@@ -351,3 +351,61 @@ func Test_distrustBlankRuns(t *testing.T) {
 		assert.Equal(t, one, distrustBlankRuns([]string{"a"}, []string{"b", ""}, one))
 	})
 }
+
+// Blank lines are the lines a diff can match in more than one way: the properties of a merge hold for texts that
+// are mostly blank lines too.
+func Test_merge3_PropertiesWithBlankLines(t *testing.T) {
+	t.Parallel()
+
+	rng := rand.New(rand.NewPCG(7, 8)) //nolint:gosec // a seeded generator of test data
+	alphabet := []string{"", "", "", "a", "b", "}"}
+	lines := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = alphabet[rng.IntN(len(alphabet))]
+		}
+		return out
+	}
+	mutateLines := func(in []string) []string {
+		out := slices.Clone(in)
+		for range rng.IntN(5) {
+			pos := rng.IntN(len(out) + 1)
+			switch rng.IntN(3) {
+			case 0:
+				out = slices.Insert(out, pos, []string{"", "x", "y"}[rng.IntN(3)])
+			case 1:
+				if pos < len(out) {
+					out = slices.Delete(out, pos, pos+1)
+				}
+			default:
+				if pos < len(out) {
+					out[pos] = []string{"", "x", "y"}[rng.IntN(3)]
+				}
+			}
+		}
+		return out
+	}
+
+	for range 3000 {
+		base := lines(rng.IntN(25))
+		changed := mutateLines(base)
+
+		got, ok := merge3(base, base, changed)
+		require.True(t, ok)
+		require.True(t, slices.Equal(changed, got), "only theirs changed: base %q theirs %q got %q", base, changed, got)
+
+		got, ok = merge3(base, changed, base)
+		require.True(t, ok)
+		require.True(t, slices.Equal(changed, got), "only ours changed: base %q ours %q got %q", base, changed, got)
+
+		// whatever the author changed, the lines the migration brought are in the result
+		other := mutateLines(base)
+		got, ok = merge3(base, changed, other)
+		require.True(t, ok)
+		for _, line := range []string{"x", "y"} {
+			if slices.Contains(other, line) {
+				require.Contains(t, got, line, "base %q ours %q theirs %q", base, changed, other)
+			}
+		}
+	}
+}
