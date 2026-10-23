@@ -28,7 +28,7 @@ const (
 // github.com/gofiber/contrib to use the v3 module path.
 func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	changedImports, err := internal.ChangeFileContent(cwd, func(content string) string {
-		return contribImportRe.ReplaceAllStringFunc(content, func(match string) string {
+		content = contribImportRe.ReplaceAllStringFunc(content, func(match string) string {
 			sub := contribImportRe.FindStringSubmatch(match)
 			if len(sub) != 3 {
 				return match
@@ -40,6 +40,7 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			rest = internal.NormalizeContribModule(rest)
 			return sub[1] + contribV3Prefix + rest
 		})
+		return migrateLegacyJWTImport(content)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to migrate contrib imports: %w", err)
@@ -70,7 +71,8 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 		}
 		content := string(b)
 		matches := contribModRe.FindAllString(content, -1)
-		if len(matches) == 0 {
+		legacyJWT := legacyJWTModules(content)
+		if len(matches) == 0 && len(legacyJWT) == 0 {
 			return nil
 		}
 
@@ -89,6 +91,16 @@ func MigrateContribPackages(cmd *cobra.Command, cwd string, _, _ *semver.Version
 			}
 
 			updated = updateGoModModule(updated, match, contribV3Prefix+rest, version)
+		}
+
+		// the standalone jwt module of the v2 era moved to contrib
+		for _, legacy := range legacyJWT {
+			version, err := contribV3Version("jwt")
+			if err != nil {
+				return fmt.Errorf("fetch contrib jwt version: %w", err)
+			}
+
+			updated = updateGoModModule(updated, legacy, contribV3Prefix+"jwt", version)
 		}
 
 		if updated == content {
