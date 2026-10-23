@@ -775,3 +775,60 @@ func main() {
 	assert.Contains(t, notes[1].Message, "no Listen call of this module starts the app, but the app is passed to runner.Run, at line 24 of main.go, where code outside the migration may start it")
 	assert.Contains(t, notes[2].Message, "the app is stored in the field app of holder, at line 10 of main.go")
 }
+
+// A builder whose methods change the config it holds and hand themselves on is
+// followed through the chain of calls, however long the chain is, and the reads of
+// the settings through the config of the app and through the config variable keep
+// working.
+func Test_MigrateConfigListenerFields_Flow_BuildersAndReads(t *testing.T) {
+	t.Parallel()
+
+	dir := appSingle(t, `package main
+
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+type Builder struct {
+	cfg fiber.Config
+}
+
+func (b *Builder) Quiet() *Builder {
+	b.cfg.DisableStartupMessage = true
+	return b
+}
+
+func (b *Builder) Prefork(on bool) *Builder {
+	b.cfg.Prefork = on
+	return b
+}
+
+func (b *Builder) Named(name string) *Builder {
+	b.cfg.AppName = name
+	return b
+}
+
+func (b *Builder) Build() *fiber.App {
+	return fiber.New(b.cfg)
+}
+
+func main() {
+	b := &Builder{}
+	app := b.Quiet().Prefork(true).Named("x").Build()
+	fmt.Println(b.cfg.Prefork, app.Config().Prefork)
+	app.Listen(":3000")
+}
+`)
+
+	_, notes := shimMigrate(t, dir)
+
+	main := appRead(t, dir, "main.go")
+	assert.Contains(t, main, "\tcfg fibermigrate.Config\n")
+	assert.Contains(t, main, "\treturn fibermigrate.New(b.cfg)\n")
+	assert.Contains(t, main, "fmt.Println(b.cfg.Prefork, fibermigrate.ConfigOf(app).Prefork)")
+	assert.Contains(t, main, `app.Listen(":3000", fibermigrate.ListenConfig(app))`)
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0].Message, "main.Builder.cfg now holds a fibermigrate.Config")
+}
