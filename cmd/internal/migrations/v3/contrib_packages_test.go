@@ -58,6 +58,56 @@ require (
 	assert.Contains(t, buf.String(), "Migrating contrib packages")
 }
 
+// opafiber is called opa in v3. Without the rename the version of "opafiber/v2" was looked up
+// and the lookup failed, which stopped the rewrite of every contrib module of the go.mod.
+func Test_MigrateContribPackages_Opafiber(t *testing.T) {
+	dir := t.TempDir()
+
+	restore := v3.SetContribV3VersionFetcher(func(module string) (string, error) {
+		versions := map[string]string{"opa": "v3.0.0", "newrelic": "v3.2.0"}
+		if v, ok := versions[module]; ok {
+			return v, nil
+		}
+		return "", fmt.Errorf("unexpected module %s", module)
+	})
+	t.Cleanup(restore)
+
+	file := writeTempFile(t, dir, `package main
+import (
+    fibernewrelic "github.com/gofiber/contrib/fibernewrelic"
+    opafiber "github.com/gofiber/contrib/opafiber/v2"
+)
+
+func main() {
+    _, _ = fibernewrelic.New, opafiber.New
+}`)
+
+	modContent := `module example
+
+go 1.22
+
+require (
+    github.com/gofiber/fiber/v2 v2.0.0
+    github.com/gofiber/contrib/opafiber/v2 v2.0.6
+    github.com/gofiber/contrib/fibernewrelic v1.0.0
+)`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600))
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateContribPackages(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, `opafiber "github.com/gofiber/contrib/v3/opa"`)
+	assert.Contains(t, content, `fibernewrelic "github.com/gofiber/contrib/v3/newrelic"`)
+	assert.NotContains(t, content, "opafiber/v2")
+
+	mod := readFile(t, filepath.Join(dir, "go.mod"))
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/opa v3.0.0")
+	assert.Contains(t, mod, "github.com/gofiber/contrib/v3/newrelic v3.2.0")
+	assert.NotContains(t, mod, "opafiber")
+}
+
 func Test_MigrateContribPackages_Replace(t *testing.T) {
 	dir := t.TempDir()
 

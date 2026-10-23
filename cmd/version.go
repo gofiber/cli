@@ -14,6 +14,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/modfile"
 )
 
 var versionCmd = &cobra.Command{
@@ -50,21 +51,43 @@ func versionRun(cmd *cobra.Command, _ []string) {
 }
 
 var (
-	currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*?\s+(.*)\n`)
-	currentVersionFile   = "go.mod"
+	// fiberModuleRegexp matches the module path of the core fiber module, at any major
+	// version.
+	fiberModuleRegexp  = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
+	currentVersionFile = "go.mod"
 )
 
+// currentVersionFromFile returns the version of the fiber module that the go.mod at
+// path requires, with its leading "v". A requirement of the project wins over one that
+// only a dependency brings (// indirect).
 func currentVersionFromFile(path string) (string, error) {
 	b, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", fmt.Errorf("read current version file: %w", err)
 	}
 
-	if submatch := currentVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
-		return strings.TrimSpace(string(submatch[1])), nil
+	mod, err := modfile.ParseLax(path, b, nil)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
+	version := ""
+	for _, req := range mod.Require {
+		if !fiberModuleRegexp.MatchString(req.Mod.Path) {
+			continue
+		}
+		if !req.Indirect {
+			return req.Mod.Version, nil
+		}
+		if version == "" {
+			version = req.Mod.Version
+		}
+	}
+	if version == "" {
+		return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
+	}
+
+	return version, nil
 }
 
 func currentVersion() (string, error) {
