@@ -286,7 +286,6 @@ func ctxQueueParamsIntReturn(plan *ctxPlan, env *ctxEnv, ret *ast.ReturnStmt, ca
 	namer.collectFunc(stack)
 	value, errName := namer.fresh("value"), namer.fresh("err")
 	plan.add(func(e *editSet) {
-
 		recv := ctxRenderNode(e, g, sel.X)
 		if via != "" {
 			recv += "." + via

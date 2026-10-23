@@ -75,7 +75,7 @@ func ctxParamsIntErr(call *ast.CallExpr, stack []ast.Node) ctxParamsErr {
 		}
 		value, errExpr, stmt, define = parent.Lhs[0], parent.Lhs[1], parent, parent.Tok == token.DEFINE
 	case *ast.ValueSpec:
-		// var v, err = c.ParamsInt(k)
+		// a declaration with a var, v and err
 		at -= 2
 		if at < 0 || len(parent.Names) != 2 || len(parent.Values) != 1 || parent.Values[0] != call {
 			return ctxParamsErr{}

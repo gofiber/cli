@@ -2,6 +2,8 @@ package ctxshim
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,20 +116,12 @@ func Test_LegacyCtx_Parsers(t *testing.T) {
 	app.Post("/body/:name", func(c fiber.Ctx) error {
 		var m mirror = LegacyCtx{Ctx: c}
 		var fromBody, fromQuery, fromCookie, fromParams, fromHeader form
-		if err := m.BodyParser(&fromBody); err != nil {
-			return err
+		errs := []error{
+			m.BodyParser(&fromBody), m.QueryParser(&fromQuery), m.CookieParser(&fromCookie),
+			m.ParamsParser(&fromParams), m.ReqHeaderParser(&fromHeader),
 		}
-		if err := m.QueryParser(&fromQuery); err != nil {
-			return err
-		}
-		if err := m.CookieParser(&fromCookie); err != nil {
-			return err
-		}
-		if err := m.ParamsParser(&fromParams); err != nil {
-			return err
-		}
-		if err := m.ReqHeaderParser(&fromHeader); err != nil {
-			return err
+		if err := errors.Join(errs...); err != nil {
+			return fmt.Errorf("parse: %w", err)
 		}
 		return c.SendString(strings.Join([]string{fromBody.Name, fromQuery.Name, fromCookie.Name, fromParams.Name, fromHeader.Name}, "|"))
 	})
@@ -186,7 +180,11 @@ func Test_LegacyCtx_UserContext(t *testing.T) {
 		var m mirror = LegacyCtx{Ctx: c}
 		before := m.UserContext().Value(key{}) == nil
 		m.SetUserContext(context.WithValue(context.Background(), key{}, "set"))
-		return c.SendString(strconv.FormatBool(before) + "|" + m.UserContext().Value(key{}).(string))
+		value, ok := m.UserContext().Value(key{}).(string)
+		if !ok {
+			return fiber.ErrInternalServerError
+		}
+		return c.SendString(strconv.FormatBool(before) + "|" + value)
 	})
 
 	_, body, _ := run(t, app, http.MethodGet, "/", "")

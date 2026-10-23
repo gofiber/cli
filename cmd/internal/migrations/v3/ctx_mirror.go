@@ -5,10 +5,10 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -37,51 +37,64 @@ import (
 // without giving up the methods of v3, so the places that hand a context to it are left, and
 // the note says what they lack.
 
-// ctxLegacyMethods are the methods of *fiber.Ctx of v2.52.15 that the Ctx of v3 does not
-// have, with their signatures (see ctxSignature for how they are spelled). LegacyCtx of the
-// module package has all of them.
-var ctxLegacyMethods = map[string]string{
-	"AllParams":       "() map[string]string",
-	"BodyParser":      "(any) error",
-	"CookieParser":    "(any) error",
-	"ParamsInt":       "(string, ...int) (int, error)",
-	"ParamsParser":    "(any) error",
-	"QueryBool":       "(string, ...bool) bool",
-	"QueryFloat":      "(string, ...float64) float64",
-	"QueryInt":        "(string, ...int) int",
-	"QueryParser":     "(any) error",
-	"RedirectBack":    "(string, ...int) error",
-	"RedirectToRoute": "(string, Map, ...int) error",
-	"ReqHeaderParser": "(any) error",
-	"SetUserContext":  "(ext.Context)",
-	"UserContext":     "() ext.Context",
-}
+// The methods of *fiber.Ctx of v2.52.15 that the Ctx of v3 does not have, one per line with their
+// signature (see ctxSignature for how it is spelled). LegacyCtx of the module package has all of them.
+const ctxLegacyMethodTable = `
+AllParams () map[string]string
+BodyParser (any) error
+CookieParser (any) error
+ParamsInt (string, ...int) (int, error)
+ParamsParser (any) error
+QueryBool (string, ...bool) bool
+QueryFloat (string, ...float64) float64
+QueryInt (string, ...int) int
+QueryParser (any) error
+RedirectBack (string, ...int) error
+RedirectToRoute (string, Map, ...int) error
+ReqHeaderParser (any) error
+SetUserContext (ext.Context)
+UserContext () ext.Context
+`
 
-// ctxChangedMethods are the methods of *fiber.Ctx of v2.52.15 that the Ctx of v3 has with
-// another signature, with the one of v2.
-var ctxChangedMethods = map[string]string{
-	"Bind":     "(Map) error",
-	"Context":  "() *ext.RequestCtx",
-	"Format":   "(any) error",
-	"Range":    "(int) (Range, error)",
-	"Redirect": "(string, ...int) error",
-	"SendFile": "(string, ...bool) error",
-}
+// The methods of *fiber.Ctx of v2.52.15 that the Ctx of v3 has with another signature, with the one of v2.
+const ctxChangedMethodTable = `
+Bind (Map) error
+Context () *ext.RequestCtx
+Format (any) error
+Range (int) (Range, error)
+Redirect (string, ...int) error
+SendFile (string, ...bool) error
+`
 
-// ctxV2Methods are the methods of *fiber.Ctx of v2.52.15: an interface that declares a method
-// that is not one of them was never implemented by the context.
-var ctxV2Methods = []string{
-	"Accepts", "AcceptsCharsets", "AcceptsEncodings", "AcceptsLanguages", "AllParams", "App", "Append",
-	"Attachment", "BaseURL", "Bind", "Body", "BodyParser", "BodyRaw", "ClearCookie", "ClientHelloInfo",
-	"Context", "Cookie", "CookieParser", "Cookies", "Download", "FormFile", "FormValue", "Format", "Fresh",
-	"Get", "GetReqHeaders", "GetRespHeader", "GetRespHeaders", "GetRouteURL", "Hostname", "IP", "IPs", "Is",
-	"IsFromLocal", "IsProxyTrusted", "JSON", "JSONP", "Links", "Locals", "Location", "Method", "MultipartForm",
-	"Next", "OriginalURL", "Params", "ParamsInt", "ParamsParser", "Path", "Port", "Protocol", "Queries",
-	"Query", "QueryBool", "QueryFloat", "QueryInt", "QueryParser", "Range", "Redirect", "RedirectBack",
-	"RedirectToRoute", "Render", "ReqHeaderParser", "Request", "Response", "RestartRouting", "Route",
-	"SaveFile", "SaveFileToStorage", "Secure", "Send", "SendFile", "SendStatus", "SendStream", "SendString",
-	"Set", "SetUserContext", "Stale", "Status", "String", "Subdomains", "Type", "UserContext", "Vary", "Write",
-	"WriteString", "Writef", "XHR", "XML",
+// The methods of *fiber.Ctx of v2.52.15: an interface that declares a method that is not one of them
+// was never implemented by the context.
+const ctxV2MethodList = `Accepts AcceptsCharsets AcceptsEncodings AcceptsLanguages AllParams App Append
+Attachment BaseURL Bind Body BodyParser BodyRaw ClearCookie ClientHelloInfo Context Cookie CookieParser
+Cookies Download FormFile FormValue Format Fresh Get GetReqHeaders GetRespHeader GetRespHeaders GetRouteURL
+Hostname IP IPs Is IsFromLocal IsProxyTrusted JSON JSONP Links Locals Location Method MultipartForm Next
+OriginalURL Params ParamsInt ParamsParser Path Port Protocol Queries Query QueryBool QueryFloat QueryInt
+QueryParser Range Redirect RedirectBack RedirectToRoute Render ReqHeaderParser Request Response
+RestartRouting Route SaveFile SaveFileToStorage Secure Send SendFile SendStatus SendStream SendString Set
+SetUserContext Stale Status String Subdomains Type UserContext Vary Write WriteString Writef XHR XML`
+
+var (
+	// ctxLegacyMethods are the methods of the first table by name, with their signature.
+	ctxLegacyMethods = ctxParseMethodTable(ctxLegacyMethodTable)
+	// ctxChangedMethods are the methods of the second table by name, with their signature in v2.
+	ctxChangedMethods = ctxParseMethodTable(ctxChangedMethodTable)
+	// ctxV2Methods are the names of the third list.
+	ctxV2Methods = strings.Fields(ctxV2MethodList)
+)
+
+// ctxParseMethodTable reads a table of methods, one name and signature on each line.
+func ctxParseMethodTable(table string) map[string]string {
+	methods := map[string]string{}
+	for line := range strings.SplitSeq(table, "\n") {
+		if name, sig, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+			methods[name] = sig
+		}
+	}
+	return methods
 }
 
 // ctxMirror describes an interface of the project that the context of v2 implemented and the
@@ -165,7 +178,7 @@ func ctxMirrorMethodNames() []string {
 	for name := range ctxChangedMethods {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -291,7 +304,7 @@ func ctxListNames(names []string) string {
 func ctxListPlaces(places []string) string {
 	const shown = 3
 	places = slices.Clone(places)
-	sort.Strings(places)
+	slices.Sort(places)
 	places = slices.Compact(places)
 	if len(places) <= shown {
 		return strings.Join(places, ", ")
@@ -380,7 +393,7 @@ func (env *ctxEnv) mirrorSites(visit func(ctxMirrorSite)) {
 		case *ast.CallExpr:
 			env.callSites(x, inside, consider)
 		case *ast.ReturnStmt:
-			if results := env.enclosingResults(stack); len(results) == len(x.Results) {
+			if results := ctxEnclosingResults(stack); len(results) == len(x.Results) {
 				for i, value := range x.Results {
 					consider(value, results[i], inside)
 				}
@@ -423,8 +436,10 @@ func (env *ctxEnv) callSites(call *ast.CallExpr, stack []ast.Node, consider func
 			return
 		case i < len(params) && !isEllipsis(params[i]):
 			consider(arg, params[i], stack)
-		case isEllipsis(params[len(params)-1]) && !call.Ellipsis.IsValid():
-			consider(arg, params[len(params)-1].(*ast.Ellipsis).Elt, stack)
+		case !call.Ellipsis.IsValid():
+			if variadic, ok := params[len(params)-1].(*ast.Ellipsis); ok {
+				consider(arg, variadic.Elt, stack)
+			}
 		}
 	}
 }
@@ -478,7 +493,7 @@ func (env *ctxEnv) isTypeName(e ast.Expr) bool {
 
 // enclosingResults returns the types of the results of the function around the innermost node of
 // stack.
-func (env *ctxEnv) enclosingResults(stack []ast.Node) []ast.Expr {
+func ctxEnclosingResults(stack []ast.Node) []ast.Expr {
 	for _, node := range slices.Backward(stack) {
 		switch fn := node.(type) {
 		case *ast.FuncLit:
@@ -577,8 +592,8 @@ func (env *ctxEnv) mirrorOf(target ast.Expr) *ctxMirror {
 	if len(m.legacy)+len(m.changed) == 0 {
 		return nil
 	}
-	sort.Strings(m.legacy)
-	sort.Strings(m.changed)
+	slices.Sort(m.legacy)
+	slices.Sort(m.changed)
 	return &m
 }
 
@@ -612,17 +627,13 @@ func (env *ctxEnv) interfaceMethods(it *ast.InterfaceType, depth int) (map[strin
 			if !ok {
 				return nil, false
 			}
-			for name, ft := range more {
-				methods[name] = ft
-			}
+			maps.Copy(methods, more)
 		case *ast.InterfaceType:
 			more, ok := env.interfaceMethods(embedded, depth+1)
 			if !ok {
 				return nil, false
 			}
-			for name, ft := range more {
-				methods[name] = ft
-			}
+			maps.Copy(methods, more)
 		default:
 			return nil, false
 		}
