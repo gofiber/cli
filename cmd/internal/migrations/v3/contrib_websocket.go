@@ -3,7 +3,6 @@ package v3
 import (
 	"fmt"
 	"go/ast"
-	"regexp"
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -11,8 +10,9 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// contribWebsocketMentionRe finds the files that import the websocket middleware.
-var contribWebsocketMentionRe = regexp.MustCompile(`github\.com/gofiber/(?:contrib/(?:v3/)?websocket|websocket)\b`)
+// contribWebsocketPaths are the paths the websocket middleware is imported by, the standalone
+// module of v2 included.
+var contribWebsocketPaths = append(contribPathsOf("websocket"), contribLegacyWebsocketPath)
 
 // MigrateWebsocketConfig turns the Filter of the websocket Config into the Next
 // of v3.
@@ -36,7 +36,7 @@ func MigrateWebsocketConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version
 }
 
 func migrateWebsocketContent(content string, fi internal.FileInfo) string {
-	if !contribWebsocketMentionRe.MatchString(content) {
+	if !mentionsPath(content, contribWebsocketPaths...) {
 		return content
 	}
 	g, ok := parseFile(fi, content)

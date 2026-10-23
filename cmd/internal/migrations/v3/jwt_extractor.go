@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,8 +15,9 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// contribJWTMentionRe finds the files that import the jwt middleware.
-var contribJWTMentionRe = regexp.MustCompile(`github\.com/gofiber/(?:contrib/(?:v3/)?jwt|jwt)\b`)
+// contribJWTPaths are the paths the jwt middleware is imported by, the standalone module of v2
+// included.
+var contribJWTPaths = append(contribPathsOf("jwt"), contribLegacyJWTPath)
 
 // contribAuthorizationHeader is the header the Authorization extractors read.
 const contribAuthorizationHeader = "Authorization"
@@ -157,7 +157,7 @@ func MigrateJWTExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version) e
 }
 
 func migrateJWTContent(content string, fi internal.FileInfo) string {
-	if !contribJWTMentionRe.MatchString(content) {
+	if !mentionsPath(content, contribJWTPaths...) {
 		return content
 	}
 	g, ok := parseFile(fi, content)

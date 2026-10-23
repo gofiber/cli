@@ -20,16 +20,61 @@ import (
 const (
 	contribPrefix   = "github.com/gofiber/contrib/"
 	contribV3Prefix = "github.com/gofiber/contrib/v3/"
+
+	// The paths of the standalone modules that were folded into gofiber/contrib.
+	contribLegacyJWTPath       = "github.com/gofiber/jwt"
+	contribLegacyWebsocketPath = "github.com/gofiber/websocket"
 )
 
 var (
-	// contribMentionRe finds the files and go.mod files worth a closer look.
-	contribMentionRe = regexp.MustCompile(`github\.com/gofiber/(?:contrib|swagger|jwt|websocket)`)
+	// contribMentionPaths are the module paths whose mention makes a file or a go.mod worth a
+	// closer look.
+	contribMentionPaths = []string{"github.com/gofiber/contrib", "github.com/gofiber/swagger", contribLegacyJWTPath, contribLegacyWebsocketPath}
 
 	// The standalone modules that were folded into gofiber/contrib.
 	contribLegacyJWTRe       = regexp.MustCompile(`^github\.com/gofiber/jwt(?:/v\d+)?$`)
 	contribLegacyWebsocketRe = regexp.MustCompile(`^github\.com/gofiber/websocket(?:/v\d+)?$`)
 )
+
+// contribMentioned reports whether the text names a contrib module, or a standalone one that was
+// folded into it. A file or a go.mod that does not is not read any further.
+func contribMentioned(text string) bool {
+	return slices.ContainsFunc(contribMentionPaths, func(path string) bool { return strings.Contains(text, path) })
+}
+
+// contribPathsOf returns the import paths of the contrib packages of the given names, under the
+// module of the v2 era and under the one of v3.
+func contribPathsOf(names ...string) []string {
+	paths := make([]string, 0, 2*len(names))
+	for _, name := range names {
+		paths = append(paths, contribPrefix+name, contribV3Prefix+name)
+	}
+	return paths
+}
+
+// mentionsPath reports whether the text names one of the paths. What follows the path cannot
+// continue its last element, so ".../jwt" and ".../jwt/v2" are mentions and ".../jwtx" is not.
+// A migration asks it before it parses a file; the imports decide what it rewrites.
+func mentionsPath(text string, paths ...string) bool {
+	return slices.ContainsFunc(paths, func(path string) bool {
+		for from := 0; ; {
+			i := strings.Index(text[from:], path)
+			if i < 0 {
+				return false
+			}
+			end := from + i + len(path)
+			if end == len(text) || !isWordByte(text[end]) {
+				return true
+			}
+			from += i + 1
+		}
+	})
+}
+
+// isWordByte reports whether b is a letter, a digit or an underscore.
+func isWordByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
 
 // contribSocketioNote explains the import that replaces contrib/socketio.
 const contribSocketioNote = "contrib/socketio was a plain WebSocket event bus, contrib/v3/socketio speaks Engine.IO/Socket.IO; " +
@@ -261,7 +306,8 @@ func (r *contribRun) scanGoMods() ([]*contribGoMod, error) {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
-		if !contribMentionRe.Match(b) {
+		text := string(b)
+		if !contribMentioned(text) {
 			return nil
 		}
 
@@ -270,7 +316,7 @@ func (r *contribRun) scanGoMods() ([]*contribGoMod, error) {
 			r.noteGoModf(path, 0, "skipped because it does not parse (%v); move its github.com/gofiber/contrib requirements to the v3 modules by hand", err)
 			return nil
 		}
-		mod := &contribGoMod{path: path, content: string(b), file: file, mode: info.Mode().Perm()}
+		mod := &contribGoMod{path: path, content: text, file: file, mode: info.Mode().Perm()}
 		if len(r.lines(mod)) > 0 {
 			mods = append(mods, mod)
 		}
@@ -363,7 +409,7 @@ func (r *contribRun) moves(t contribTarget) bool {
 
 // rewriteImports moves the contrib imports of one Go file.
 func (r *contribRun) rewriteImports(content string, fi internal.FileInfo) string {
-	if !contribMentionRe.MatchString(content) {
+	if !contribMentioned(content) {
 		return content
 	}
 	g, ok := parseFile(fi, content)

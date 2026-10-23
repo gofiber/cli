@@ -26,9 +26,11 @@ var (
 	// importsReFiberModulePath matches the module path of the core fiber module with a
 	// major version.
 	importsReFiberModulePath = regexp.MustCompile(`^github\.com/gofiber/fiber/v\d+$`)
-	// importsReFiberMention finds the core fiber module path in a line of text.
-	importsReFiberMention = regexp.MustCompile(`github\.com/gofiber/fiber/v(\d+)`)
 )
+
+// importsFiberModuleStem is what the path of the core fiber module reads up to its major
+// version.
+const importsFiberModuleStem = "github.com/gofiber/fiber/v"
 
 // MigrateGoPkgs moves the project to the module path and version of the target
 // Fiber release: the imports of the Go files and the requirement in every go.mod
@@ -124,12 +126,23 @@ func importsNoteGenerate(content string, fi internal.FileInfo, major uint64) {
 // importsStaleFiberMention returns the first core fiber module path in line whose major
 // version is not the given one.
 func importsStaleFiberMention(line string, major uint64) string {
-	for _, m := range importsReFiberMention.FindAllStringSubmatch(line, -1) {
-		if m[1] != strconv.FormatUint(major, 10) {
-			return m[0]
+	want := strconv.FormatUint(major, 10)
+	for from := 0; ; {
+		i := strings.Index(line[from:], importsFiberModuleStem)
+		if i < 0 {
+			return ""
 		}
+		start := from + i
+		digits := start + len(importsFiberModuleStem)
+		end := digits
+		for end < len(line) && line[end] >= '0' && line[end] <= '9' {
+			end++
+		}
+		if end > digits && line[digits:end] != want {
+			return line[start:end]
+		}
+		from = end
 	}
-	return ""
 }
 
 // importsRetargetFiber points the requirements of the core fiber module in one

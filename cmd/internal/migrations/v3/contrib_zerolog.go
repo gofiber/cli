@@ -3,7 +3,6 @@ package v3
 import (
 	"fmt"
 	"go/ast"
-	"regexp"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -12,8 +11,8 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// contribZerologMentionRe finds the files that import the zerolog middleware.
-var contribZerologMentionRe = regexp.MustCompile(`github\.com/gofiber/contrib/(?:v3/)?(?:fiber)?zerolog\b`)
+// contribZerologPaths are the paths the zerolog middleware is imported by.
+var contribZerologPaths = contribPathsOf("fiberzerolog", "zerolog")
 
 // MigrateZerologConfig replaces the fields of the zerolog Config that v3 dropped.
 //
@@ -35,7 +34,7 @@ func MigrateZerologConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version) 
 }
 
 func migrateZerologContent(content string, fi internal.FileInfo) string {
-	if !contribZerologMentionRe.MatchString(content) {
+	if !mentionsPath(content, contribZerologPaths...) {
 		return content
 	}
 	g, ok := parseFile(fi, content)

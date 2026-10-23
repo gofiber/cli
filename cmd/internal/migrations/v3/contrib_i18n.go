@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,8 +15,8 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// contribI18nMentionRe finds the files that import the i18n middleware.
-var contribI18nMentionRe = regexp.MustCompile(`github\.com/gofiber/contrib/(?:v3/)?(?:fiberi18n|i18n)\b`)
+// contribI18nPaths are the paths the i18n middleware is imported by.
+var contribI18nPaths = contribPathsOf("fiberi18n", "i18n")
 
 // i18nVarNames are the names the translator variable is tried with.
 var i18nVarNames = []string{"translator", "i18nTranslator", "i18nBundle", "localizer"}
@@ -149,7 +148,7 @@ func (p *i18nPlan) scan(content string, fi internal.FileInfo) {
 	for name := range contribIdentNames(g.file) {
 		pkg.idents[name] = true
 	}
-	if !contribI18nMentionRe.MatchString(content) {
+	if !mentionsPath(content, contribI18nPaths...) {
 		return
 	}
 
@@ -213,7 +212,7 @@ func i18nFreeName(used map[string]bool) string {
 
 // rewrite moves one file.
 func (p *i18nPlan) rewrite(content string, fi internal.FileInfo) string {
-	if !contribI18nMentionRe.MatchString(content) {
+	if !mentionsPath(content, contribI18nPaths...) {
 		return content
 	}
 	g, ok := parseFile(fi, content)

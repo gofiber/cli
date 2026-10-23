@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"regexp"
 	"slices"
 	"strconv"
 
@@ -14,8 +13,8 @@ import (
 	"github.com/gofiber/cli/cmd/internal"
 )
 
-// contribPasetoMentionRe finds the files that import the paseto middleware.
-var contribPasetoMentionRe = regexp.MustCompile(`github\.com/gofiber/contrib/(?:v3/)?paseto\b`)
+// contribPasetoPaths are the paths the paseto middleware is imported by.
+var contribPasetoPaths = contribPathsOf("paseto")
 
 // The sources a token is read from, as v2 spelled them.
 const (
@@ -64,7 +63,7 @@ func MigratePasetoExtractor(cmd *cobra.Command, cwd string, _, _ *semver.Version
 }
 
 func migratePasetoContent(content string, fi internal.FileInfo) string {
-	if !contribPasetoMentionRe.MatchString(content) {
+	if !mentionsPath(content, contribPasetoPaths...) {
 		return content
 	}
 	g, ok := parseFile(fi, content)
