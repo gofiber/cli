@@ -27,6 +27,11 @@ var (
 	sentryContribPath = reviewContribPath("sentry|fibersentry")
 )
 
+// sentryContribV3Import is the import path of the middleware for Fiber v3. The
+// module of it requires sentry-go 0.50, so a module that imports it is on that
+// version once the migration is done (see sentryFile.onCurrentSDK).
+const sentryContribV3Import = contribV3Prefix + "sentry"
+
 // sentryKind is what a value of sentry-go is.
 type sentryKind uint8
 
@@ -83,6 +88,8 @@ const sentryMaxDepth = 8
 type sentryNames struct {
 	// root are the identifiers of sentry-go, contrib those of the middleware.
 	root, contrib []string
+	// v3 is set when the file imports the middleware of Fiber v3.
+	v3 bool
 }
 
 // sentryNamesOf reads the imports of a file.
@@ -110,6 +117,7 @@ func sentryNamesOf(file *ast.File) sentryNames {
 				bound = []string{"fibersentry", "sentry"}
 			}
 			n.contrib = append(n.contrib, bound...)
+			n.v3 = n.v3 || importPath == sentryContribV3Import
 		}
 	}
 	return n
@@ -328,6 +336,9 @@ type sentryRun struct {
 	indexes moduleIndexes
 	files   map[*modFile]*sentryFile
 	cache   kindTablesCache
+	// sdk holds, by the root of a module, whether the module imports the middleware
+	// of Fiber v3 and is on sentry-go 0.50 for it.
+	sdk map[string]bool
 	// changed are the files written since the indexes read them.
 	changed []string
 	// the tallies of what the project is told once

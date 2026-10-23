@@ -929,9 +929,8 @@ func main() {
 	main := run.file(t, "main.go")
 	assert.Contains(t, main, "return c.SendString(requestid.FromContext(c))")
 	assert.NotContains(t, main, "ContextKey")
-	require.Len(t, run.notes, 1)
-	assert.Contains(t, run.notes[0].Message, "The value of its key could not be resolved")
-	assert.Contains(t, run.notes[0].Message, "requestid.FromContext(c)")
+	// the constant is in the module: its value is known, and nothing is left to say
+	assert.Empty(t, run.notes)
 }
 
 func Test_MigrateMiddlewareLocals_RemovesTheKeyFieldInEveryLayout(t *testing.T) {

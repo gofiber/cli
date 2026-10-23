@@ -2,7 +2,11 @@ package v3
 
 import (
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +33,13 @@ type mw2Role struct {
 	pkg string
 	// addPath is the import path to add when a file reads the value without importing the package.
 	addPath string
+	// alias is the name the import added for addPath gets, "" when the package is
+	// called what its path says (the v3 package of the Fiber middleware for sentry is
+	// called sentry, and sentry-go is called that in the files that read the hub).
+	alias string
+	// nameOf gives the name that an import of the path has when it names none, "" or
+	// nil for pkg.
+	nameOf func(importPath string) string
 	// field is the config field that holds the key.
 	field string
 	// defaultKey is the key v2 used when the field was empty, "" when the value was only stored once the field was set.
@@ -47,13 +58,15 @@ type mw2Role struct {
 // The names of the middleware packages that keep values in the request locals,
 // and of the context key field most of them have.
 const (
-	mw2PkgRequestID = "requestid"
-	mw2PkgKeyAuth   = "keyauth"
-	mw2PkgCSRF      = "csrf"
-	mw2PkgBasicAuth = "basicauth"
-	mw2PkgJWT       = "jwtware"
-	mw2PkgPaseto    = "pasetoware"
-	mw2FieldKey     = "ContextKey"
+	mw2PkgRequestID   = "requestid"
+	mw2PkgKeyAuth     = "keyauth"
+	mw2PkgCSRF        = "csrf"
+	mw2PkgBasicAuth   = "basicauth"
+	mw2PkgJWT         = "jwtware"
+	mw2PkgPaseto      = "pasetoware"
+	mw2PkgSentry      = "sentry"
+	mw2PkgFiberSentry = "fibersentry"
+	mw2FieldKey       = "ContextKey"
 	// mw2ReaderFromContext is the name most of the v3 readers have.
 	mw2ReaderFromContext = "FromContext"
 )
@@ -102,6 +115,24 @@ var mw2Roles = []*mw2Role{
 		re: mw2Paseto, pkg: mw2PkgPaseto, addPath: "github.com/gofiber/contrib/v3/paseto",
 		field: mw2FieldKey, defaultKey: "auth-token", reader: mw2ReaderFromContext, kind: mw2KindAny,
 	},
+	{
+		// The hub of the request. The v2 middleware had no setting for the key and
+		// kept the hub under "sentry-hub", where code that does not use
+		// GetHubFromContext read it from; the v3 one stores it under a key of a
+		// private type. The package is called fibersentry at v2 and sentry at v3, and
+		// the files that read the hub import sentry-go as sentry.
+		re: sentryContribPath, pkg: mw2PkgSentry, addPath: sentryContribV3Import, alias: mw2PkgFiberSentry, nameOf: mw2SentryName,
+		defaultKey: "sentry-hub", reader: "GetHubFromContext", kind: mw2KindPointer, pointers: []string{"Hub"},
+	},
+}
+
+// mw2SentryName is the name that an import of the Fiber middleware for sentry has
+// when it names none.
+func mw2SentryName(importPath string) string {
+	if strings.Contains(importPath, "/fibersentry") {
+		return mw2PkgFiberSentry
+	}
+	return mw2PkgSentry
 }
 
 // mw2DefaultContextKey is the paseto constant that names the default key.
@@ -126,28 +157,36 @@ type mw2Key struct {
 type mw2KeyResolver struct {
 	g   *goSource
 	pkg *mw2Package
+	// pkgs reads the other packages of the module, nil when there is no module to read.
+	pkgs *mw2Packages
 	// names maps the identifiers the file binds to the middleware packages to the roles of the package.
 	names map[string][]*mw2Role
 	dir   string
 }
 
-// key resolves e; ok is false when e has no identity worth comparing.
-func (kr *mw2KeyResolver) key(e ast.Expr) (mw2Key, bool) {
+// key resolves e, whose ancestors are stack (nil when they are not known); ok is
+// false when e has no identity worth comparing.
+func (kr *mw2KeyResolver) key(e ast.Expr, stack []ast.Node) (mw2Key, bool) {
 	switch x := e.(type) {
 	case *ast.ParenExpr:
-		return kr.key(x.X)
+		return kr.key(x.X, stack)
 	case *ast.BasicLit, *ast.BinaryExpr:
-		if v, ok := mw2ConstString(e, kr.pkg.constValue, 0); ok {
-			return mw2Key{val: v}, true
+		if !kr.local(e, stack) {
+			if v, ok := kr.scope().str(e, 0); ok {
+				return mw2Key{val: v}, true
+			}
 		}
 	case *ast.Ident:
-		return kr.ident(x), true
+		return kr.ident(x, stack), true
 	case *ast.CallExpr:
-		if k, ok := kr.conversion(x); ok {
+		if k, ok := kr.conversion(x, stack); ok {
 			return k, true
 		}
 	case *ast.SelectorExpr:
 		if k, ok := kr.middlewareDefault(x); ok {
+			return k, true
+		}
+		if k, ok := kr.qualified(x, stack); ok {
 			return k, true
 		}
 		// pkg.Key means the same in every package that imports pkg.
@@ -156,17 +195,46 @@ func (kr *mw2KeyResolver) key(e ast.Expr) (mw2Key, bool) {
 	return mw2Key{val: kr.text(e), dir: kr.dir, expr: true}, true
 }
 
+// local reports whether e names a variable of a function: a parameter, a result, a
+// local, which a package level name of the same spelling does not stand for.
+func (kr *mw2KeyResolver) local(e ast.Expr, stack []ast.Node) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			// only what qualifies the selector can be a name here
+			if id, isIdent := sel.X.(*ast.Ident); isIdent && modDeclaredLocally(id.Name, id.Pos(), stack) {
+				found = true
+			}
+			return false
+		}
+		if id, ok := n.(*ast.Ident); ok && modDeclaredLocally(id.Name, id.Pos(), stack) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
 // text is the source text of e without its blanks.
 func (kr *mw2KeyResolver) text(e ast.Expr) string {
 	return strings.Join(strings.Fields(kr.g.text(e)), "")
 }
 
-// ident resolves a name: a constant string of the package, typed or not, or
-// otherwise the name itself.
-func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
-	c, ok := kr.pkg.consts[id.Name]
-	if ok && c.value != nil {
-		if v, ok := mw2ConstString(c.value, kr.pkg.constValue, 1); ok {
+// ident resolves a name: a constant string of the package, typed or not, a
+// variable of it that nothing assigns to, or otherwise the name itself. A name that
+// a function declares is its own key: it is not the package level name that is
+// spelled like it.
+func (kr *mw2KeyResolver) ident(id *ast.Ident, stack []ast.Node) mw2Key {
+	if modDeclaredLocally(id.Name, id.Pos(), stack) {
+		return mw2Key{val: id.Name, dir: kr.dir + mw2LocalMark, expr: true}
+	}
+
+	scope := kr.scope()
+	if kr.pkg.twice[id.Name] {
+		return mw2Key{val: id.Name, dir: kr.dir, expr: true}
+	}
+	if c, ok := kr.pkg.consts[id.Name]; ok && c.value != nil {
+		if v, known := (mw2ConstScope{pkgs: kr.pkgs, pkg: kr.pkg, imports: c.imports}).str(c.value, 1); known {
 			switch typ := mw2TypeText(c.typ); {
 			case c.typ == nil || typ == nameString:
 				return mw2Key{val: v}
@@ -174,14 +242,21 @@ func (kr *mw2KeyResolver) ident(id *ast.Ident) mw2Key {
 				return mw2Key{typ: typ, val: v}
 			}
 		}
+	} else if v, known := scope.str(id, 0); known {
+		return mw2Key{val: v}
 	}
 	return mw2Key{val: id.Name, dir: kr.dir, expr: true}
 }
 
+// mw2LocalMark is added to the directory of the key of a name that a function
+// declares, so that it is never taken for the package level name of the same
+// spelling.
+const mw2LocalMark = "\x00local"
+
 // conversion resolves T("constant") for a type T of the package.
-func (kr *mw2KeyResolver) conversion(call *ast.CallExpr) (mw2Key, bool) {
+func (kr *mw2KeyResolver) conversion(call *ast.CallExpr, stack []ast.Node) (mw2Key, bool) {
 	fn, ok := call.Fun.(*ast.Ident)
-	if !ok || len(call.Args) != 1 || !kr.pkg.types[fn.Name] {
+	if !ok || len(call.Args) != 1 || !kr.pkg.types[fn.Name] || modDeclaredLocally(fn.Name, fn.Pos(), stack) || kr.local(call.Args[0], stack) {
 		return mw2Key{}, false
 	}
 	v, ok := mw2ConstString(call.Args[0], kr.pkg.constValue, 0)
@@ -216,13 +291,43 @@ func (kr *mw2KeyResolver) middlewareDefault(sel *ast.SelectorExpr) (mw2Key, bool
 func mw2RoleNames(src string) map[string][]*mw2Role {
 	names := map[string][]*mw2Role{}
 	for _, role := range mw2Roles {
-		for _, name := range importNames(src, role.re, role.pkg) {
+		for _, name := range role.importNames(src) {
 			if name != "." {
 				names[name] = append(names[name], role)
 			}
 		}
 	}
 	return names
+}
+
+// importNames returns the identifiers src binds to the package of the role.
+func (r *mw2Role) importNames(src string) []string {
+	if r.nameOf == nil {
+		return importNames(src, r.re, r.pkg)
+	}
+
+	// the name of an import that has none depends on the path
+	var names []string
+	for _, path := range mw2ImportPaths(src, r.re) {
+		names = append(names, importNames(src, regexp.MustCompile(`^`+regexp.QuoteMeta(path)+`$`), r.nameOf(path))...)
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+// mw2ImportPaths returns the import paths of src that match re.
+func mw2ImportPaths(src string, re *regexp.Regexp) []string {
+	file, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ImportsOnly|parser.SkipObjectResolution)
+	if err != nil && file == nil {
+		return nil
+	}
+	var paths []string
+	for _, spec := range file.Imports {
+		if path, unquoteErr := strconv.Unquote(spec.Path.Value); unquoteErr == nil && re.MatchString(path) && !slices.Contains(paths, path) {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 // mw2IsLocalsCall reports whether n is a call of a method called Locals and

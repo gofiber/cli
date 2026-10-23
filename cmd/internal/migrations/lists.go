@@ -90,6 +90,7 @@ var Migrations = []Migration{
 			v3migrations.MigrateSwaggerPackages,
 			v3migrations.MigrateContribPackages,
 			v3migrations.MigrateSentryAPI,
+			v3migrations.MigrateOtelOptions,
 			v3migrations.MigrateWebsocketConfig,
 			v3migrations.MigrateZerologConfig,
 			v3migrations.MigrateI18nTranslator,

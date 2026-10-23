@@ -56,7 +56,7 @@ func (m *mw2LocalsModule) plan(f *mw2LocalsFile) *mw2LocalsPlan {
 				p.read(call, sel, stack)
 			}
 		case *ast.CompositeLit:
-			p.literal(x)
+			p.literal(x, stack)
 		case *ast.AssignStmt:
 			p.assignment(x, stack)
 		}
@@ -90,9 +90,15 @@ func (p *mw2Planner) qualifier(role *mw2Role) string {
 		}
 	}
 
-	name, alias := role.pkg, ""
+	name, alias := role.pkg, role.alias
+	if alias != "" {
+		name = alias
+	}
 	if mw2NameTaken(p.f.g, p.f.kr.pkg, name) {
 		name = "fiber" + role.pkg
+		if role.alias != "" {
+			name = role.alias + "v3"
+		}
 		alias = name
 	}
 	p.plan.imports = append(p.plan.imports, mw2Import{alias: alias, path: role.addPath})
@@ -120,7 +126,7 @@ func (p *mw2Planner) pick(candidates []*mw2Role) *mw2Role {
 
 // read plans the migration of one c.Locals(key) read.
 func (p *mw2Planner) read(call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast.Node) {
-	key, ok := p.f.kr.key(call.Args[0])
+	key, ok := p.f.kr.key(call.Args[0], stack)
 	if !ok {
 		return
 	}
@@ -622,7 +628,7 @@ func (p *mw2Planner) followComparison(bin *ast.BinaryExpr, read ast.Expr, role *
 }
 
 // literal plans the removal of the key fields of a middleware config literal.
-func (p *mw2Planner) literal(lit *ast.CompositeLit) {
+func (p *mw2Planner) literal(lit *ast.CompositeLit, stack []ast.Node) {
 	sel, ok := lit.Type.(*ast.SelectorExpr)
 	if lit.Type == nil || !ok || sel.Sel.Name != mw2ConfigType || !mw2IsKeyed(lit) {
 		return
@@ -637,7 +643,7 @@ func (p *mw2Planner) literal(lit *ast.CompositeLit) {
 		if kv == nil {
 			continue
 		}
-		key, ok := p.f.kr.key(kv.Value)
+		key, ok := p.f.kr.key(kv.Value, stack)
 		if !ok {
 			continue
 		}
@@ -653,7 +659,7 @@ func (p *mw2Planner) assignment(as *ast.AssignStmt, stack []ast.Node) {
 	if !ok || !slices.Contains(mw2StmtList(stack), ast.Stmt(as)) {
 		return
 	}
-	key, ok := p.f.kr.key(as.Rhs[0])
+	key, ok := p.f.kr.key(as.Rhs[0], stack)
 	if !ok {
 		return
 	}

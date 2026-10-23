@@ -275,31 +275,62 @@ func mw2TypeText(e ast.Expr) string {
 	return ""
 }
 
-// mw2Const is a package-level constant declaration.
+// mw2Const is a package-level constant or variable declaration.
 type mw2Const struct {
 	// typ is the declared type, nil for an untyped constant.
 	typ ast.Expr
 	// value is the initializer, nil when the constant repeats the previous one
 	// of its group (iota).
 	value ast.Expr
+	// imports are the imports of the file that declares it, which give the names
+	// its initializer uses from other packages their meaning.
+	imports []*ast.ImportSpec
 }
 
 // mw2Package is what the migrations need to know about the other files of the
 // package a file belongs to.
 type mw2Package struct {
 	consts map[string]mw2Const
+	// vars are the variables with an initializer; they stand for it when nothing
+	// assigns to them (see mw2Packages.assigned).
+	vars map[string]mw2Const
 	// decls holds every name declared at package level, types the ones that are types.
 	decls map[string]bool
 	types map[string]bool
+	// twice holds the names that more than one file declares, which build
+	// constraints allow: nothing says which one a build uses.
+	twice map[string]bool
+	// dir and name are where the package is and what its package clause calls it.
+	dir, name string
 }
 
 // mw2Packages reads the packages of a project on demand and remembers them.
 type mw2Packages struct {
 	cache map[string]*mw2Package
+	// names holds the package clause of the directories asked for, modules the
+	// path of the module of a go.mod, and assignedIn the names that code of a
+	// module assigns to, by the root of the module.
+	names      map[string]string
+	modules    map[string]string
+	assignedIn map[string]map[string]bool
+	// root is the directory the migration runs in, "" when the packages are read
+	// without the module around them: a name of another package is not followed then.
+	root string
 }
 
 func newMW2Packages() *mw2Packages {
-	return &mw2Packages{cache: map[string]*mw2Package{}}
+	return newMW2PackagesIn("")
+}
+
+// newMW2PackagesIn is newMW2Packages for the packages of the modules below root.
+func newMW2PackagesIn(root string) *mw2Packages {
+	if root != "" {
+		root = filepath.Clean(root)
+	}
+	return &mw2Packages{
+		cache: map[string]*mw2Package{}, root: root,
+		names: map[string]string{}, modules: map[string]string{}, assignedIn: map[string]map[string]bool{},
+	}
 }
 
 // of returns the package that the files of dir with the package clause name form.
@@ -310,7 +341,10 @@ func (p *mw2Packages) of(dir, name string) *mw2Package {
 		return pkg
 	}
 
-	pkg := &mw2Package{consts: map[string]mw2Const{}, decls: map[string]bool{}, types: map[string]bool{}}
+	pkg := &mw2Package{
+		consts: map[string]mw2Const{}, vars: map[string]mw2Const{}, decls: map[string]bool{}, types: map[string]bool{}, twice: map[string]bool{},
+		dir: filepath.Clean(dir), name: name,
+	}
 	p.cache[key] = pkg
 
 	entries, err := os.ReadDir(dir)
@@ -339,12 +373,12 @@ func (p *mw2Package) add(file *ast.File) {
 				p.decls[decl.Name.Name] = true
 			}
 		case *ast.GenDecl:
-			p.addGen(decl)
+			p.addGen(decl, file.Imports)
 		}
 	}
 }
 
-func (p *mw2Package) addGen(decl *ast.GenDecl) {
+func (p *mw2Package) addGen(decl *ast.GenDecl, imports []*ast.ImportSpec) {
 	for _, spec := range decl.Specs {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
@@ -352,13 +386,20 @@ func (p *mw2Package) addGen(decl *ast.GenDecl) {
 			p.types[s.Name.Name] = true
 		case *ast.ValueSpec:
 			for i, name := range s.Names {
+				if p.decls[name.Name] {
+					p.twice[name.Name] = true
+				}
 				p.decls[name.Name] = true
-				if decl.Tok != token.CONST {
+				if decl.Tok != token.CONST && decl.Tok != token.VAR {
 					continue
 				}
-				c := mw2Const{typ: s.Type}
+				c := mw2Const{typ: s.Type, imports: imports}
 				if len(s.Values) == len(s.Names) {
 					c.value = s.Values[i]
+				}
+				if decl.Tok == token.VAR {
+					p.vars[name.Name] = c
+					continue
 				}
 				p.consts[name.Name] = c
 			}

@@ -24,7 +24,7 @@ type mw2LocalsIndex struct {
 }
 
 func newMW2LocalsIndex(root string) *mw2LocalsIndex {
-	return &mw2LocalsIndex{modules: newMW2Modules(root), pkgs: newMW2Packages(), byRoot: map[string]*mw2LocalsModule{}, run: newCtxRun()}
+	return &mw2LocalsIndex{modules: newMW2Modules(root), pkgs: newMW2PackagesIn(root), byRoot: map[string]*mw2LocalsModule{}, run: newCtxRun()}
 }
 
 // module returns what is known about the module that holds file.
@@ -129,7 +129,7 @@ func (ix *mw2LocalsIndex) read(path string) *mw2LocalsFile {
 		rel:   filepath.ToSlash(rel),
 		names: names,
 		fiber: fiberNames(string(src)),
-		kr:    &mw2KeyResolver{g: g, pkg: ix.pkgs.of(dir, g.file.Name.Name), names: names, dir: dir},
+		kr:    &mw2KeyResolver{g: g, pkg: ix.pkgs.of(dir, g.file.Name.Name), pkgs: ix.pkgs, names: names, dir: dir},
 		fi:    internal.FileInfo{Root: ix.modules.root, Path: path, Rel: rel},
 		run:   ix.run,
 	}
@@ -220,11 +220,11 @@ func (m *mw2LocalsModule) collect(f *mw2LocalsFile) {
 		case *ast.SelectorExpr:
 			m.markUsed(f, x)
 		case *ast.CompositeLit:
-			m.collectLiteral(f, x)
+			m.collectLiteral(f, x, stack)
 		case *ast.AssignStmt:
 			m.collectAssignment(f, x, stack)
 		case *ast.CallExpr:
-			m.collectLocals(f, x)
+			m.collectLocals(f, x, stack)
 		}
 		return true
 	})
@@ -242,7 +242,7 @@ func (m *mw2LocalsModule) markUsed(f *mw2LocalsFile, sel *ast.SelectorExpr) {
 }
 
 // collectLiteral reads the key fields of a middleware config literal.
-func (m *mw2LocalsModule) collectLiteral(f *mw2LocalsFile, lit *ast.CompositeLit) {
+func (m *mw2LocalsModule) collectLiteral(f *mw2LocalsFile, lit *ast.CompositeLit, stack []ast.Node) {
 	sel, ok := lit.Type.(*ast.SelectorExpr)
 	if lit.Type == nil || !ok || sel.Sel.Name != mw2ConfigType {
 		return
@@ -254,7 +254,7 @@ func (m *mw2LocalsModule) collectLiteral(f *mw2LocalsFile, lit *ast.CompositeLit
 	for _, role := range f.names[id.Name] {
 		m.usedPkgs[role.pkg] = true
 		if _, kv := mw2Field(lit, role.field); kv != nil {
-			if key, ok := f.kr.key(kv.Value); ok {
+			if key, ok := f.kr.key(kv.Value, stack); ok {
 				m.bind(key, role)
 			}
 		}
@@ -267,7 +267,7 @@ func (m *mw2LocalsModule) collectAssignment(f *mw2LocalsFile, as *ast.AssignStmt
 	if !ok {
 		return
 	}
-	if key, ok := f.kr.key(as.Rhs[0]); ok {
+	if key, ok := f.kr.key(as.Rhs[0], stack); ok {
 		m.bind(key, role)
 	}
 }
@@ -293,12 +293,12 @@ func (f *mw2LocalsFile) configAssignment(as *ast.AssignStmt, stack []ast.Node) (
 }
 
 // collectLocals notes the keys the application writes and reads.
-func (m *mw2LocalsModule) collectLocals(f *mw2LocalsFile, call *ast.CallExpr) {
+func (m *mw2LocalsModule) collectLocals(f *mw2LocalsFile, call *ast.CallExpr, stack []ast.Node) {
 	_, sel, ok := mw2IsLocalsCall(call)
 	if !ok {
 		return
 	}
-	key, resolved := f.kr.key(call.Args[0])
+	key, resolved := f.kr.key(call.Args[0], stack)
 	if !resolved {
 		return
 	}

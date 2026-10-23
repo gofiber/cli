@@ -73,6 +73,10 @@ func main() {
 	// with a 200, because the file server has set the 404 by then.
 	assert.Contains(t, content, "NotFoundHandler: func(c fiber.Ctx) error {")
 	assert.Contains(t, content, "c.Status(fiber.StatusOK)")
+	// a directory without an index stays a 403, and the file brings its own content type
+	assert.Contains(t, content, "if c.Response().StatusCode() == fiber.StatusForbidden {")
+	assert.Contains(t, content, "return fiber.ErrForbidden")
+	assert.Contains(t, content, "c.Response().Header.Del(fiber.HeaderContentType)")
 	assert.Contains(t, content, `return c.SendFile("index.html", fiber.SendFile{FS: os.DirFS("./dist")})`)
 	assert.NotContains(t, content, "NotFoundFile")
 	assert.NotContains(t, content, "TODO")

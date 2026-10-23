@@ -70,11 +70,12 @@ const (
 var sentryMentions = []string{
 	sentrySetExtra, sentryRemoveExtra, ".Extra", "Extra:", sentryLoggerName, ".Client()", sentryEnableLogs, sentryDisableLogs,
 	sentryDisableMetrics, sentryProfilesRate, "Segment", "Metric",
+	"TransactionName", "OpName", "TransctionSource", "SpanSampled", ".Version", sentrySDKIdentifier, sentrySetTransaction, "Transaction()",
 }
 
 // sentryCalls are the texts of the files that do not import sentry: they can call
 // the scope that a function of another package returns.
-var sentryCalls = []string{sentrySetExtra, sentryRemoveExtra, ".Extra"}
+var sentryCalls = []string{sentrySetExtra, sentryRemoveExtra, ".Extra", sentrySetTransaction, ".Transaction()"}
 
 func (r *sentryRun) migrate(content string, fi internal.FileInfo) string {
 	// the indexes read what the files were when they were first asked about; the
@@ -199,6 +200,8 @@ func (f *sentryFile) call(call *ast.CallExpr, stack []ast.Node) {
 		switch fun.Sel.Name {
 		case sentrySetExtra, sentrySetExtras, sentryRemoveExtra:
 			f.extraCall(call, fun, stack)
+		case sentrySetTransaction, sentryTransaction:
+			f.transactionCall(call, fun, stack)
 		}
 	case *ast.Ident:
 		if fun.Name == "delete" && len(call.Args) == 2 {
@@ -327,6 +330,10 @@ func (f *sentryFile) selector(sel *ast.SelectorExpr, stack []ast.Node) {
 		case sentryMetricsAPI[sel.Sel.Name]:
 			f.rep.notef(sel, "sentry.%s was removed in sentry-go 0.31 with the rest of the metrics API of the beta that ended in October 2024: "+
 				"sentry.NewMeter(ctx) replaces it, with Count, Gauge and Distribution (left as it is)", sel.Sel.Name)
+		case sel.Sel.Name == sentrySDKIdentifier:
+			f.sdkIdentifier(sel)
+		default:
+			f.renamed(sel)
 		}
 		return
 	}
