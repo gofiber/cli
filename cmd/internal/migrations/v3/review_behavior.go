@@ -84,7 +84,12 @@ var reviewBehaviorRules = []reviewBehaviorRule{
 	},
 	{
 		pkg:     reviewMiddlewarePath("keyauth"),
-		message: "keyauth: Fiber v3 only accepts keys that are valid RFC 7235 token68 values (letters, digits and -._~+/ with optional trailing =), and answers failures with a WWW-Authenticate challenge (see Realm and Challenge).",
+		message: "keyauth: Fiber v3 only accepts keys that are valid RFC 7235 token68 values (letters, digits and -._~+/ with optional trailing =), and answers failures with a WWW-Authenticate challenge (see Realm and Challenge) and the body \"missing or invalid API Key\", where v2 said \"missing or malformed API Key\" for a request without a key and \"Invalid or expired API Key\" for one the validator rejected.",
+	},
+	{
+		pkg:     reviewCorePkgRe,
+		when:    func(rf *reviewFile) bool { return rf.literalHasKey(reviewCorePath, reviewConfigType, "UnescapePath") },
+		message: `Config.UnescapePath: a "+" in the path stays a "+" in Fiber v3, a character of a path (RFC 3986), where v2 decoded it to a space like a query string does, so a route parameter or c.Path() that carried a "+" reads differently.`,
 	},
 	{
 		pkg:     reviewMiddlewarePath("requestid"),

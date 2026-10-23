@@ -25,6 +25,9 @@ const (
 	moduleShimPkg = "fibermigrate"
 	// moduleShimDir is where the package lives, relative to the root of the module.
 	moduleShimDir = "internal/" + moduleShimPkg
+	// moduleShimAlias is the name of the second import of the package, for a file in
+	// which fibermigrate means something else.
+	moduleShimAlias = "fibermigrateshim"
 	// moduleShimMarker is in every file of the package.
 	moduleShimMarker = `This file was added by "fiber migrate"`
 )
@@ -46,6 +49,12 @@ type moduleShimFile struct {
 type goModule struct {
 	root string
 	path string
+}
+
+// contains reports whether the import path is the module or a package below it. A module
+// that is not known contains nothing.
+func (m goModule) contains(importPath string) bool {
+	return m.path != "" && (importPath == m.path || strings.HasPrefix(importPath, m.path+"/"))
 }
 
 // moduleOf finds the module that the file belongs to: the nearest go.mod in its

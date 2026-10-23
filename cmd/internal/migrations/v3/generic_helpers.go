@@ -36,14 +36,15 @@ const (
 const ctxParamsInt = "ParamsInt"
 
 // ctxParamsIntNote says that the error of ParamsInt lost the text v2 put in
-// front of it: the default error handler sends the text of an error in the body.
+// front of it, in a module that cannot have the ParamsInt that keeps it (see getters_shim.go):
+// the default error handler sends the text of an error in the body.
 const ctxParamsIntNote = "ParamsInt without a default value is strconv.Atoi(c.Params(key)) now: its error reads like " +
 	"the one of strconv, where v2 put \"failed to convert: \" in front of it, and the default error handler sends " +
 	"the text of an error in the body of the response; wrap it with fmt.Errorf(\"failed to convert: %w\", err) " +
 	"if something depends on it"
 
-// ctxQueryFloatNote says which numbers QueryFloat stopped reading: the generic helper
-// parses decimal numbers only.
+// ctxQueryFloatNote says which numbers QueryFloat stopped reading, in a module that cannot have the
+// QueryFloat that reads them (see getters_shim.go): the generic helper parses decimal numbers only.
 const ctxQueryFloatNote = "QueryFloat is fiber.Query[float64] now, which reads decimal numbers only: the other forms " +
 	"that strconv.ParseFloat accepted (inf, infinity and nan in any case, hexadecimal numbers such as 0x1p-2, " +
 	"and underscores between the digits as in 1_000.5) give the default value, or 0 without one; call " +
@@ -55,7 +56,10 @@ const ctxQueryFloat = "QueryFloat"
 // MigrateGenericHelpers turns the typed getters of the request context into the
 // generic helpers of v3.
 //
-// QueryInt, QueryFloat and QueryBool become fiber.Query[T](c, key, default...).
+// QueryInt and QueryBool become fiber.Query[T](c, key, default...), which reads what the
+// methods of v2 did. QueryFloat read every number that strconv.ParseFloat reads, and
+// fiber.Query[float64] reads decimal numbers only, so it becomes a call of the QueryFloat of the
+// package the module gets (<module>/internal/fibermigrate/getters.go).
 // ParamsInt returned an error as well: with a default it becomes
 // fiber.Params[int](c, key, default), error(nil), because v2 never returned an
 // error then. Without one the error is real, and v2 returned 0 with it: the call
@@ -65,8 +69,11 @@ const ctxQueryFloat = "QueryFloat"
 // that does not fit, but nothing reads the value), and else a function literal that
 // returns 0 with the error. With a spread of defaults it depends on how many there
 // are when the call runs, so it becomes a function literal that is called at once and
-// returns the first default, or the error when there is none. Only methods of a
-// fiber context are rewritten.
+// returns the first default, or the error when there is none. The error read "failed to
+// convert: " before the one of strconv, and strconv.Atoi(c.Params(key)) does not say it, so where
+// the code shows the text of the error (or hands it on) the call becomes a call of the ParamsInt
+// of the package the module gets, which is the method of v2. Only methods of a fiber context are
+// rewritten.
 func MigrateGenericHelpers(cmd *cobra.Command, cwd string, _, _ *semver.Version) error {
 	run := newCtxRun()
 	changed, err := internal.ChangeFileContentInfo(cwd, func(content string, fi internal.FileInfo) string {
@@ -93,11 +100,12 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 		return content
 	}
 	noter := newCtxNoter(fi, g, run)
+	shim := &getterShim{fi: fi}
 	var plan ctxPlan
 
 	g.walk(func(n ast.Node, stack []ast.Node) bool {
 		if sel, isSel := n.(*ast.SelectorExpr); isSel {
-			ctxQueueHelperValue(&plan, noter, env, sel, stack)
+			ctxQueueHelperValue(&plan, noter, shim, env, sel, stack)
 			return true
 		}
 		call, ok := n.(*ast.CallExpr)
@@ -126,7 +134,13 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			// the embedded context goes there. A call of Params on the receiver, in the
 			// code that replaces ParamsInt, only needs it when the type declares Params.
 			handed := env.embeddedCtxOf(sel.X, stack)
-			if sel.Sel.Name == ctxQueryFloat {
+			// QueryFloat read numbers that the generic helper does not: the call goes to the
+			// QueryFloat of the module package, which reads them.
+			if sel.Sel.Name == ctxQueryFloat && len(call.Args) > 0 {
+				if shim.available() {
+					ctxQueueModuleCall(&plan, env, shim.path, sel.Sel.Name, call, sel, stack)
+					return true
+				}
 				noter.oncef("queryfloat", sel.Pos(), "%s", ctxQueryFloatNote)
 			}
 
@@ -134,6 +148,10 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			// slice spread included. ParamsInt does not: whether it returns an error
 			// depends on the number of defaults, which is only known when it runs.
 			if call.Ellipsis.IsValid() && sel.Sel.Name == ctxParamsInt && len(call.Args) == 2 {
+				if shim.available() {
+					ctxQueueModuleCall(&plan, env, shim.path, sel.Sel.Name, call, sel, stack)
+					return true
+				}
 				noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
 				ctxQueueParamsIntLiteral(&plan, env, call, sel, env.pkgAt(call.Pos(), "strconv"), handed)
 				return true
@@ -152,13 +170,23 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 			// literal that returns 0 with the error.
 			useAtoi, after := false, ""
 			if twoValued && len(call.Args) == 1 {
-				switch errUse := ctxParamsIntErr(call, stack); errUse.use {
+				errUse := ctxParamsIntErr(call, stack)
+				// An error whose text can be shown has the text of v2 in the ParamsInt of the module
+				// package, which is the method with a function in front of it. The code that only
+				// compares the error with nil and leaves does not see the text.
+				if errUse.use != ctxErrIgnored && (errUse.use != ctxErrGuarded || errUse.textRead) && shim.available() {
+					ctxQueueModuleCall(&plan, env, shim.path, sel.Sel.Name, call, sel, stack)
+					return true
+				}
+				switch errUse.use {
 				case ctxErrIgnored:
 					plan.add(func(e *editSet) { e.replace(g.offset(errUse.from), g.offset(errUse.to), "") })
 					twoValued = false
 				case ctxErrGuarded:
 					useAtoi = true
-					noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
+					if errUse.textRead {
+						noter.oncef("paramsint-error", sel.Pos(), "%s", ctxParamsIntNote)
+					}
 				case ctxErrReset:
 					useAtoi = true
 					after = "\nif " + errUse.errName + " != nil {\n" + g.text(errUse.value) + " = 0\n}"
@@ -193,7 +221,7 @@ func ctxGenericHelpersContent(content string, fi internal.FileInfo, run *ctxRun)
 // value, without being called, with a function literal that has the signature of
 // the v2 method (see ctxValueBuilder). The literal of ParamsInt needs strconv and
 // fmt, which finish imports.
-func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
+func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, shim *getterShim, env *ctxEnv, sel *ast.SelectorExpr, stack []ast.Node) {
 	helper, ok := ctxGenericHelpers[sel.Sel.Name]
 	if !ok {
 		return
@@ -220,6 +248,12 @@ func ctxQueueHelperValue(plan *ctxPlan, noter *ctxNoter, env *ctxEnv, sel *ast.S
 	}
 
 	if sel.Sel.Name == ctxQueryFloat {
+		if shim.available() {
+			pkg := env.pkgAs(sel.Pos(), shim.path, moduleShimPkg, moduleShimAlias)
+			b := env.newValueBuilder(sel, stack, ctxMembersAll, pkg)
+			plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.queryFloat(pkg))) })
+			return
+		}
 		noter.oncef("queryfloat", sel.Pos(), "%s", ctxQueryFloatNote)
 	}
 	if sel.Sel.Name != ctxParamsInt {

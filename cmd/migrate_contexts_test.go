@@ -109,10 +109,12 @@ func Alias(c *web.Ctx) error {
 	at.Contains(handlers, `fiber.Query[int](c.Ctx, "page", 1)`)
 	at.Contains(handlers, `c.Redirect().Status(fiber.StatusFound).To("/" + rid)`)
 	at.Contains(handlers, "func Alias(c web.Ctx) error")
-	at.Contains(handlers, `strconv.Atoi(c.Params("id"))`)
+	// the error of ParamsInt is returned, so it keeps the text of v2 through the package the module gets
+	at.Contains(handlers, `fibermigrate.ParamsInt(c, "id")`)
+	at.FileExists(filepath.Join(dir, "internal", "fibermigrate", "getters.go"))
 	at.NotContains(handlers, "Locals")
 	at.NotContains(handlers, "QueryInt")
-	at.NotContains(handlers, "ParamsInt")
+	at.NotContains(handlers, "c.ParamsInt")
 	at.NotContains(handlers, "*web.Ctx")
 
 	web := readFileTB(t, filepath.Join(dir, "internal", "web", "web.go"))

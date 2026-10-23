@@ -30,9 +30,6 @@ const (
 	// downloadShimPackage is the package clause of the source, which is a package of the
 	// CLI.
 	downloadShimPackage = "\npackage downloadshim\n"
-	// downloadShimAlias is the name of the second import of the module package, for a
-	// file in which fibermigrate means something else.
-	downloadShimAlias = "fibermigrateshim"
 )
 
 // downloadShimHeader is what the file starts with. The code follows the package clause.

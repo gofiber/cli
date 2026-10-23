@@ -112,11 +112,14 @@ func (rf *reviewFile) notef(pos token.Pos, format string, args ...any) {
 	internal.Notef(rf.fi, rf.g.line(pos), format, args...)
 }
 
-// checkImports reports imports that cannot work on v3.
+// checkImports reports imports that cannot work on v3. A package of the module of the file is
+// the code of the project, whatever the module is called, and works as it is (an internal package
+// of a module that has the name of a contrib module is one).
 func (rf *reviewFile) checkImports() {
+	own, _ := moduleOf(rf.fi.Path, rf.fi.Root)
 	for _, spec := range rf.g.file.Imports {
 		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil {
+		if err != nil || own.contains(importPath) {
 			continue
 		}
 

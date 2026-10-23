@@ -209,8 +209,12 @@ func page(c *web.Context, a *web.Ctx, r *web.Request) int {
 
 import "example.com/app/internal/web"
 
-func id(c *web.Context) (int, error) {
-	return c.ParamsInt("id")
+func id(c *web.Context) int {
+	id, err := c.ParamsInt("id")
+	if err != nil {
+		return 0
+	}
+	return id
 }
 `},
 			want: map[string]string{xpkgHandlers: `package handlers
@@ -221,16 +225,39 @@ import (
 	"example.com/app/internal/web"
 )
 
-func id(c *web.Context) (int, error) {
-	value, err := strconv.Atoi(c.Params("id"))
+func id(c *web.Context) int {
+	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
-		return 0, err
+		return 0
 	}
-	return value, nil
+	return id
 }
 `},
-			notes: []string{"ParamsInt without a default value"},
-			msg:   "Migrating generic",
+			msg: "Migrating generic",
+		},
+		{
+			name:    "ParamsInt whose error is returned goes to the module package, with the context the type embeds",
+			migrate: v3.MigrateGenericHelpers,
+			files: map[string]string{xpkgHandlers: `package handlers
+
+import "example.com/app/internal/web"
+
+func id(c *web.Context) (int, error) {
+	return c.ParamsInt("id")
+}
+`},
+			want: map[string]string{xpkgHandlers: `package handlers
+
+import (
+	"example.com/app/internal/fibermigrate"
+	"example.com/app/internal/web"
+)
+
+func id(c *web.Context) (int, error) {
+	return fibermigrate.ParamsInt(c.Ctx, "id")
+}
+`},
+			msg: "Migrating generic",
 		},
 		{
 			name:    "the package under another name, and a dot import",

@@ -188,9 +188,15 @@ func ctxQueueDownloadCall(plan *ctxPlan, env *ctxEnv, shim *downloadShim, noter 
 		ctxNoteDownload(env, noter, sel)
 		return
 	}
+	ctxQueueModuleCall(plan, env, shim.path, ctxDownload, call, sel, stack)
+}
 
+// ctxQueueModuleCall queues the replacement of the call c.Name(args) with a call of the function
+// Name of the package the migrations add to the module (path is its import path), which takes the
+// context first: fibermigrate.Name(c, args). The arguments stay where they are.
+func ctxQueueModuleCall(plan *ctxPlan, env *ctxEnv, path, name string, call *ast.CallExpr, sel *ast.SelectorExpr, stack []ast.Node) {
 	g := env.g
-	pkg := env.pkgAs(call.Pos(), shim.path, moduleShimPkg, downloadShimAlias)
+	pkg := env.pkgAs(call.Pos(), path, moduleShimPkg, moduleShimAlias)
 	// a type that embeds the context hands the embedded one over: the package takes the
 	// context itself
 	via := env.embeddedCtxOf(sel.X, stack)
@@ -199,7 +205,7 @@ func ctxQueueDownloadCall(plan *ctxPlan, env *ctxEnv, shim *downloadShim, noter 
 		if via != "" {
 			recv += "." + via
 		}
-		e.replace(g.offset(sel.Pos()), g.offset(call.Lparen)+1, pkg+".Download("+recv+", ")
+		e.replace(g.offset(sel.Pos()), g.offset(call.Lparen)+1, pkg+"."+name+"("+recv+", ")
 	})
 }
 
@@ -223,7 +229,7 @@ func ctxQueueDownloadValue(plan *ctxPlan, env *ctxEnv, shim *downloadShim, noter
 		return
 	}
 
-	pkg := env.pkgAs(sel.Pos(), shim.path, moduleShimPkg, downloadShimAlias)
+	pkg := env.pkgAs(sel.Pos(), shim.path, moduleShimPkg, moduleShimAlias)
 	b := env.newValueBuilder(sel, stack, ctxMembersAll, pkg)
 	plan.add(func(e *editSet) { e.replaceNode(env.g, sel, b.text(e, b.download(pkg))) })
 }

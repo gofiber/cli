@@ -351,6 +351,11 @@ func (r *contribRun) resolve(mods []*contribGoMod) {
 	}
 }
 
+// contribIsInternal reports whether the import path names an internal package.
+func contribIsInternal(importPath string) bool {
+	return strings.Contains("/"+importPath+"/", "/internal/")
+}
+
 // moves reports whether the target is migrated by this run.
 func (r *contribRun) moves(t contribTarget) bool {
 	return t.swagger == r.swagger && !r.skipped[t.short]
@@ -369,6 +374,13 @@ func (r *contribRun) rewriteImports(content string, fi internal.FileInfo) string
 	f := newContribFile(g, fi)
 	legacyJWT := false
 	for _, spec := range g.file.Imports {
+		// An internal package can only be imported by the module that owns it, so the import is the
+		// code of the project: a library that is migrated in its own repository, or a fork of a contrib
+		// module, imports its own packages from the path of the module that moved, and the module it
+		// moved to has no such package.
+		if contribIsInternal(contribUnquote(spec.Path.Value)) {
+			continue
+		}
 		target, ok := contribTargetOf(contribUnquote(spec.Path.Value))
 		if !ok || !r.moves(target) {
 			continue

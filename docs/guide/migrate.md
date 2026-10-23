@@ -56,6 +56,12 @@ is idempotent, so a second run changes nothing that the first one already migrat
   names (`session`, `static`, `utils`, `client`) are left alone.
 - A file that does not parse is skipped and listed, and the run goes on with the next
   file. Fix the file and run the command again with `--force`.
+- An `internal` package can only be imported by the module that has it, so such an import
+  is the code of your project and stays: a library migrated in its own repository, or a fork
+  of a contrib module (`module github.com/gofiber/contrib/otelfiber/v2`), imports its own
+  `internal` packages from the path of the module that moved, and the module it moved to has
+  none. The review does not report the packages of your own module as modules that were not
+  migrated.
 - Where v3 has no faithful equivalent, the old code stays and a note says why. When
   dropping a setting would change what the program does without a compile error, the
   old setting stays on purpose, so that the build fails and points at it.
@@ -126,7 +132,14 @@ is idempotent, so a second run changes nothing that the first one already migrat
 - `c.Download(file[, name])` becomes `fibermigrate.Download(c, file[, name])`, the
   `Download` of v3 with the byte ranges and the `Content-Type` that v2 sent. `c.ParamsInt(key)`
   without a default gives the `0` that v2 returned together with the error, wherever the
-  value is used.
+  value is used, and the error reads `failed to convert: ...` where the code shows it or
+  hands it on (`err.Error()` in a response, `return err`): that call is
+  `fibermigrate.ParamsInt(c, key)`, the method of v2. Where the code only compares the error
+  with `nil` and leaves, it is `strconv.Atoi(c.Params(key))`. `c.QueryFloat` reads every
+  number `strconv.ParseFloat` reads (`inf`, `nan`, `0x1p-2`, `1_000.5`, the ends of the range
+  of a `float64`), which `fiber.Query[float64]` does not, so it is
+  `fibermigrate.QueryFloat(c, key[, default])`. `QueryInt` and `QueryBool` read what they
+  did and become `fiber.Query[int]` and `fiber.Query[bool]`.
 - The jwt library the project uses for claims (`dgrijalva/jwt-go`, `form3tech-oss/jwt-go`,
   `golang-jwt/jwt` v3 and v4) moves to `golang-jwt/jwt/v5` in every file of a module that
   uses the jwt middleware, not only in the files that import the middleware, because the
@@ -203,12 +216,22 @@ the standard library group, as `goimports` does. The files:
   file once the interface describes what your handlers use;
 - `download.go`: `Download`, the `c.Download` of v3 with the byte ranges and the
   `Content-Type` that `c.Download` of v2 sent. Delete the file if you do not need them;
+- `getters.go`: `ParamsInt` and `QueryFloat`, the methods of v2 with a context in front of
+  them: the error of `ParamsInt` reads `failed to convert: ...`, and `QueryFloat` reads
+  every number `strconv.ParseFloat` reads. Delete the file once the code calls
+  `fiber.Params[int]` and `fiber.Query[float64]` and the numbers they do not read do not
+  matter;
 - `health.go`: the v2 healthcheck middleware (`HealthConfig`, `Health`) for the configs
   that cannot be split into one route for each probe. Delete the file once the probes
   are registered one by one;
 - `postgres.go`: `PostgresDB`, the one `*sql.DB` for each pool of the postgres storage;
 - `session.go`: the type `SessionSource` and its constants, only for a module whose
   program tells a session `Source` from a string.
+
+A module that cannot have the package (the file is outside of a module, or
+`internal/fibermigrate` holds Go code that the migrations did not write) keeps the call in
+the form v3 has, `fiber.Query[float64]` or `strconv.Atoi(c.Params(key))`, and the note says
+what it reads or words differently.
 
 Values do not cross the boundary of a Go module: a nested module (a directory with a
 `go.mod` of its own) gets its own `internal/fibermigrate`, and a config or an app that goes
@@ -254,13 +277,13 @@ The list has four kinds of entries:
 - behavior changes of the middleware your project uses that no rewrite can reproduce
   (proxy SSRF policy, a timed-out handler that keeps running, cache defaults, hashed
   basic auth passwords, `SendFile` file names, the random token that replaces the UUID as
-  the default session ID, no proxy being trusted unless `TrustProxy` is set, the charset that
+  the default session ID, no proxy being trusted unless `TrustProxy` is set, the `+` that
+  `UnescapePath` no longer decodes to a space, the charset that
   `c.JSON` adds to the `Content-Type`, the body of a 404, the text of the errors of the
   binders, what a `go` directive that jumps several releases switches on, ...). These are
   reported once per project, at the first import. A test of the project that compares a
   `Content-Type` or the body of a 404 gets an entry at the line of the comparison.
-  A few rewrites report their own difference the same way: the error of `ParamsInt`
-  loses the `failed to convert:` prefix v2 put in front of it, the deprecated `timeout.New`
+  A few rewrites report their own difference the same way: the deprecated `timeout.New`
   of v2 only logged the error of its handler, `Redirect().Back` follows a `Referer`
   of the same origin only, each healthcheck probe is a route of its own (HEAD is
   answered, another method gets 405), and the v3 client adds `Accept: application/json`

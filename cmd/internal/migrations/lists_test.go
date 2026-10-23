@@ -321,6 +321,9 @@ func Test_DoMigration_OnceNotesNameTheLinesOfTheFinishedFiles(t *testing.T) {
 			"\tother, err := c.ParamsInt(\"other\")\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn c.JSON(fiber.Map{\"id\": id, \"other\": other})\n}\n",
 		"sub/b.go": "package sub\n\nimport \"github.com/gofiber/fiber/v2\"\n\nfunc B(c *fiber.Ctx) error {\n\tn, err := c.ParamsInt(\"n\")\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn c.JSON(n)\n}\n",
 		"go.mod":   "module test\n\ngo 1.26.0\n\nrequire github.com/gofiber/fiber/v2 v2.52.15\n",
+		// code of the project in the package that the migrations add their files to: the module cannot have the
+		// ParamsInt that keeps the error of v2, so the call becomes strconv.Atoi and the note says what it lost
+		"internal/fibermigrate/mine.go": "package fibermigrate\n\nfunc Mine() {}\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))

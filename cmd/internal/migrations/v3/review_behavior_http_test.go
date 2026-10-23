@@ -189,6 +189,17 @@ var _ = etag.New
 			want: "etag: a request with If-None-Match: * is answered with 304 Not Modified, where v2 answered 200 with the body.",
 		},
 		{
+			name: "UnescapePath keeps a plus sign",
+			source: `package main
+
+import "github.com/gofiber/fiber/v3"
+
+var _ = fiber.Config{UnescapePath: true}
+`,
+			line: 3,
+			want: `Config.UnescapePath: a "+" in the path stays a "+" in Fiber v3`,
+		},
+		{
 			name: "static with ByteRange ignores a multi range request",
 			source: `package main
 
@@ -384,6 +395,16 @@ import "github.com/gofiber/fiber/v3/middleware/session"
 func h(s *session.Session) error { return s.Save() }
 `,
 			absent: "session: Destroy",
+		},
+		{
+			name: "a fiber config that does not set UnescapePath",
+			source: `package main
+
+import "github.com/gofiber/fiber/v3"
+
+var _ = fiber.Config{CaseSensitive: true}
+`,
+			absent: "Config.UnescapePath",
 		},
 		{
 			name: "an ErrorHandler of the app and a csrf config without one",

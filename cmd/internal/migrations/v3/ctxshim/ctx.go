@@ -62,9 +62,18 @@ func (c LegacyCtx) QueryBool(key string, defaultValue ...bool) bool {
 	return fiber.Query[bool](c.Ctx, key, defaultValue...)
 }
 
-// QueryFloat returns the query parameter as a float64.
+// QueryFloat returns the query parameter as a float64: the first default, or 0 when there is
+// none, if it is no number that strconv.ParseFloat reads (it reads inf, nan, hexadecimal numbers
+// and underscores between the digits, which fiber.Query[float64] does not).
 func (c LegacyCtx) QueryFloat(key string, defaultValue ...float64) float64 {
-	return fiber.Query[float64](c.Ctx, key, defaultValue...)
+	value, err := strconv.ParseFloat(c.Query(key), 64)
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return 0
+	}
+	return value
 }
 
 // QueryInt returns the query parameter as an int.

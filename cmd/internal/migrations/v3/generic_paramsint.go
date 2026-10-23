@@ -49,6 +49,9 @@ type ctxParamsErr struct {
 	// errName is the variable of ctxErrReset that holds the error.
 	errName string
 	use     ctxErrUse
+	// textRead says that the code of a ctxErrGuarded error reads it otherwise than to compare it
+	// with nil: the text of the error can be shown, so it has to be the one v2 gave it.
+	textRead bool
 	// from and to delimit what follows the value in the names or the left side:
 	// ", _" of ctxErrIgnored.
 	from, to token.Pos
@@ -100,7 +103,14 @@ func ctxParamsIntErr(call *ast.CallExpr, stack []ast.Node) ctxParamsErr {
 	// the error is read: the value after it may be, unless the code leaves
 	valueID, isIdent := value.(*ast.Ident)
 	if isIdent && valueID.Name == blankIdent {
-		return ctxParamsErr{use: ctxErrGuarded}
+		// nothing reads the value, so the statements that follow are looked at for the error only
+		textRead := true
+		if at > 0 {
+			if ifs := ctxGuard(stmt, stack[at-1], errID.Name, blankIdent); ifs != nil {
+				textRead = ctxErrTextRead(ifs, stmt, errID.Name, define)
+			}
+		}
+		return ctxParamsErr{use: ctxErrGuarded, textRead: textRead}
 	}
 	if at == 0 {
 		return ctxParamsErr{}
@@ -108,10 +118,51 @@ func ctxParamsIntErr(call *ast.CallExpr, stack []ast.Node) ctxParamsErr {
 	if isIdent {
 		ifs := ctxGuard(stmt, stack[at-1], errID.Name, valueID.Name)
 		if ifs != nil && ctxGuardsError(ifs, errID.Name, valueID.Name) && ctxValueUnseen(ifs, stmt, valueID.Name, define, stack) {
-			return ctxParamsErr{use: ctxErrGuarded}
+			return ctxParamsErr{use: ctxErrGuarded, textRead: ctxErrTextRead(ifs, stmt, errID.Name, define)}
 		}
 	}
 	return ctxResetErr(value, errID.Name, stack[at-1])
+}
+
+// ctxErrTextRead reports whether the guard ifs of the statement stmt, which sets the error err,
+// reads it otherwise than to compare it with nil: in its condition, its branches or the
+// initialization that is not the statement. The guard leaves when the error is not nil, so the
+// error is nil in the code that follows it. An error that was declared before the statement can
+// be seen by code this does not show (a bare return of a function with results that are named,
+// a closure), so it is read.
+func ctxErrTextRead(ifs *ast.IfStmt, stmt ast.Stmt, errName string, define bool) bool {
+	if !define {
+		return true
+	}
+	scope := []ast.Node{ifs.Cond, ifs.Body}
+	if ifs.Else != nil {
+		scope = append(scope, ifs.Else)
+	}
+	if ifs.Init != nil && ifs.Init != stmt {
+		scope = append(scope, ifs.Init)
+	}
+	return slices.ContainsFunc(scope, func(n ast.Node) bool { return ctxReadsErr(n, errName) })
+}
+
+// ctxReadsErr reports whether the node uses the error other than as an operand of a comparison
+// with nil.
+func ctxReadsErr(n ast.Node, errName string) bool {
+	found := false
+	ast.Inspect(n, func(x ast.Node) bool {
+		switch e := x.(type) {
+		case *ast.BinaryExpr:
+			if (e.Op == token.EQL || e.Op == token.NEQ) &&
+				((isIdentNamed(e.X, errName) && isIdentNamed(e.Y, "nil")) || (isIdentNamed(e.X, "nil") && isIdentNamed(e.Y, errName))) {
+				return false
+			}
+		case *ast.Ident:
+			if e.Name == errName {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // ctxValueUnseen reports whether nothing but the code after the guard can read the variable the

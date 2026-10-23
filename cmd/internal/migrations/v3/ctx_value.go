@@ -209,6 +209,14 @@ func (b *ctxValueBuilder) query(helper ctxHelper) ctxValue {
 	return ctxValue{params: []string{key + " " + ctxLitString, defaults + " ..." + helper.typ}, results: helper.typ, body: body}
 }
 
+// queryFloat writes QueryFloat as a call of the QueryFloat of the module package (shim is its
+// name here), which reads every number that strconv.ParseFloat reads, as the method of v2 did.
+func (b *ctxValueBuilder) queryFloat(shim string) ctxValue {
+	key, defaults := b.name("key"), b.name("defaultValue")
+	body := fmt.Sprintf("return %s.QueryFloat(%s, %s, %s...)", shim, b.recv.name, key, defaults)
+	return ctxValue{params: []string{key + " " + ctxLitString, defaults + " ...float64"}, results: "float64", body: body}
+}
+
 // parser writes a parser method for a method expression: the binder of v3 takes
 // the place of the method.
 func (b *ctxValueBuilder) parser(method string) ctxValue {

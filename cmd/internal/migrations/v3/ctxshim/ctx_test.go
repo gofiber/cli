@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -107,6 +108,26 @@ func Test_LegacyCtx_Queries(t *testing.T) {
 
 	_, body, _ := run(t, app, http.MethodGet, "/?i=12&bad=x&f=2.5&b=true", "")
 	assert.Equal(t, "12|4|9|2.5|1.5|true|true", body)
+}
+
+// QueryFloat read every number that strconv.ParseFloat reads, and fiber.Query[float64] reads decimal
+// numbers only.
+func Test_LegacyCtx_QueryFloat(t *testing.T) {
+	t.Parallel()
+
+	app := fiber.New()
+	app.Get("/", func(c fiber.Ctx) error {
+		m := LegacyCtx{Ctx: c}
+		return c.SendString(strconv.FormatFloat(m.QueryFloat("f"), 'g', -1, 64) + "|" + strconv.FormatFloat(m.QueryFloat("f", 7.5), 'g', -1, 64))
+	})
+
+	for in, want := range map[string]string{
+		"1_000.5": "1000.5|1000.5", "0x1p-2": "0.25|0.25", "Inf": "+Inf|+Inf", "-inf": "-Inf|-Inf", "nan": "NaN|NaN",
+		"4.9e-324": "5e-324|5e-324", "1e309": "0|7.5", "x": "0|7.5", "": "0|7.5", "2.5": "2.5|2.5",
+	} {
+		_, body, _ := run(t, app, http.MethodGet, "/?f="+url.QueryEscape(in), "")
+		assert.Equal(t, want, body, in)
+	}
 }
 
 func Test_LegacyCtx_Parsers(t *testing.T) {
