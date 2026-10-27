@@ -65,7 +65,7 @@ func skipCommaSuffix(src string, i int) int {
 // multi-line function literals or function calls with arguments that contain
 // commas.
 func removeConfigField(src, field string) string {
-	re := regexp.MustCompile(field + `:\s*`)
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(field) + `:\s*`)
 	for {
 		loc := re.FindStringIndex(src)
 		if loc == nil {
