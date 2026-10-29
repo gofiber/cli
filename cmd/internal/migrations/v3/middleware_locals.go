@@ -157,8 +157,15 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		reTypeAssert := regexp.MustCompile(`([\w\.]+FromContext\([^\)]+\))\.\([^\)]+\)`)
 		content = reTypeAssert.ReplaceAllString(content, "$1")
 
-		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))(?:\s*,\s*true)*`)
-		content = reComma.ReplaceAllString(content, "$1, $2 := $3, true")
+		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))(?:\s*,\s*(?:true|[\w\.]+FromContext\([^\)]+\)\s*!=\s*nil))*`)
+		content = reComma.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reComma.FindStringSubmatch(s)
+			// HandlerFromContext returns nil when csrf did not run, so ok has to check for it
+			if strings.Contains(sub[3], "HandlerFromContext(") {
+				return fmt.Sprintf("%s, %s := %s, %s != nil", sub[1], sub[2], sub[3], sub[3])
+			}
+			return fmt.Sprintf("%s, %s := %s, true", sub[1], sub[2], sub[3])
+		})
 
 		for alias := range imports {
 			reCfg := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config{`)

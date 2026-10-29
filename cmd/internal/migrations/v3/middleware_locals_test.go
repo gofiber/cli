@@ -399,10 +399,34 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, content, "csrf.Config{\n\tKeyLookup: \"form:csrf_token\",\n})")
 	assert.NotContains(t, content, "HandlerContextKey")
 	assert.NotContains(t, content, "ContextKey")
-	assert.Contains(t, content, "h, ok := csrf.HandlerFromContext(c), true")
+	assert.Contains(t, content, "h, ok := csrf.HandlerFromContext(c), csrf.HandlerFromContext(c) != nil")
 	assert.Contains(t, content, "token := csrf.TokenFromContext(c)")
 	_, err = parser.ParseFile(token.NewFileSet(), file, content, parser.AllErrors)
 	require.NoError(t, err)
+
+	// a second run must not stack another ok expression
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+	assert.Equal(t, content, readFile(t, file))
+}
+
+func Test_MigrateMiddlewareLocals_HandlerContextKeyInline(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlocalshckinline")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+var _ = csrf.New(csrf.Config{CookieName: "x", HandlerContextKey: "csrf", CookiePath: "/"})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	assert.Contains(t, readFile(t, file), `csrf.Config{CookieName: "x", CookiePath: "/"}`)
 }
 
 func Test_MigrateMiddlewareLocals_HandlerContextKeyLastFields(t *testing.T) {
