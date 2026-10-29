@@ -65,7 +65,7 @@ func skipCommaSuffix(src string, i int) int {
 // multi-line function literals or function calls with arguments that contain
 // commas.
 func removeConfigField(src, field string) string {
-	re := regexp.MustCompile(field + `:\s*`)
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(field) + `:\s*`)
 	for {
 		loc := re.FindStringIndex(src)
 		if loc == nil {
@@ -73,6 +73,7 @@ func removeConfigField(src, field string) string {
 		}
 
 		start := loc[0]
+		leadComma := false
 		// include any leading whitespace and comma, but keep the preceding
 		// newline intact so that formatting is preserved for the previous
 		// field when the target field is removed.
@@ -81,6 +82,7 @@ func removeConfigField(src, field string) string {
 			case ' ', '\t':
 				start--
 			case ',':
+				leadComma = true
 				start--
 				for start > 0 && (src[start-1] == ' ' || src[start-1] == '\t') {
 					start--
@@ -130,6 +132,10 @@ func removeConfigField(src, field string) string {
 					continue
 				}
 				i = skipCommaSuffix(src, i)
+				if leadComma {
+					// fields on both sides: keep the leading comma as separator
+					start = loc[0]
+				}
 				src = src[:start] + src[i:]
 				goto nextField
 			case '\n':

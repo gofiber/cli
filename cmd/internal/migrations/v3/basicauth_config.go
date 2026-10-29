@@ -20,7 +20,7 @@ func MigrateBasicauthConfig(cmd *cobra.Command, cwd string, _, _ *semver.Version
 	// Also remove inline occurrences immediately before a closing '}' (with optional comma/comment),
 	// e.g. basicauth.Config{ContextUsername: "user"}) or {..., ContextPassword: "pass"})
 	// Keep the closing brace via a capture group.
-	reCtxKeyInline := regexp.MustCompile(`(?m)\s*Context(?:Username|Password|Key):\s*[^,\n}]+(?:,\s*)?(?://[^\n]*)?(\s*})`)
+	reCtxKeyInline := regexp.MustCompile(`(?m)\s*\bContext(?:Username|Password|Key):\s*[^,\n}]+(?:,\s*)?(?://[^\n]*)?(\s*})`)
 
 	reUsers := regexp.MustCompile(`Users:\s*map\[string\]string{([^}]*)}`)
 	reEntry := regexp.MustCompile(`("[^"]+")\s*:\s*"((?:[^"\\]|\\.)*)"`)

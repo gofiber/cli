@@ -2,6 +2,8 @@ package v3_test
 
 import (
 	"bytes"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"testing"
@@ -360,4 +362,96 @@ func handlerCSRF(c fiber.Ctx) error {
 
 	assert.NotContains(t, readFile(t, kaCfgPath), "ContextKey")
 	assert.NotContains(t, readFile(t, csrfCfgPath), "ContextKey")
+}
+
+func Test_MigrateMiddlewareLocals_HandlerContextKey(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlocalshck")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+var _ = csrf.New(csrf.Config{
+    HandlerContextKey: "csrf",
+    KeyLookup:         "form:csrf_token",
+    ContextKey:        "csrf_token",
+})
+func handler(c fiber.Ctx) error {
+    h, ok := c.Locals("csrf").(*csrf.CSRFHandler)
+    _, _ = h, ok
+    token := c.Locals("csrf_token").(string)
+    _ = token
+    return nil
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	// HandlerContextKey must not be mistaken for the deprecated ContextKey,
+	// and it is removed because Fiber v3 dropped the field.
+	assert.Contains(t, content, "csrf.Config{\n\tKeyLookup: \"form:csrf_token\",\n})")
+	assert.NotContains(t, content, "HandlerContextKey")
+	assert.NotContains(t, content, "ContextKey")
+	assert.Contains(t, content, "h, ok := csrf.HandlerFromContext(c), csrf.HandlerFromContext(c) != nil")
+	assert.Contains(t, content, "token := csrf.TokenFromContext(c)")
+	_, err = parser.ParseFile(token.NewFileSet(), file, content, parser.AllErrors)
+	require.NoError(t, err)
+
+	// a second run must not stack another ok expression
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+	assert.Equal(t, content, readFile(t, file))
+}
+
+func Test_MigrateMiddlewareLocals_HandlerContextKeyInline(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlocalshckinline")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+var _ = csrf.New(csrf.Config{CookieName: "x", HandlerContextKey: "csrf", CookiePath: "/"})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	assert.Contains(t, readFile(t, file), `csrf.Config{CookieName: "x", CookiePath: "/"}`)
+}
+
+func Test_MigrateMiddlewareLocals_HandlerContextKeyLastFields(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mlocalshcklast")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2/middleware/csrf"
+)
+var _ = csrf.New(csrf.Config{
+    HandlerContextKey: "csrf",
+    ContextKey:        "csrf_token",
+})`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateMiddlewareLocals(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.NotContains(t, content, "Handler")
+	assert.NotContains(t, content, `"csrf_token"`)
+	_, err = parser.ParseFile(token.NewFileSet(), file, content, parser.AllErrors)
+	require.NoError(t, err)
 }

@@ -40,6 +40,7 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		replFmt string
 	}{
 		{"csrf", "ContextKey", "csrf.TokenFromContext(%s)"},
+		{"csrf", "HandlerContextKey", "csrf.HandlerFromContext(%s)"},
 		{"keyauth", "ContextKey", "keyauth.TokenFromContext(%s)"},
 		{"session", "ContextKey", "session.FromContext(%s)"},
 		{"basicauth", "ContextUsername", "basicauth.UsernameFromContext(%s)"},
@@ -63,7 +64,7 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 					start := m[0]
 					end := extractBlock(content, m[1], '{', '}')
 					cfg := content[start:end]
-					reField := regexp.MustCompile(e.field + `:\s*"([^"]+)"`)
+					reField := regexp.MustCompile(`\b` + regexp.QuoteMeta(e.field) + `:\s*"([^"]+)"`)
 					for _, fm := range reField.FindAllStringSubmatch(cfg, -1) {
 						ctxMap[fm[1]] = append(ctxMap[fm[1]], ctxRepl{pkg: e.pkg, replFmt: e.replFmt})
 					}
@@ -156,8 +157,15 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 		reTypeAssert := regexp.MustCompile(`([\w\.]+FromContext\([^\)]+\))\.\([^\)]+\)`)
 		content = reTypeAssert.ReplaceAllString(content, "$1")
 
-		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))(?:\s*,\s*true)*`)
-		content = reComma.ReplaceAllString(content, "$1, $2 := $3, true")
+		reComma := regexp.MustCompile(`(\w+)\s*,\s*(\w+)\s*:=\s*([\w\.]+FromContext\([^\)]+\))(?:\s*,\s*(?:true|[\w\.]+FromContext\([^\)]+\)\s*!=\s*nil))*`)
+		content = reComma.ReplaceAllStringFunc(content, func(s string) string {
+			sub := reComma.FindStringSubmatch(s)
+			// HandlerFromContext returns nil when csrf did not run, so ok has to check for it
+			if strings.Contains(sub[3], "HandlerFromContext(") {
+				return fmt.Sprintf("%s, %s := %s, %s != nil", sub[1], sub[2], sub[3], sub[3])
+			}
+			return fmt.Sprintf("%s, %s := %s, true", sub[1], sub[2], sub[3])
+		})
 
 		for alias := range imports {
 			reCfg := regexp.MustCompile(regexp.QuoteMeta(alias) + `\.Config{`)
@@ -177,6 +185,11 @@ func MigrateMiddlewareLocals(cmd *cobra.Command, cwd string, _, _ *semver.Versio
 				cfg = removeConfigField(cfg, "ContextKey")
 				cfg = removeConfigField(cfg, "ContextUsername")
 				cfg = removeConfigField(cfg, "ContextPassword")
+				if imports[alias] == "csrf" {
+					// Fiber v3 removed HandlerContextKey; the handler is read with
+					// csrf.HandlerFromContext instead (mapped in the first pass).
+					cfg = removeConfigField(cfg, "HandlerContextKey")
+				}
 				if _, err := b.WriteString(cfg); err != nil {
 					return content
 				}
