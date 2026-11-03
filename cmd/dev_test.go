@@ -3,12 +3,10 @@ package cmd
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -72,21 +70,20 @@ func Test_Dev_Escort_RunBin(t *testing.T) {
 	_, err := e.bin.CombinedOutput()
 	require.NoError(t, err)
 
-	rc := io.NopCloser(strings.NewReader(""))
-	e.stdoutPipe = rc
-	e.stderrPipe = rc
-
 	e.runBin()
 }
 
-func Test_Dev_Escort_WatchingPipes(t *testing.T) {
-	t.Parallel()
+func Test_Dev_Escort_RunBinSharesStdio(t *testing.T) {
+	setupCmd()
+	defer teardownCmd()
 
 	e := getEscort()
-	e.bin = exec.CommandContext(e.ctx, "go", "version")
-	_, err := e.bin.CombinedOutput()
-	require.NoError(t, err)
-	e.watchingPipes()
+	e.runBin()
+
+	require.NotNil(t, e.bin)
+	assert.Equal(t, os.Stdout, e.bin.Stdout)
+	assert.Equal(t, os.Stderr, e.bin.Stderr)
+	require.NoError(t, e.bin.Wait())
 }
 
 func Test_Dev_Escort_WatchingBin(t *testing.T) {
