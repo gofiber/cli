@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +101,24 @@ func Test_New_CreateComplex(t *testing.T) {
 
 		require.Error(t, createComplex(" ", "name"))
 	})
+}
+
+func Test_New_CreateBasicInitsAndTidiesInProjectDir(t *testing.T) {
+	dir := t.TempDir()
+	var cmds []*exec.Cmd
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		c := fakeExecCommand(name, args...)
+		cmds = append(cmds, c)
+		return c
+	}
+	defer teardownCmd()
+
+	require.NoError(t, createBasic(dir, "demo"))
+
+	require.Len(t, cmds, 2)
+	assert.Equal(t, []string{"go", "mod", "init", "demo"}, cmds[0].Args[len(cmds[0].Args)-4:])
+	assert.Equal(t, []string{"go", "mod", "tidy"}, cmds[1].Args[len(cmds[1].Args)-3:])
+	for _, c := range cmds {
+		assert.Equal(t, dir, c.Dir)
+	}
 }

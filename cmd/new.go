@@ -86,7 +86,16 @@ func createBasic(projectPath, modName string) error {
 		return err
 	}
 
-	return runCmd(execCommand("go", "mod", "init", modName))
+	// tidy resolves the template's imports, so the project builds right away
+	for _, args := range [][]string{{"mod", "init", modName}, {"mod", "tidy"}} {
+		cmd := execCommand("go", args...)
+		cmd.Dir = projectPath
+		if err := runCmd(cmd); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 const (
