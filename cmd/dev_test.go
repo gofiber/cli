@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -370,7 +371,8 @@ func Test_Dev_Escort_HitFuncAfterShutdownDoesNothing(t *testing.T) {
 	require.NoError(t, e.init())
 	defer func() {
 		require.NoError(t, e.w.Close())
-		require.NoError(t, os.Remove(e.binPath))
+		// init adds ".exe" on Windows to the temp file it created; nothing was built
+		require.NoError(t, os.Remove(strings.TrimSuffix(e.binPath, ".exe")))
 	}()
 
 	e.terminate()
