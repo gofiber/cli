@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"os"
@@ -315,4 +316,44 @@ func getEscort() *escort {
 		hitCh:     make(chan struct{}, 1),
 		sig:       make(chan os.Signal, 1),
 	}
+}
+
+func Test_Dev_Escort_StopBinForwardsSignal(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("signals are not forwarded on Windows")
+	}
+	e := getEscort()
+	e.bin = exec.CommandContext(context.Background(), "sleep", "30")
+	require.NoError(t, e.bin.Start())
+
+	start := time.Now()
+	e.stopBin(syscall.SIGTERM)
+
+	assert.Less(t, time.Since(start), stopTimeout)
+	assert.Nil(t, e.bin)
+}
+
+func Test_Dev_Escort_StopBinKillsAfterTimeout(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("signals are not forwarded on Windows")
+	}
+	prev := stopTimeout
+	stopTimeout = 100 * time.Millisecond
+	defer func() { stopTimeout = prev }()
+
+	e := getEscort()
+	// exec keeps the ignored TERM, so Kill hits the process that ignores it
+	e.bin = exec.CommandContext(context.Background(), "sh", "-c", "trap '' TERM; echo ready; exec sleep 30")
+	out, err := e.bin.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, e.bin.Start())
+	_, err = bufio.NewReader(out).ReadString('\n')
+	require.NoError(t, err)
+
+	start := time.Now()
+	e.stopBin(syscall.SIGTERM)
+
+	assert.GreaterOrEqual(t, time.Since(start), stopTimeout)
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.Nil(t, e.bin)
 }

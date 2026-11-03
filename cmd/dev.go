@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -123,11 +124,12 @@ func (e *escort) run() error {
 	go func() { defer e.wg.Done(); e.watchingFiles() }()
 
 	signal.Notify(e.sig, syscall.SIGTERM, syscall.SIGINT, os.Interrupt)
-	<-e.sig
+	sig := <-e.sig
 
 	e.terminate()
 	close(e.hitCh)
 	e.wg.Wait()
+	e.stopBin(sig)
 
 	log.Println("See you next time 👋")
 
@@ -292,6 +294,44 @@ func (e *escort) runBin() {
 	}
 
 	log.Println("New pid is", e.bin.Process.Pid)
+}
+
+// stopTimeout bounds how long the app may take to shut down before it is killed.
+var stopTimeout = 5 * time.Second
+
+// stopBin ends the app when fiber dev stops. Only a terminal's Ctrl+C reaches
+// both processes, so the signal is passed on and Kill is the fallback.
+func (e *escort) stopBin(sig os.Signal) {
+	if e.bin == nil {
+		return
+	}
+	if runtime.GOOS == windowsOS {
+		e.cleanOldBin()
+		return
+	}
+
+	proc := e.bin.Process
+	exited := make(chan struct{})
+	go func() {
+		if _, err := proc.Wait(); err != nil {
+			log.Printf("Failed to wait for pid %d: %v", proc.Pid, err)
+		}
+		close(exited)
+	}()
+	if err := proc.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		log.Printf("Failed to signal pid %d: %v", proc.Pid, err)
+	}
+
+	select {
+	case <-exited:
+	case <-time.After(stopTimeout):
+		log.Printf("pid %d did not stop within %s, killing it", proc.Pid, stopTimeout)
+		if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			log.Printf("Failed to kill pid %d: %v", proc.Pid, err)
+		}
+		<-exited
+	}
+	e.bin = nil
 }
 
 func (e *escort) cleanOldBin() {
