@@ -5,15 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -42,6 +43,10 @@ func init() {
 		"arguments for exec")
 }
 
+const (
+	windowsOS = "windows"
+)
+
 // devCmd reruns the fiber project if watched files changed
 var devCmd = &cobra.Command{
 	Use:     "dev",
@@ -57,19 +62,20 @@ func devRunE(_ *cobra.Command, _ []string) error {
 type config struct {
 	root         string
 	target       string
-	binPath      string
 	extensions   []string
 	excludeDirs  []string
 	excludeFiles []string
-	delay        time.Duration
 	preRun       []string
 	args         []string
+	delay        time.Duration
 }
 
 type escort struct {
-	config
+	ctx        context.Context
+	stdoutPipe io.ReadCloser
+	stderrPipe io.ReadCloser
+	compiling  atomic.Value
 
-	ctx       context.Context
 	terminate context.CancelFunc
 
 	w             *fsnotify.Watcher
@@ -77,15 +83,17 @@ type escort struct {
 	watcherErrors chan error
 	sig           chan os.Signal
 
-	binPath    string
-	bin        *exec.Cmd
-	stdoutPipe io.ReadCloser
-	stderrPipe io.ReadCloser
-	hitCh      chan struct{}
-	hitFunc    func()
-	compiling  atomic.Value
+	bin     *exec.Cmd
+	hitCh   chan struct{}
+	hitFunc func()
+
+	binPath string
 
 	preRunCommands [][]string
+
+	config
+
+	wg sync.WaitGroup
 }
 
 func newEscort(c config) *escort {
@@ -96,35 +104,43 @@ func newEscort(c config) *escort {
 	}
 }
 
-func (e *escort) run() (err error) {
-	if err = e.init(); err != nil {
-		return
+func (e *escort) run() error {
+	if err := e.init(); err != nil {
+		return err
 	}
 
 	log.Println("Welcome to fiber dev 👋")
 
 	defer func() {
-		_ = e.w.Close()
-		_ = os.Remove(e.binPath)
+		if err := e.w.Close(); err != nil {
+			log.Printf("Failed to close watcher: %v", err)
+		}
+		if err := os.Remove(e.binPath); err != nil {
+			log.Printf("Failed to remove bin: %v", err)
+		}
 	}()
 
-	go e.runBin()
-	go e.watchingBin()
-	go e.watchingFiles()
+	e.wg.Add(3)
+	go func() { defer e.wg.Done(); e.runBin() }()
+	go func() { defer e.wg.Done(); e.watchingBin() }()
+	go func() { defer e.wg.Done(); e.watchingFiles() }()
 
 	signal.Notify(e.sig, syscall.SIGTERM, syscall.SIGINT, os.Interrupt)
 	<-e.sig
 
 	e.terminate()
+	close(e.hitCh)
+	e.wg.Wait()
 
 	log.Println("See you next time 👋")
 
 	return nil
 }
 
-func (e *escort) init() (err error) {
+func (e *escort) init() error {
+	var err error
 	if e.w, err = fsnotify.NewWatcher(); err != nil {
-		return
+		return fmt.Errorf("failed to create watcher: %w", err)
 	}
 
 	e.watcherEvents = e.w.Events
@@ -134,30 +150,32 @@ func (e *escort) init() (err error) {
 
 	// normalize root
 	if e.root, err = filepath.Abs(e.root); err != nil {
-		return
+		return fmt.Errorf("failed to get abs path for root: %w", err)
 	}
 
 	// create bin target
-	var f *os.File
-	if f, err = ioutil.TempFile("", ""); err != nil {
-		return
+	f, err := os.CreateTemp("", "")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer func() {
-		if e := f.Close(); e != nil {
-			err = e
-		}
-	}()
+	if cerr := f.Close(); cerr != nil {
+		return fmt.Errorf("failed to close temp file: %w", cerr)
+	}
 
 	e.binPath = f.Name()
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		e.binPath += ".exe"
 	}
 
-	e.hitFunc = e.runBin
+	e.hitFunc = func() {
+		e.wg.Add(1)
+		e.runBin()
+		e.wg.Done()
+	}
 
 	e.preRunCommands = parsePreRunCommands(c.preRun)
 
-	return
+	return nil
 }
 
 func (e *escort) watchingFiles() {
@@ -214,21 +232,30 @@ func (e *escort) watchingFiles() {
 
 func (e *escort) watchingBin() {
 	var timer *time.Timer
-	for range e.hitCh {
-		// reset timer
-		if timer != nil && !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
+	for {
+		select {
+		case <-e.ctx.Done():
+			if timer != nil {
+				timer.Stop()
 			}
+			return
+		case <-e.hitCh:
+			if timer != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer = time.AfterFunc(e.delay, e.hitFunc)
 		}
-		timer = time.AfterFunc(e.delay, e.hitFunc)
 	}
 }
 
 func (e *escort) runBin() {
-	if ok := e.compiling.Load(); ok != nil && ok.(bool) {
-		return
+	if ok := e.compiling.Load(); ok != nil {
+		if val, ok := ok.(bool); ok && val {
+			return
+		}
 	}
 
 	e.doPreRun()
@@ -270,24 +297,17 @@ func (e *escort) runBin() {
 }
 
 func (e *escort) cleanOldBin() {
-	defer func() {
-		if e.stdoutPipe != nil {
-			_ = e.stdoutPipe.Close()
-		}
-		if e.stderrPipe != nil {
-			_ = e.stderrPipe.Close()
-		}
-	}()
-
 	pid := e.bin.Process.Pid
 	log.Println("Killing old pid", pid)
 
 	var err error
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		err = execCommand("TASKKILL", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 	} else {
 		err = e.bin.Process.Kill()
-		_, _ = e.bin.Process.Wait()
+		if _, waitErr := e.bin.Process.Wait(); waitErr != nil {
+			log.Printf("Failed to wait for process %d: %v", pid, waitErr)
+		}
 	}
 
 	if err != nil {
@@ -302,13 +322,21 @@ func (e *escort) watchingPipes() {
 	if e.stdoutPipe, err = e.bin.StdoutPipe(); err != nil {
 		log.Printf("Failed to get stdout pipe: %s", err)
 	} else {
-		go func() { _, _ = io.Copy(os.Stdout, e.stdoutPipe) }()
+		go func() {
+			if _, err := io.Copy(os.Stdout, e.stdoutPipe); err != nil {
+				log.Printf("Failed to copy stdout: %v", err)
+			}
+		}()
 	}
 
 	if e.stderrPipe, err = e.bin.StderrPipe(); err != nil {
 		log.Printf("Failed to get stderr pipe: %s", err)
 	} else {
-		go func() { _, _ = io.Copy(os.Stderr, e.stderrPipe) }()
+		go func() {
+			if _, err := io.Copy(os.Stderr, e.stderrPipe); err != nil {
+				log.Printf("Failed to copy stderr: %v", err)
+			}
+		}()
 	}
 }
 
@@ -347,13 +375,7 @@ func (e *escort) hitExtension(ext string) bool {
 	}
 	// remove '.'
 	ext = ext[1:]
-	for _, e := range e.extensions {
-		if ext == e {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(e.extensions, ext)
 }
 
 func (e *escort) ignoredDirs(dir string) bool {
@@ -362,23 +384,11 @@ func (e *escort) ignoredDirs(dir string) bool {
 		return true
 	}
 
-	for _, d := range e.excludeDirs {
-		if dir == d {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(e.excludeDirs, dir)
 }
 
 func (e *escort) ignoredFiles(filename string) bool {
-	for _, f := range e.excludeFiles {
-		if filename == f {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(e.excludeFiles, filename)
 }
 
 func (e *escort) doPreRun() {
@@ -386,12 +396,20 @@ func (e *escort) doPreRun() {
 		cmd := execCommand(command[0], command[1:]...)
 		out, err := cmd.CombinedOutput()
 		var buf bytes.Buffer
-		_, _ = buf.WriteString(fmt.Sprintf("Pre running %s... ", command))
-		if err != nil {
-			_, _ = buf.WriteString(err.Error())
-			_, _ = buf.WriteString(":")
+		if _, werr := fmt.Fprintf(&buf, "Pre running %s... ", command); werr != nil {
+			log.Printf("Failed to write to buffer: %v", werr)
 		}
-		_, _ = buf.Write(out)
+		if err != nil {
+			if _, werr := buf.WriteString(err.Error()); werr != nil {
+				log.Printf("Failed to write error to buffer: %v", werr)
+			}
+			if _, werr := buf.WriteString(":"); werr != nil {
+				log.Printf("Failed to write colon to buffer: %v", werr)
+			}
+		}
+		if _, werr := buf.Write(out); werr != nil {
+			log.Printf("Failed to write output to buffer: %v", werr)
+		}
 		log.Print(buf.String())
 	}
 }
@@ -414,7 +432,7 @@ func parsePreRunCommands(commands []string) (list [][]string) {
 			list = append(list, r)
 		}
 	}
-	return
+	return list
 }
 
 const (

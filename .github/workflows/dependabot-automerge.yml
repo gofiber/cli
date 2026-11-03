@@ -1,0 +1,17 @@
+name: Dependabot auto-merge
+
+on:
+  workflow_dispatch:
+  pull_request_target:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    uses: gofiber/.github/.github/workflows/dependabot-automerge.yml@main
+    with:
+      match_pattern: 'Build|lint'
+    secrets:
+      github-token: ${{ secrets.PR_TOKEN }}

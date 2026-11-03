@@ -1,13 +1,20 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
+	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/modfile"
 )
 
 var versionCmd = &cobra.Command{
@@ -20,6 +27,8 @@ func versionRun(cmd *cobra.Command, _ []string) {
 	var (
 		cur, latest string
 		err         error
+		cliLatest   string
+		cliErr      error
 		w           = cmd.OutOrStdout()
 	)
 
@@ -27,54 +36,142 @@ func versionRun(cmd *cobra.Command, _ []string) {
 		cur = err.Error()
 	}
 
-	if latest, err = latestVersion(false); err != nil {
+	if latest, err = LatestFiberVersion(); err != nil {
 		_, _ = fmt.Fprintf(w, "fiber version: %v\n", err)
 		return
 	}
 
 	_, _ = fmt.Fprintf(w, "fiber version: %s (latest %s)\n", cur, latest)
+	if cliLatest, cliErr = LatestCliVersion(); cliErr != nil {
+		_, _ = fmt.Fprintf(w, "fiber cli version: %s (latest check failed: %v)\n", getVersion(), cliErr)
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "fiber cli version: %s (latest %s)\n", getVersion(), cliLatest)
 }
 
-var currentVersionRegexp = regexp.MustCompile(`github\.com/gofiber/fiber[^\n]*? (.*)\n`)
-var currentVersionFile = "go.mod"
+var (
+	// fiberModuleRegexp matches the module path of the core fiber module, at any major
+	// version.
+	fiberModuleRegexp  = regexp.MustCompile(`^github\.com/gofiber/fiber(/v\d+)?$`)
+	currentVersionFile = "go.mod"
+)
+
+// currentVersionFromFile returns the version of the fiber module that the go.mod at
+// path requires, with its leading "v". A requirement of the project wins over one that
+// only a dependency brings (// indirect).
+func currentVersionFromFile(path string) (string, error) {
+	b, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("read current version file: %w", err)
+	}
+
+	mod, err := modfile.ParseLax(path, b, nil)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	version := ""
+	for _, req := range mod.Require {
+		if !fiberModuleRegexp.MatchString(req.Mod.Path) {
+			continue
+		}
+		if !req.Indirect {
+			return req.Mod.Version, nil
+		}
+		if version == "" {
+			version = req.Mod.Version
+		}
+	}
+	if version == "" {
+		return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
+	}
+
+	return version, nil
+}
 
 func currentVersion() (string, error) {
-	b, err := ioutil.ReadFile(currentVersionFile)
-	if err != nil {
-		return "", err
-	}
-
-	if submatch := currentVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
-		return string(submatch[1]), nil
-	}
-
-	return "", errors.New("github.com/gofiber/fiber was not found in go.mod")
+	return currentVersionFromFile(currentVersionFile)
 }
 
 var latestVersionRegexp = regexp.MustCompile(`"name":\s*?"v(.*?)"`)
 
-func latestVersion(isCli bool) (v string, err error) {
-	var (
-		res *http.Response
-		b   []byte
-	)
+// LatestFiberVersion retrieves the most recent Fiber release version from GitHub.
+func LatestFiberVersion() (string, error) {
+	return latestVersionByURL("https://api.github.com/repos/gofiber/fiber/releases/latest")
+}
 
-	if isCli {
-		res, err = http.Get("https://api.github.com/repos/gofiber/cli/releases/latest")
-	} else {
-		res, err = http.Get("https://api.github.com/repos/gofiber/fiber/releases/latest")
+// LatestCliVersion retrieves the latest Fiber CLI release version from GitHub.
+func LatestCliVersion() (string, error) {
+	return latestVersionByURL("https://api.github.com/repos/gofiber/cli/releases/latest")
+}
+
+// LatestFiberVersionForConstraint retrieves the most recent non-prerelease Fiber release matching the given semver constraint.
+func LatestFiberVersionForConstraint(constraint *semver.Constraints) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	type release struct {
+		TagName    string `json:"tag_name"`
+		Prerelease bool   `json:"prerelease"`
+		Draft      bool   `json:"draft"`
 	}
 
+	for page := 1; page <= 10; page++ {
+		url := fmt.Sprintf("https://api.github.com/repos/gofiber/fiber/releases?per_page=100&page=%d", page)
+		b, status, err := cachedGET(ctx, url, nil)
+		if err != nil {
+			return "", fmt.Errorf("http request failed: %w", err)
+		}
+		if status != http.StatusOK {
+			msg := strings.TrimSpace(string(b))
+			if msg == "" {
+				msg = http.StatusText(status)
+			}
+			return "", fmt.Errorf("http request failed: %s", msg)
+		}
+
+		var releases []release
+		if err := json.Unmarshal(b, &releases); err != nil {
+			return "", fmt.Errorf("decode response: %w", err)
+		}
+
+		// No more releases; all pages exhausted.
+		if len(releases) == 0 {
+			break
+		}
+
+		for _, r := range releases {
+			if r.Draft || r.Prerelease {
+				continue
+			}
+			v, parseErr := semver.NewVersion(r.TagName)
+			if parseErr != nil {
+				continue
+			}
+			if constraint.Check(v) {
+				return strings.TrimPrefix(r.TagName, "v"), nil
+			}
+		}
+	}
+
+	return "", errors.New("no matching release found")
+}
+
+func latestVersionByURL(url string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b, status, err := cachedGET(ctx, url, nil)
 	if err != nil {
-		return
+		return "", fmt.Errorf("http request failed: %w", err)
 	}
-
-	defer func() {
-		_ = res.Body.Close()
-	}()
-
-	if b, err = ioutil.ReadAll(res.Body); err != nil {
-		return
+	if status != http.StatusOK {
+		msg := strings.TrimSpace(string(b))
+		if msg == "" {
+			msg = http.StatusText(status)
+		}
+		return "", fmt.Errorf("http request failed: %s", msg)
 	}
 
 	if submatch := latestVersionRegexp.FindSubmatch(b); len(submatch) == 2 {
