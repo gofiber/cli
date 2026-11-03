@@ -74,6 +74,8 @@ func Test_Dev_Escort_RunBin(t *testing.T) {
 }
 
 func Test_Dev_Escort_RunBinSharesStdio(t *testing.T) {
+	// runBin replaces the fake's env with os.Environ, so the helper marker goes there
+	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 	setupCmd()
 	defer teardownCmd()
 
