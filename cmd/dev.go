@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -71,10 +70,8 @@ type config struct {
 }
 
 type escort struct {
-	ctx        context.Context
-	stdoutPipe io.ReadCloser
-	stderrPipe io.ReadCloser
-	compiling  atomic.Value
+	ctx       context.Context
+	compiling atomic.Value
 
 	terminate context.CancelFunc
 
@@ -284,8 +281,9 @@ func (e *escort) runBin() {
 	e.bin = execCommand(e.binPath, e.args...)
 
 	e.bin.Env = os.Environ()
-
-	e.watchingPipes()
+	// The app's own TTY check then sees the terminal, so its colors survive.
+	e.bin.Stdout = os.Stdout
+	e.bin.Stderr = os.Stderr
 
 	if err := e.bin.Start(); err != nil {
 		log.Printf("Failed to start bin: %s\n", err)
@@ -315,29 +313,6 @@ func (e *escort) cleanOldBin() {
 	}
 
 	e.bin = nil
-}
-
-func (e *escort) watchingPipes() {
-	var err error
-	if e.stdoutPipe, err = e.bin.StdoutPipe(); err != nil {
-		log.Printf("Failed to get stdout pipe: %s", err)
-	} else {
-		go func() {
-			if _, err := io.Copy(os.Stdout, e.stdoutPipe); err != nil {
-				log.Printf("Failed to copy stdout: %v", err)
-			}
-		}()
-	}
-
-	if e.stderrPipe, err = e.bin.StderrPipe(); err != nil {
-		log.Printf("Failed to get stderr pipe: %s", err)
-	} else {
-		go func() {
-			if _, err := io.Copy(os.Stderr, e.stderrPipe); err != nil {
-				log.Printf("Failed to copy stderr: %v", err)
-			}
-		}()
-	}
 }
 
 func (e *escort) walkForWatcher(root string) {
