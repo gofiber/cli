@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -315,4 +317,67 @@ func getEscort() *escort {
 		hitCh:     make(chan struct{}, 1),
 		sig:       make(chan os.Signal, 1),
 	}
+}
+
+func Test_Dev_Escort_StopBinForwardsSignal(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("signals are not forwarded on Windows")
+	}
+	e := getEscort()
+	e.bin = exec.CommandContext(context.Background(), "sleep", "30")
+	require.NoError(t, e.bin.Start())
+
+	start := time.Now()
+	e.stopBin(syscall.SIGTERM)
+
+	assert.Less(t, time.Since(start), stopTimeout)
+	assert.Nil(t, e.bin)
+}
+
+func Test_Dev_Escort_StopBinKillsAfterTimeout(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("signals are not forwarded on Windows")
+	}
+	prev := stopTimeout
+	stopTimeout = 100 * time.Millisecond
+	defer func() { stopTimeout = prev }()
+
+	e := getEscort()
+	// exec keeps the ignored TERM, so Kill hits the process that ignores it
+	e.bin = exec.CommandContext(context.Background(), "sh", "-c", "trap '' TERM; echo ready; exec sleep 30")
+	out, err := e.bin.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, e.bin.Start())
+	_, err = bufio.NewReader(out).ReadString('\n')
+	require.NoError(t, err)
+
+	start := time.Now()
+	e.stopBin(syscall.SIGTERM)
+
+	assert.GreaterOrEqual(t, time.Since(start), stopTimeout)
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.Nil(t, e.bin)
+}
+
+func Test_Dev_Escort_HitFuncAfterShutdownDoesNothing(t *testing.T) {
+	var calls atomic.Int32
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		calls.Add(1)
+		return fakeExecCommand(name, args...)
+	}
+	defer teardownCmd()
+
+	e := getEscort()
+	require.NoError(t, e.init())
+	defer func() {
+		require.NoError(t, e.w.Close())
+		// init adds ".exe" on Windows to the temp file it created; nothing was built
+		require.NoError(t, os.Remove(strings.TrimSuffix(e.binPath, ".exe")))
+	}()
+
+	e.terminate()
+	e.hitFunc()
+
+	assert.Zero(t, calls.Load())
+	assert.Nil(t, e.bin)
 }
