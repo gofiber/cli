@@ -357,3 +357,25 @@ func Test_Dev_Escort_StopBinKillsAfterTimeout(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second)
 	assert.Nil(t, e.bin)
 }
+
+func Test_Dev_Escort_HitFuncAfterShutdownDoesNothing(t *testing.T) {
+	var calls atomic.Int32
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		calls.Add(1)
+		return fakeExecCommand(name, args...)
+	}
+	defer teardownCmd()
+
+	e := getEscort()
+	require.NoError(t, e.init())
+	defer func() {
+		require.NoError(t, e.w.Close())
+		require.NoError(t, os.Remove(e.binPath))
+	}()
+
+	e.terminate()
+	e.hitFunc()
+
+	assert.Zero(t, calls.Load())
+	assert.Nil(t, e.bin)
+}

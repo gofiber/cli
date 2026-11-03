@@ -92,6 +92,8 @@ type escort struct {
 	config
 
 	wg sync.WaitGroup
+	// mu orders a late debounce callback against shutdown, see hitFunc.
+	mu sync.Mutex
 }
 
 func newEscort(c config) *escort {
@@ -126,7 +128,9 @@ func (e *escort) run() error {
 	signal.Notify(e.sig, syscall.SIGTERM, syscall.SIGINT, os.Interrupt)
 	sig := <-e.sig
 
+	e.mu.Lock()
 	e.terminate()
+	e.mu.Unlock()
 	close(e.hitCh)
 	e.wg.Wait()
 	e.stopBin(sig)
@@ -166,10 +170,18 @@ func (e *escort) init() error {
 		e.binPath += ".exe"
 	}
 
+	// A timer that already fired is not stopped by watchingBin, so the callback
+	// registers with wg only while fiber dev is not shutting down.
 	e.hitFunc = func() {
+		e.mu.Lock()
+		if e.ctx.Err() != nil {
+			e.mu.Unlock()
+			return
+		}
 		e.wg.Add(1)
+		e.mu.Unlock()
+		defer e.wg.Done()
 		e.runBin()
-		e.wg.Done()
 	}
 
 	e.preRunCommands = parsePreRunCommands(c.preRun)
@@ -329,7 +341,11 @@ func (e *escort) stopBin(sig os.Signal) {
 		if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			log.Printf("Failed to kill pid %d: %v", proc.Pid, err)
 		}
-		<-exited
+		select {
+		case <-exited:
+		case <-time.After(stopTimeout):
+			log.Printf("pid %d still running after kill, giving up", proc.Pid)
+		}
 	}
 	e.bin = nil
 }
