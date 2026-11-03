@@ -44,6 +44,39 @@ func handler(c fiber.Ctx) error {
 	assert.Contains(t, buf.String(), "Migrating parser methods")
 }
 
+func Test_MigrateParserMethods_DoesNotRewriteParamsTagToURI(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mptagrewrite")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import "github.com/gofiber/fiber/v2"
+
+type params struct {
+    ID string `+"`params:\"id\" json:\"id\"`"+`
+}
+
+func handler(c fiber.Ctx) error {
+    var p params
+    if err := c.ParamsParser(&p); err != nil {
+        return err
+    }
+    return nil
+}
+`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateParserMethods(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, ".Bind().URI(&p)")
+	assert.Contains(t, content, "`params:\"id\" json:\"id\"`")
+	assert.NotContains(t, content, "`uri:\"id\" json:\"id\"`")
+}
+
 func Test_MigrateParserMethods_SkipNonFiber(t *testing.T) {
 	t.Parallel()
 

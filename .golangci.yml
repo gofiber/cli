@@ -81,6 +81,10 @@ linters:
     gosec:
       excludes:
         - G104 # TODO: Enable this again. Mostly provided by errcheck
+        # the cli edits the user's own project tree, paths and commands come from that user
+        - G122
+        - G702
+        - G703
       config:
         global:
           # show-ignored: true # TODO: Enable this
@@ -154,6 +158,8 @@ linters:
           arguments:
             - make
           disabled: true # TODO: Do not disable
+        - name: enforce-switch-style
+          disabled: true
         - name: exported
           disabled: true
         - name: flag-parameter
@@ -169,6 +175,8 @@ linters:
         - name: max-public-structs
           disabled: true
         - name: modifies-parameter
+          disabled: true
+        - name: multiline-if-init
           disabled: true
         - name: nested-structs
           disabled: true # TODO: Do not disable
@@ -288,6 +296,7 @@ linters:
     # - maligned
     - mirror
     - misspell
+    - modernize
     - musttag
     - nakedret
     # - nestif
@@ -346,6 +355,7 @@ linters:
         linters:
           - bodyclose
           - err113
+          - goconst
           - revive
       - source: 'fmt.Fprintf?'
         linters:
@@ -364,7 +374,8 @@ formatters:
   settings:
     gofumpt:
       module-path: github.com/gofiber/cli
-      extra-rules: true
+      extra:
+        group-params: true
     gci:
       sections:
         - standard

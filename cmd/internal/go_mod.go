@@ -22,14 +22,9 @@ func RunGoMod(root string) error {
 	if err != nil {
 		return fmt.Errorf("find modules: %w", err)
 	}
-	commands := [][]string{
-		{"go", "mod", "tidy"},
-		{"go", "mod", "download"},
-		{"go", "mod", "vendor"},
-	}
 	for _, dir := range dirs {
-		for _, args := range commands {
-			cmd := ExecCommand(args[0], args[1:]...) // #nosec G204 -- commands are controlled
+		for _, sub := range []string{"tidy", "download", "vendor"} {
+			cmd := ExecCommand("go", "mod", sub) // #nosec G204 -- commands are controlled
 			setGoWorkOffEnv(cmd)
 			cmd.Dir = dir
 			if err := runCmd(cmd); err != nil {
@@ -63,7 +58,7 @@ func fiberModuleDirs(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && d.Name() == "vendor" {
+		if d.IsDir() && d.Name() == vendorDir {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() && d.Name() == "go.mod" {

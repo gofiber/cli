@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,7 @@ import (
     "github.com/gofiber/fiber/v2/middleware/monitor"
     "github.com/gofiber/fiber/v2/middleware/csrf"
     "github.com/gofiber/fiber/v2/middleware/keyauth"
+    "net/http/httptest"
 )
 
 func handler(c *fiber.Ctx) error {
@@ -109,6 +111,8 @@ func main() {
     app.Static("/", "./public")
     app.Add(fiber.MethodGet, "/foo", handler)
     app.Mount("/api", app)
+    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+    _ = app.Test(req, 250)
     app.ListenTLS(":443", "cert.pem", "key.pem")
     _ = fiber.MIMEApplicationJavaScript
     _ = monitor.New()
@@ -143,6 +147,7 @@ func main() {
 	at.NotContains(content, "keyauth.TokenFromContext")
 	at.NotContains(content, "ContextKey")
 	at.Contains(content, ".Use(\"/api\", app)")
+	at.Contains(content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(250) * time.Millisecond})")
 	at.Contains(content, ".Listen(")
 	at.Contains(content, "MIMETextJavaScript")
 	at.NotContains(content, "MIMEApplicationJavaScript")
@@ -198,6 +203,104 @@ func main() {
 
 	content := readFileTB(t, filepath.Join(dir, "go.mod"))
 	assert.Contains(t, content, "github.com/gofiber/fiber/v3 v3.0.0")
+}
+
+func Test_Migrate_TargetVersionShort(t *testing.T) {
+	releases := `[{"tag_name":"v3.1.2","prerelease":false,"draft":false},{"tag_name":"v3.1.0","prerelease":false,"draft":false},{"tag_name":"v3.0.0","prerelease":false,"draft":false}]`
+
+	tests := []struct {
+		flag            string
+		expectedVersion string
+	}{
+		{flag: "-t=3", expectedVersion: "3.1.2"},     // major only
+		{flag: "-t=v3", expectedVersion: "3.1.2"},    // major with v prefix
+		{flag: "-t=3.*", expectedVersion: "3.1.2"},   // wildcard minor
+		{flag: "-t=3.x", expectedVersion: "3.1.2"},   // x wildcard minor
+		{flag: "-t=3.1", expectedVersion: "3.1.2"},   // major.minor
+		{flag: "-t=3.1.*", expectedVersion: "3.1.2"}, // wildcard patch
+		{flag: "-t=3.1.x", expectedVersion: "3.1.2"}, // x wildcard patch
+		{flag: "-t=3.0", expectedVersion: "3.0.0"},   // major.minor resolves to 3.0.x latest
+		{flag: "-t=3.0.0", expectedVersion: "3.0.0"}, // full version, direct use
+	}
+
+	main := `package main
+import "github.com/gofiber/fiber/v2"
+func main() {
+    _ = fiber.New()
+}`
+
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "migrate_short_version")
+			require.NoError(t, err)
+			defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModV2), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0o600))
+
+			cwd, err := os.Getwd()
+			require.NoError(t, err)
+			require.NoError(t, os.Chdir(dir))
+			defer func() { require.NoError(t, os.Chdir(cwd)) }()
+
+			httpmock.Activate()
+			defer httpmock.DeactivateAndReset()
+			clearHTTPCache()
+			httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases?per_page=100&page=1",
+				httpmock.NewBytesResponder(200, []byte(releases)))
+			httpmock.RegisterResponder(http.MethodGet, "https://api.github.com/repos/gofiber/fiber/releases?per_page=100&page=2",
+				httpmock.NewBytesResponder(200, []byte(`[]`)))
+
+			cmd := newMigrateCmd()
+			setupCmd()
+			defer teardownCmd()
+			out, err := runCobraCmd(cmd, tt.flag)
+			require.NoError(t, err)
+
+			assert.Contains(t, out, "Migration from Fiber 2.0.6 to "+tt.expectedVersion)
+			content := readFileTB(t, filepath.Join(dir, "go.mod"))
+			assert.Contains(t, content, "github.com/gofiber/fiber/v3 v"+tt.expectedVersion)
+		})
+	}
+}
+
+func Test_PartialVersionConstraint(t *testing.T) {
+	tests := []struct {
+		checks  []string // versions that should match
+		input   string
+		rejects []string // versions that should not match
+		wantErr bool
+	}{
+		{input: "3", checks: []string{"3.0.0", "3.1.0", "3.1.2"}, rejects: []string{"2.9.9", "4.0.0"}},
+		{input: "3.*", checks: []string{"3.0.0", "3.1.2"}, rejects: []string{"2.0.0", "4.0.0"}},
+		{input: "3.x", checks: []string{"3.0.0", "3.9.9"}, rejects: []string{"2.0.0", "4.0.0"}},
+		{input: "3.*.*", checks: []string{"3.0.0", "3.1.2"}, rejects: []string{"2.0.0", "4.0.0"}},
+		{input: "3.x.x", checks: []string{"3.0.0", "3.1.2"}, rejects: []string{"2.0.0", "4.0.0"}},
+		{input: "3.1", checks: []string{"3.1.0", "3.1.9"}, rejects: []string{"3.0.9", "3.2.0"}},
+		{input: "3.1.*", checks: []string{"3.1.0", "3.1.9"}, rejects: []string{"3.0.9", "3.2.0"}},
+		{input: "3.1.x", checks: []string{"3.1.0", "3.1.9"}, rejects: []string{"3.0.9", "3.2.0"}},
+		{input: "3.0.0", wantErr: true},        // full version → not partial
+		{input: "3.0.0-beta.1", wantErr: true}, // pre-release → not partial
+		{input: "abc", wantErr: true},          // invalid
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			c, err := partialVersionConstraint(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			for _, v := range tt.checks {
+				sv := semver.MustParse(v)
+				assert.Truef(t, c.Check(sv), "expected %q to satisfy constraint for %q", v, tt.input)
+			}
+			for _, v := range tt.rejects {
+				sv := semver.MustParse(v)
+				assert.Falsef(t, c.Check(sv), "expected %q NOT to satisfy constraint for %q", v, tt.input)
+			}
+		})
+	}
 }
 
 func Test_RunGoMod(t *testing.T) {

@@ -26,6 +26,12 @@ fiber migrate --to 3.0.0
 - `--include` – Comma-separated list of files to include in the migration. Supports glob and regex patterns
 - `--exclude` – Comma-separated list of files to exclude from the migration. Supports glob and regex patterns
 
+## Files that are left as they were
+
+When a rewrite would leave a Go file that does not parse, `fiber migrate` keeps the
+file as it was, goes on with the other files, and lists the skipped files at the end
+of the run. Migrate them by hand.
+
 ## Examples
 
 Upgrade to the latest Fiber version:

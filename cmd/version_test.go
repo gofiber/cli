@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jarcoal/httpmock"
@@ -98,6 +99,20 @@ require (
 		at.Equal("v0.0.0-20200926082917-55763e7e6ee3", v)
 	})
 
+	t.Run("can read version from windows clrf file", func(t *testing.T) {
+		content := "module fiber-demo\r\ngo 1.14\r\nrequire (\r\n" +
+			"\tgithub.com/gofiber/fiber\r v0.0.0-20200926082917-55763e7e6ee3\r\n" +
+			"\tgithub.com/jarcoal/httpmock v1.0.6\r\n" +
+			")"
+
+		setupCurrentVersionFile(content)
+		defer teardownCurrentVersionFile()
+
+		v, err := currentVersion()
+		require.NoError(t, err)
+		at.Equal("v0.0.0-20200926082917-55763e7e6ee3", v)
+	})
+
 	t.Run("package not found", func(t *testing.T) {
 		content := `module fiber-demo
 go 1.14
@@ -111,6 +126,83 @@ require (
 		_, err := currentVersion()
 		require.Error(t, err)
 	})
+}
+
+// The version is read with the parser of go.mod, so a comment, an indirect requirement, a
+// replace directive or a module that is named like fiber do not leave the wrong text for
+// semver.MustParse to panic on.
+func Test_Version_Current_GoModShapes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "comment after the version",
+			content: "module demo\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v2 v2.52.0 // pinned for now\n",
+			want:    "v2.52.0",
+		},
+		{
+			name:    "only an indirect requirement",
+			content: "module demo\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v2 v2.52.0 // indirect\n",
+			want:    "v2.52.0",
+		},
+		{
+			name: "a requirement of the project wins over an indirect one",
+			content: "module demo\n\ngo 1.22\n\nrequire (\n\tgithub.com/gofiber/fiber/v2 v2.52.0 // indirect\n" +
+				"\tgithub.com/gofiber/fiber/v3 v3.0.0\n)\n",
+			want: "v3.0.0",
+		},
+		{
+			name:    "replace before require",
+			content: "module demo\n\ngo 1.22\n\nreplace github.com/gofiber/fiber/v2 => ../fiber\n\nrequire github.com/gofiber/fiber/v2 v2.52.0\n",
+			want:    "v2.52.0",
+		},
+		{
+			name:    "a module that is named like fiber",
+			content: "module github.com/gofiber/fiber-demo\n\ngo 1.22\n\nrequire github.com/gofiber/fiber/v2 v2.52.0\n",
+			want:    "v2.52.0",
+		},
+		{
+			name:    "a module that is named like fiber and requires none",
+			content: "module github.com/gofiber/fiber-demo\n\ngo 1.22\n\nrequire github.com/jarcoal/httpmock v1.0.6\n",
+			wantErr: true,
+		},
+		{
+			name:    "another module whose path starts like fiber",
+			content: "module demo\n\ngo 1.22\n\nrequire github.com/gofiber/fiber-cli v0.1.0\n",
+			wantErr: true,
+		},
+		{
+			name:    "go.mod that does not parse",
+			content: "module demo\n\nrequire (\n\tgithub.com/gofiber/fiber/v2\n",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "go.mod")
+			require.NoError(t, os.WriteFile(path, []byte(tt.content), 0o600))
+
+			var (
+				got string
+				err error
+			)
+			require.NotPanics(t, func() { got, err = currentVersionFromFile(path) })
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func setupCurrentVersionFile(content ...string) {

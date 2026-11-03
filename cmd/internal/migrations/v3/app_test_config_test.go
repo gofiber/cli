@@ -22,12 +22,11 @@ func Test_MigrateAppTestConfig(t *testing.T) {
 import (
     "github.com/gofiber/fiber/v2"
     "net/http/httptest"
-    "time"
 )
 func main() {
     app := fiber.New()
     req := httptest.NewRequest(fiber.MethodGet, "/", nil)
-    _ = app.Test(req, 2*time.Second)
+    _ = app.Test(req, 2000)
 }`)
 
 	var buf bytes.Buffer
@@ -35,7 +34,8 @@ func main() {
 	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
 
 	content := readFile(t, file)
-	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: 2 * time.Second})")
+	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(2000) * time.Millisecond})")
+	assert.Contains(t, content, "\"time\"")
 	assert.Contains(t, buf.String(), "Migrating app.Test usages")
 }
 
@@ -104,12 +104,12 @@ func Test_MigrateAppTestConfig_Idempotent(t *testing.T) {
 import (
     "github.com/gofiber/fiber/v2"
     "net/http/httptest"
-    "time"
 )
 func main() {
     app := fiber.New()
     req := httptest.NewRequest(fiber.MethodGet, "/", nil)
-    _ = app.Test(req, 2*time.Second)
+    timeoutMS := 2000
+    _ = app.Test(req, timeoutMS)
 }`)
 
 	var buf bytes.Buffer
@@ -119,4 +119,31 @@ func main() {
 	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
 	second := readFile(t, file)
 	assert.Equal(t, first, second)
+}
+
+func Test_MigrateAppTestConfig_VariableTimeout(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mtestcfgvar")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+import (
+    "github.com/gofiber/fiber/v2"
+    "net/http/httptest"
+)
+func main() {
+    app := fiber.New()
+    req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+    timeoutMS := 250
+    _ = app.Test(req, timeoutMS)
+}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateAppTestConfig(cmd, dir, nil, nil))
+
+	content := readFile(t, file)
+	assert.Contains(t, content, "app.Test(req, fiber.TestConfig{Timeout: time.Duration(timeoutMS) * time.Millisecond})")
 }

@@ -58,3 +58,22 @@ var _ = basicauth.New(basicauth.Config{ContextUsername: "user", ContextPassword:
 	assert.Contains(t, content, "basicauth.Config{}")
 	assert.Contains(t, buf.String(), "Migrating basicauth configs")
 }
+
+func Test_MigrateBasicauthConfig_InlineKeepsSuffixedFields(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mbasiccfg_suffix")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.RemoveAll(dir)) }()
+
+	file := writeTempFile(t, dir, `package main
+type opts struct{ RequestContextKey string }
+var _ = opts{RequestContextKey: "req"}`)
+
+	var buf bytes.Buffer
+	cmd := newCmd(&buf)
+	require.NoError(t, v3.MigrateBasicauthConfig(cmd, dir, nil, nil))
+
+	// Only the exact ContextKey field may be removed, not fields ending in it.
+	assert.Contains(t, readFile(t, file), `opts{RequestContextKey: "req"}`)
+}

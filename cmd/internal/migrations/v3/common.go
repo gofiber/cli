@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -65,7 +65,7 @@ func skipCommaSuffix(src string, i int) int {
 // multi-line function literals or function calls with arguments that contain
 // commas.
 func removeConfigField(src, field string) string {
-	re := regexp.MustCompile(field + `:\s*`)
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(field) + `:\s*`)
 	for {
 		loc := re.FindStringIndex(src)
 		if loc == nil {
@@ -73,6 +73,7 @@ func removeConfigField(src, field string) string {
 		}
 
 		start := loc[0]
+		leadComma := false
 		// include any leading whitespace and comma, but keep the preceding
 		// newline intact so that formatting is preserved for the previous
 		// field when the target field is removed.
@@ -81,6 +82,7 @@ func removeConfigField(src, field string) string {
 			case ' ', '\t':
 				start--
 			case ',':
+				leadComma = true
 				start--
 				for start > 0 && (src[start-1] == ' ' || src[start-1] == '\t') {
 					start--
@@ -130,6 +132,10 @@ func removeConfigField(src, field string) string {
 					continue
 				}
 				i = skipCommaSuffix(src, i)
+				if leadComma {
+					// fields on both sides: keep the leading comma as separator
+					start = loc[0]
+				}
 				src = src[:start] + src[i:]
 				goto nextField
 			case '\n':
@@ -265,6 +271,7 @@ func replaceFieldImpl(src, field string, unquote bool, fn func(indent, val, comm
 		if unquote {
 			uq, err := strconv.Unquote(val)
 			if err != nil {
+				comment = normalizeMigrationComment(comment, false)
 				replacement := fmt.Sprintf("%s%s// TODO: migrate %s: %s", prefix, indent, field, val)
 				if comment != "" {
 					replacement = fmt.Sprintf("%s %s", replacement, comment)
@@ -314,7 +321,7 @@ func collectAliases(content string, reImport *regexp.Regexp, defaults []string) 
 	for alias := range aliases {
 		result = append(result, alias)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 
@@ -417,8 +424,8 @@ func extractCall(src string, start int) (int, string) {
 
 // extractBlock returns the index just after the closing delimiter that matches
 // the opening delimiter at the start position. Start must point to the first
-// character after the opening delimiter. It handles nested delimiters and
-// quoted strings.
+// character after the opening delimiter. It handles nested delimiters, quoted
+// strings and comments.
 //
 //nolint:unparam // keep open for potential future delimiters
 func extractBlock(src string, start int, open, closeDelim byte) int {
@@ -443,6 +450,8 @@ func extractBlock(src string, start int, open, closeDelim byte) int {
 		case '"', '\'', '`':
 			inStr = true
 			quote = ch
+		case '/':
+			i = commentEnd(src, i)
 		case open:
 			depth++
 		case closeDelim:
@@ -454,6 +463,25 @@ func extractBlock(src string, start int, open, closeDelim byte) int {
 		}
 	}
 	return len(src)
+}
+
+// commentEnd returns the index of the last byte of the comment starting at i,
+// or i when none starts there: its quotes and delimiters are not code.
+func commentEnd(src string, i int) int {
+	rest := src[i:]
+	switch {
+	case strings.HasPrefix(rest, "//"):
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			return i + nl
+		}
+	case strings.HasPrefix(rest, "/*"):
+		if closing := strings.Index(rest[2:], "*/"); closing >= 0 {
+			return i + closing + 3
+		}
+	default:
+		return i
+	}
+	return len(src) - 1
 }
 
 // replaceCall finds invocations of name within src and allows custom
@@ -605,10 +633,21 @@ func ExtractCommentAndValue(line string) (value, comment string) {
 // FormatFieldWithComment formats a field assignment with consistent spacing
 // for indentation, value, comma, comment, and newline.
 func FormatFieldWithComment(indent, fieldName, value, comma, comment, newline string) string {
+	comment = normalizeMigrationComment(comment, strings.Contains(fieldName, "TODO: migrate"))
 	if comment != "" {
 		comment = " " + comment
 	}
 	return fmt.Sprintf("%s%s: %s%s%s%s", indent, fieldName, value, comma, comment, newline)
+}
+
+func normalizeMigrationComment(comment string, hasMigrationMarker bool) string {
+	if comment == "" {
+		return comment
+	}
+	if strings.Contains(comment, "TODO: migrate") && hasMigrationMarker {
+		return ""
+	}
+	return comment
 }
 
 // IterateConfigBlocks finds all occurrences matching the given regex pattern,

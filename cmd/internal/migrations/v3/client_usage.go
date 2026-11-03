@@ -3,8 +3,9 @@ package v3
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -311,10 +312,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 		}
 
 		errName := chooseErrName(out, lines, i)
-		errBlockEnd := blockEndIndex(lines, structStart)
-		if errBlockEnd < structStart {
-			errBlockEnd = structStart
-		}
+		errBlockEnd := max(blockEndIndex(lines, structStart), structStart)
 		errsNeeded := identifierUsedAfter(lines[errBlockEnd+1:], "errs")
 		errsAlreadyDeclared := identifierDeclared(out, lines, i, "errs") || identifierDeclaredInLines(preservedLines, "errs")
 
@@ -332,7 +330,7 @@ func rewriteAcquireAgentBlocksWithAlias(content, alias string) (string, bool) {
 			for k := range headers {
 				keys = append(keys, k)
 			}
-			sort.Strings(keys)
+			slices.Sort(keys)
 			for _, k := range keys {
 				out = append(out, fmt.Sprintf("%s%s.SetHeader(%s, %s)", indent, reqVar, k, headers[k]))
 			}
@@ -868,9 +866,7 @@ func rewriteSimpleAgentBlocksWithAlias(content, alias string) (string, bool) {
 					failed = true
 					break
 				}
-				for k, v := range params {
-					cfg.params[k] = v
-				}
+				maps.Copy(cfg.params, params)
 				cfg.config = true
 				continue
 			}
@@ -1000,7 +996,7 @@ func buildSimpleConfig(cfg simpleAgentConfig) string {
 		for k := range cfg.headers {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		var items []string
 		for _, k := range keys {
 			hv := cfg.headers[k]
@@ -1018,7 +1014,7 @@ func buildSimpleConfig(cfg simpleAgentConfig) string {
 		for k := range cfg.params {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		var items []string
 		for _, k := range keys {
 			items = append(items, fmt.Sprintf("%q: %q", k, cfg.params[k]))
@@ -1048,7 +1044,7 @@ func parseQueryParams(expr string) (map[string]string, bool) {
 		return nil, false
 	}
 	result := make(map[string]string)
-	for _, pair := range strings.Split(value, "&") {
+	for pair := range strings.SplitSeq(value, "&") {
 		if pair == "" {
 			continue
 		}

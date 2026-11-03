@@ -29,3 +29,6 @@
 vendor/
 vendor
 /Godeps/
+
+/fiber/fiber
+/fiber_final
