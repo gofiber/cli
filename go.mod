@@ -13,7 +13,7 @@ require (
 	github.com/jarcoal/httpmock v1.4.2
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/mod v0.42.0
 	golang.org/x/sync v0.24.0
