@@ -154,19 +154,21 @@ var (
 	newBasicTemplate = `package main
 
 import (
-    "log"
+	"log"
 
-    "github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/logger"
 )
 
 func main() {
-    app := fiber.New()
+	app := fiber.New()
+	app.Use(logger.New())
 
-    app.Get("/", func(c *fiber.Ctx) error {
-        return c.SendString("Hello, World!")
-    })
+	app.Get("/", func(c fiber.Ctx) error {
+		return c.SendString("Hello, World!")
+	})
 
-    log.Fatal(app.Listen(":3000"))
+	log.Fatal(app.Listen(":3000"))
 }`
 
 	newSuccessTemplate = `
